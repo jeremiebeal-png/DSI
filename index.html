@@ -1,52 +1,729 @@
-<!-- Bloc de navigation à adapter selon votre charte -->
-<div style="display:flex;gap:16px">
-  <a href="#">Accueil</a>
-  <a href="#">Projets</a>
-  <a href="#">Clients</a>
-  <a href="#">Support</a>
-</div>
+import { useState, useEffect } from "react";
 
-<h2>Suivi des projets clients</h2>
+const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 
-<table style="width:100%; border-collapse:collapse; font-family:Arial, sans-serif; font-size:14px;">
-  <thead>
-    <tr style="background:#f0f0f0;">
-      <th style="border:1px solid #ccc; padding:8px;">Hôtel</th>
-      <th style="border:1px solid #ccc; padding:8px;">Projet</th>
-      <th style="border:1px solid #ccc; padding:8px;">Type</th>
-      <th style="border:1px solid #ccc; padding:8px;">Équipe</th>
-      <th style="border:1px solid #ccc; padding:8px;">Chef de projet</th>
-      <th style="border:1px solid #ccc; padding:8px;">Début</th>
-      <th style="border:1px solid #ccc; padding:8px;">Fin prévue</th>
-      <th style="border:1px solid #ccc; padding:8px;">Statut</th>
-      <th style="border:1px solid #ccc; padding:8px;">Priorité</th>
-      <th style="border:1px solid #ccc; padding:8px;">Commentaires</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="border:1px solid #ccc; padding:8px;">Hôtel A</td>
-      <td style="border:1px solid #ccc; padding:8px;">Refonte Wi-Fi</td>
-      <td style="border:1px solid #ccc; padding:8px;">Réseau</td>
-      <td style="border:1px solid #ccc; padding:8px;">Terrain</td>
-      <td style="border:1px solid #ccc; padding:8px;">Alex</td>
-      <td style="border:1px solid #ccc; padding:8px;">01/12/2025</td>
-      <td style="border:1px solid #ccc; padding:8px;">15/12/2025</td>
-      <td style="border:1px solid #ccc; padding:8px;">En cours</td>
-      <td style="border:1px solid #ccc; padding:8px;">Haute</td>
-      <td style="border:1px solid #ccc; padding:8px;">Installation bornes étage 1 et 2</td>
-    </tr>
-    <tr>
-      <td style="border:1px solid #ccc; padding:8px;">Hôtel B</td>
-      <td style="border:1px solid #ccc; padding:8px;">Migration M365</td>
-      <td style="border:1px solid #ccc; padding:8px;">Système</td>
-      <td style="border:1px solid #ccc; padding:8px;">Support</td>
-      <td style="border:1px solid #ccc; padding:8px;">Sophie</td>
-      <td style="border:1px solid #ccc; padding:8px;">20/11/2025</td>
-      <td style="border:1px solid #ccc; padding:8px;">10/12/2025</td>
-      <td style="border:1px solid #ccc; padding:8px;">En attente client</td>
-      <td style="border:1px solid #ccc; padding:8px;">Moyenne</td>
-      <td style="border:1px solid #ccc; padding:8px;">Validation des licences</td>
-    </tr>
-  </tbody>
-</table>
+const USERS = [
+  { id: "adm", email: "admin@dsihotel.com", pw: "admin123", role: "admin", name: "Admin DSI Hotel" },
+  { id: "u1", email: "paris@demo.com", pw: "hotel", role: "client", cid: "c1", name: "Hôtel Le Grand Paris" },
+  { id: "u2", email: "nice@demo.com", pw: "hotel", role: "client", cid: "c2", name: "Hôtel Riviera Nice" },
+  { id: "u3", email: "lyon@demo.com", pw: "hotel", role: "client", cid: "c3", name: "Hôtel Lumière Lyon" },
+];
+const CATS = ["Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
+const PRIO_C = { urgent: "#E53E3E", high: "#ED8936", medium: "#D69E2E", low: "#48BB78" };
+const STAT_C = { open: "#3182CE", in_progress: "#D69E2E", resolved: "#48BB78", closed: "#A0AEC0" };
+const STAT_L = { open: "Ouvert", in_progress: "En cours", resolved: "Résolu", closed: "Fermé" };
+const PRIO_L = { urgent: "Urgent", high: "Haute", medium: "Moyenne", low: "Basse" };
+const CAT_ICONS = { "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
+const SUPPORT_EMAIL = "support@dsihotel.com";
+
+const CLIENTS0 = [
+  { id: "c1", name: "Hôtel Le Grand Paris", email: "paris@demo.com", city: "Paris 8ème", stars: 5, phone: "+33 1 42 65 32 10", supportEmail: "paris@support.dsihotel.com" },
+  { id: "c2", name: "Hôtel Riviera Nice", email: "nice@demo.com", city: "Nice", stars: 4, phone: "+33 4 93 87 12 34", supportEmail: "nice@support.dsihotel.com" },
+  { id: "c3", name: "Hôtel Lumière Lyon", email: "lyon@demo.com", city: "Lyon", stars: 4, phone: "+33 4 78 42 56 78", supportEmail: "lyon@support.dsihotel.com" },
+];
+
+const T0 = [
+  { id: "T001", cid: "c1", cname: "Le Grand Paris", subj: "Opera PMS ne démarre plus", desc: 'Depuis ce matin, Opera refuse de démarrer. Erreur : "Connexion DB impossible". Nos check-ins sont bloqués.', cat: "Problème Opera", prio: "urgent", status: "open", source: "portal", date: "2026-06-17T08:30", upd: "2026-06-17T08:30", msgs: [{ f: "client", a: "Le Grand Paris", t: 'Opera ne se lance plus depuis 8h. Erreur : "Connexion à la base de données impossible". Urgence !', d: "2026-06-17T08:30" }] },
+  { id: "T002", cid: "c2", cname: "Riviera Nice", subj: "Accès Wi-Fi staff pour nouvelle recrue", desc: "Notre nouvelle réceptionniste n'a pas le mot de passe Wi-Fi staff.", cat: "Problème Réseau", prio: "medium", status: "in_progress", source: "email", date: "2026-06-16T14:00", upd: "2026-06-16T15:30", msgs: [{ f: "client", a: "Riviera Nice", t: "Objet : Accès Wi-Fi staff\n\nBonjour,\n\nNotre nouvelle réceptionniste Marie n'a pas encore les accès Wi-Fi staff. Pouvez-vous nous aider ?\n\nCordialement,\nDirectrice Riviera Nice", d: "2026-06-16T14:00" }, { f: "admin", a: "Support DSI Hotel", t: "Bien reçu. Les identifiants vous parviendront dans l'heure.", d: "2026-06-16T15:30" }] },
+  { id: "T003", cid: "c1", cname: "Le Grand Paris", subj: "Imprimante réception en panne", desc: "L'imprimante principale de la réception ne répond plus.", cat: "Problème Matériel", prio: "high", status: "resolved", source: "portal", date: "2026-06-15T10:00", upd: "2026-06-15T16:00", msgs: [{ f: "client", a: "Le Grand Paris", t: "Imprimante HP hors service depuis 10h.", d: "2026-06-15T10:00" }, { f: "admin", a: "Support DSI Hotel", t: "Résolu : pilote réinstallé. L'imprimante est de nouveau opérationnelle.", d: "2026-06-15T16:00" }] },
+  { id: "T004", cid: "c3", cname: "Lumière Lyon", subj: "Mot de passe Outlook oublié", desc: "La directrice a perdu son accès Outlook.", cat: "Problème Mot de Passe", prio: "medium", status: "closed", source: "email", date: "2026-06-14T09:00", upd: "2026-06-14T10:30", msgs: [{ f: "client", a: "Lumière Lyon", t: "Bonjour,\n\nMme Martin, notre directrice, a oublié son mot de passe Outlook. Pouvez-vous réinitialiser ?\n\nMerci,\nLumière Lyon", d: "2026-06-14T09:00" }, { f: "admin", a: "Support DSI Hotel", t: "MDP réinitialisé, envoyé par SMS.", d: "2026-06-14T10:30" }] },
+];
+
+const P0 = [
+  { id: "pr01", cid: "c1", title: "Redémarrer Opera PMS", cat: "Problème Opera", content: "Étapes pour redémarrer Opera PMS :\n1. Fermez toutes les fenêtres Opera ouvertes\n2. Ouvrez le Gestionnaire des tâches (Ctrl + Alt + Suppr)\n3. Onglet \"Processus\" → cherchez \"Opera.exe\"\n4. Clic droit → Terminer la tâche\n5. Attendez 30 secondes puis relancez depuis le raccourci bureau\n\n⚠️ Si le problème persiste, ouvrez un ticket support." },
+  { id: "pr02", cid: "c1", title: "Réinitialiser un mot de passe Opera", cat: "Problème Opera", content: "Réservée au Super Administrateur.\n1. Connectez-vous avec les identifiants Super Admin\n2. Administration → Utilisateurs et Rôles\n3. Recherchez l'utilisateur concerné\n4. Cliquez \"Réinitialiser le mot de passe\"\n5. Communiquez le MDP temporaire en personne\n\n🔒 Ne jamais envoyer de mot de passe par email." },
+  { id: "pr03", cid: "c1", title: "Configurer Outlook (nouvel employé)", cat: "Problème Office", content: "1. Ouvrez Microsoft Outlook\n2. Fichier → Ajouter un compte\n3. Saisissez l'adresse email professionnelle\n4. Sélectionnez \"Microsoft 365\"\n5. Activez le MFA via Microsoft Authenticator\n\nPour les boîtes partagées, contactez DSI Hotel." },
+  { id: "pr04", cid: "c1", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", content: "1. Appelez le support : +33 1 XX XX XX XX\n2. Communiquez votre nom et identifiant Windows\n3. Répondez à votre question de sécurité\n4. MDP temporaire communiqué oralement\n5. À changer immédiatement à la 1ère connexion\n\n🔒 PCI-DSS : aucune réinitialisation par email." },
+  { id: "pr05", cid: "c2", title: "Redémarrer Opera PMS", cat: "Problème Opera", content: "Procédure Riviera Nice :\n1. Fermer toutes les instances Opera\n2. Ctrl+Alt+Suppr → Gestionnaire des tâches\n3. Terminer Opera.exe\n4. Ouvrir Services.msc → Redémarrer \"Opera PMS Service\"\n5. Relancer Opera depuis le bureau" },
+  { id: "pr06", cid: "c2", title: "Connexion au Wi-Fi staff", cat: "Problème Réseau", content: "Réseau staff : DSI-STAFF-NICE-5G\n\nLe mot de passe est communiqué uniquement par votre directeur ou DSI Hotel.\n\nEn cas de perte :\n1. Contactez votre responsable de site\n2. Si urgence : créez un ticket → réponse < 1h\n\n⚠️ Ne jamais communiquer le mot de passe staff aux clients." },
+  { id: "pr07", cid: "c2", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", content: "1. Appelez DSI Hotel (Nice) : +33 4 XX XX XX XX\n2. Identifiez-vous avec votre matricule\n3. Répondez à votre question de sécurité\n4. Nouveau MDP envoyé par SMS\n5. À changer dès la 1ère connexion\n\nHoraires : 7h–22h · 7j/7" },
+  { id: "pr08", cid: "c3", title: "Configurer emails sur smartphone", cat: "Problème Office", content: "iPhone :\n1. Réglages → Mail → Ajouter un compte\n2. Sélectionner Microsoft Exchange\n3. Email : prenom.nom@luminelyon.com\n4. Valider avec code MFA\n\nAndroid :\n1. Installer Microsoft Outlook\n2. Ajouter compte → Microsoft 365\n3. Saisir votre email + code MFA" },
+  { id: "pr09", cid: "c3", title: "Réinitialiser mot de passe Opera", cat: "Problème Opera", content: "Le Super Admin Opera est le Directeur Général + DSI Hotel.\n\n1. Contactez votre Directeur Général\n2. Si urgence et DG indisponible → ticket DSI Hotel\n3. Précisez l'ID utilisateur Opera concerné + motif\n4. Délai de traitement : moins de 2 heures\n\nComptes Super Admin : ne jamais partager." },
+];
+
+const Badge = ({ label, color }) => (
+  <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 100, fontSize: 11, fontWeight: 500, background: color + "22", color, border: `1px solid ${color}44` }}>{label}</span>
+);
+
+const SourceBadge = ({ source }) => (
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 100, fontSize: 11, fontWeight: 500, background: source === "email" ? "#EBF8FF" : "#F0FFF4", color: source === "email" ? "#2B6CB0" : "#276749", border: `1px solid ${source === "email" ? "#BEE3F8" : "#C6F6D5"}` }}>
+    {source === "email" ? "📧 Email" : "🌐 Portail"}
+  </span>
+);
+
+const StatCard = ({ icon, label, value, color }) => (
+  <div style={{ background: "white", borderRadius: 10, padding: "14px 18px", border: "1px solid #E8E8F0", flex: 1, minWidth: 110 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ width: 34, height: 34, borderRadius: 8, background: color + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{icon}</div>
+      <div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: "#1a1a3e", lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{label}</div>
+      </div>
+    </div>
+  </div>
+);
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [page, setPage] = useState("dashboard");
+  const [tickets, setTickets] = useState(T0);
+  const [procs, setProcs] = useState(P0);
+  const [selId, setSelId] = useState(null);
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [loginErr, setLoginErr] = useState("");
+  const [showCreds, setShowCreds] = useState(false);
+  const [nForm, setNForm] = useState({ subj: "", cat: CATS[0], prio: "medium", desc: "" });
+  const [reply, setReply] = useState("");
+  const [filter, setFilter] = useState({ status: "all", cat: "all", cid: "all", source: "all" });
+  const [kbCat, setKbCat] = useState("all");
+  const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "" });
+  const [showProcForm, setShowProcForm] = useState(false);
+  const [editCid, setEditCid] = useState("c1");
+  const [showEmailImport, setShowEmailImport] = useState(false);
+  const [emailImport, setEmailImport] = useState({ cid: "c1", from: "", subj: "", body: "", prio: "medium", cat: CATS[0] });
+  const [copied, setCopied] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try { const r = await window.storage.get("dsi_t4"); if (r) setTickets(JSON.parse(r.value)); } catch (e) {}
+      try { const r = await window.storage.get("dsi_p4"); if (r) setProcs(JSON.parse(r.value)); } catch (e) {}
+    })();
+  }, []);
+
+  const saveT = async (arr) => { setTickets(arr); try { await window.storage.set("dsi_t4", JSON.stringify(arr)); } catch (e) {} };
+  const saveP = async (arr) => { setProcs(arr); try { await window.storage.set("dsi_p4", JSON.stringify(arr)); } catch (e) {} };
+
+  const go = (p, id = null) => { setPage(p); setSelId(id); setReply(""); setShowEmailImport(false); };
+  const myTkts = user?.role === "client" ? tickets.filter(t => t.cid === user.cid) : tickets;
+  const myProcs = user?.role === "client" ? procs.filter(p => p.cid === user.cid) : procs;
+  const sel = tickets.find(t => t.id === selId);
+  const selP = procs.find(p => p.id === selId);
+  const fmt = d => { try { return new Date(d).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch (e) { return d; } };
+  const copyToClipboard = (text, key) => { navigator.clipboard?.writeText(text).catch(() => {}); setCopied(key); setTimeout(() => setCopied(""), 2000); };
+
+  const sb = { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, minHeight: "100vh" };
+  const btnStyle = (active) => ({ width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: active ? "rgba(201,168,76,.13)" : "transparent", color: active ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${active ? G : "transparent"}` });
+
+  if (!user) {
+    const doLogin = () => { const u = USERS.find(x => x.email === email && x.pw === pw); if (u) { setUser(u); setLoginErr(""); } else setLoginErr("Email ou mot de passe incorrect."); };
+    return (
+      <div style={{ minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ width: 420, maxWidth: "100%" }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ width: 44, height: 44, background: G, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: "#111" }}>D</div>
+              <div style={{ color: G, fontSize: 21, fontWeight: 500, letterSpacing: "1px" }}>DSI Hotel</div>
+            </div>
+            <div style={{ color: "rgba(255,255,255,.45)", fontSize: 13 }}>Portail Support & Documentation</div>
+          </div>
+          <div style={{ background: "rgba(255,255,255,.05)", borderRadius: 14, padding: 28, border: `1px solid ${G}30` }}>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", color: "rgba(255,255,255,.6)", fontSize: 11, letterSpacing: "1px", marginBottom: 5 }}>ADRESSE EMAIL</label>
+              <input value={email} onChange={e => { setEmail(e.target.value); setLoginErr(""); }} onKeyDown={e => e.key === "Enter" && doLogin()} placeholder="votre@email.com" style={{ width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none" }} />
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: "block", color: "rgba(255,255,255,.6)", fontSize: 11, letterSpacing: "1px", marginBottom: 5 }}>MOT DE PASSE</label>
+              <input type="password" value={pw} onChange={e => { setPw(e.target.value); setLoginErr(""); }} onKeyDown={e => e.key === "Enter" && doLogin()} placeholder="••••••••" style={{ width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none" }} />
+            </div>
+            {loginErr && <div style={{ color: "#FC8181", fontSize: 13, marginBottom: 14 }}>{loginErr}</div>}
+            <button onClick={doLogin} style={{ width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: "pointer" }}>Se connecter</button>
+          </div>
+          <div style={{ marginTop: 16, textAlign: "center" }}>
+            <button onClick={() => setShowCreds(!showCreds)} style={{ background: "none", border: "none", color: "rgba(255,255,255,.3)", fontSize: 12, cursor: "pointer" }}>↓ Accès de démonstration</button>
+            {showCreds && (
+              <div style={{ marginTop: 10, background: "rgba(0,0,0,.35)", borderRadius: 8, padding: 14 }}>
+                {USERS.map(u => (
+                  <div key={u.id} onClick={() => { setEmail(u.email); setPw(u.pw); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", borderRadius: 6, color: "rgba(255,255,255,.75)", fontSize: 12 }}>
+                    <span>{u.role === "admin" ? "⚡" : "🏨"}</span>
+                    <span style={{ flex: 1 }}>{u.name}</span>
+                    <code style={{ color: G, fontSize: 11 }}>{u.email}</code>
+                  </div>
+                ))}
+                <div style={{ marginTop: 8, color: "rgba(255,255,255,.3)", fontSize: 11, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 8 }}>MDP : admin123 (admin) · hotel (clients)</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const adminNav = [{ p: "dashboard", icon: "🏠", label: "Tableau de bord" }, { p: "tickets", icon: "🎫", label: "Tous les tickets", badge: true }, { p: "email-import", icon: "📧", label: "Importer un email" }, { p: "clients", icon: "🏨", label: "Clients" }, { p: "proc-admin", icon: "📚", label: "Base de connaissances" }];
+  const clientNav = [{ p: "dashboard", icon: "🏠", label: "Mon tableau de bord" }, { p: "new-ticket", icon: "➕", label: "Nouveau ticket" }, { p: "send-email", icon: "📧", label: "Envoyer un email" }, { p: "tickets", icon: "🎫", label: "Mes tickets", badge: true }, { p: "knowledge", icon: "📖", label: "Procédures" }];
+  const nav = user.role === "admin" ? adminNav : clientNav;
+  const badgeCount = user.role === "admin" ? tickets.filter(t => t.status === "open").length : myTkts.filter(t => t.status === "open" || t.status === "in_progress").length;
+  const updSel = tickets.find(t => t.id === selId) || sel;
+  const pageTitle = { dashboard: "Tableau de bord", tickets: user.role === "admin" ? "Tous les tickets" : "Mes tickets", ticket: "Détail du ticket", "new-ticket": "Nouveau ticket", "send-email": "Contacter le support par email", "email-import": "Importer un email → ticket", clients: "Clients", knowledge: "Procédures", "proc-detail": "Procédure", "proc-admin": "Base de connaissances" }[page] || "";
+
+  let content = null;
+
+  // ADMIN DASHBOARD
+  if (page === "dashboard" && user.role === "admin") {
+    const recent = [...tickets].sort((a, b) => new Date(b.upd) - new Date(a.upd)).slice(0, 6);
+    const emailCount = tickets.filter(t => t.source === "email").length;
+    const portalCount = tickets.filter(t => t.source === "portal").length;
+    content = (
+      <div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+          <StatCard icon="🔴" label="Tickets ouverts" value={tickets.filter(t => t.status === "open").length} color="#E53E3E" />
+          <StatCard icon="🟡" label="En cours" value={tickets.filter(t => t.status === "in_progress").length} color={G} />
+          <StatCard icon="🟢" label="Résolus" value={tickets.filter(t => t.status === "resolved").length} color="#48BB78" />
+          <StatCard icon="📧" label="Via email" value={emailCount} color="#3182CE" />
+          <StatCard icon="🌐" label="Via portail" value={portalCount} color="#805AD5" />
+        </div>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" }}>
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontWeight: 500, fontSize: 14, color: "#1a1a3e" }}>Tickets récents</span>
+            <button onClick={() => go("tickets")} style={{ background: "none", border: "none", color: G, fontSize: 12, cursor: "pointer" }}>Voir tout →</button>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#F8F8FC" }}>
+                {["ID", "Source", "Hôtel", "Sujet", "Priorité", "Statut", "Date"].map(h => <th key={h} style={{ padding: "8px 14px", textAlign: "left", color: "#999", fontWeight: 500, fontSize: 11, borderBottom: "1px solid #EEE" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {recent.map((t, i) => (
+                  <tr key={t.id} onClick={() => go("ticket", t.id)} style={{ background: i % 2 ? "#FAFAFA" : "white", borderBottom: "1px solid #F4F4F8", cursor: "pointer" }}>
+                    <td style={{ padding: "9px 14px", color: G, fontWeight: 500, fontFamily: "monospace", fontSize: 11 }}>{t.id}</td>
+                    <td style={{ padding: "9px 14px" }}><SourceBadge source={t.source} /></td>
+                    <td style={{ padding: "9px 14px", color: "#555" }}>{t.cname}</td>
+                    <td style={{ padding: "9px 14px", maxWidth: 180 }}><div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 170, color: "#333" }}>{t.subj}</div></td>
+                    <td style={{ padding: "9px 14px" }}><Badge label={PRIO_L[t.prio]} color={PRIO_C[t.prio]} /></td>
+                    <td style={{ padding: "9px 14px" }}><Badge label={STAT_L[t.status]} color={STAT_C[t.status]} /></td>
+                    <td style={{ padding: "9px 14px", color: "#AAA", fontSize: 11 }}>{fmt(t.date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // CLIENT DASHBOARD
+  if (page === "dashboard" && user.role === "client") {
+    const client = CLIENTS0.find(c => c.id === user.cid);
+    const catProcs = [...new Set(myProcs.map(p => p.cat))];
+    content = (
+      <div>
+        <div style={{ background: `linear-gradient(135deg, ${SB} 0%, #1A1A38 100%)`, borderRadius: 12, padding: "18px 22px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ color: "rgba(255,255,255,.5)", fontSize: 11, marginBottom: 4 }}>2 façons de nous contacter</div>
+            <div style={{ color: "white", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Portail web ou email — au choix !</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,.08)", borderRadius: 7, padding: "7px 12px", width: "fit-content" }}>
+              <span style={{ fontSize: 14 }}>📧</span>
+              <code style={{ color: G, fontSize: 12 }}>{client?.supportEmail}</code>
+              <button onClick={() => copyToClipboard(client?.supportEmail, "email")} style={{ background: "none", border: "none", color: "rgba(255,255,255,.4)", cursor: "pointer", fontSize: 12, padding: 0 }}>{copied === "email" ? "✓" : "📋"}</button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => go("new-ticket")} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "9px 16px" }}>🌐 Portail</button>
+            <a href={`mailto:${client?.supportEmail}?subject=[Support]%20`} style={{ background: "rgba(255,255,255,.1)", border: `1px solid ${G}44`, color: G, borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "9px 16px", textDecoration: "none", display: "flex", alignItems: "center" }}>📧 Email</a>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+          <StatCard icon="🔴" label="Tickets ouverts" value={myTkts.filter(t => t.status === "open").length} color="#E53E3E" />
+          <StatCard icon="🟡" label="En cours" value={myTkts.filter(t => t.status === "in_progress").length} color={G} />
+          <StatCard icon="🟢" label="Résolus" value={myTkts.filter(t => t.status === "resolved").length} color="#48BB78" />
+          <StatCard icon="📖" label="Procédures" value={myProcs.length} color="#805AD5" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 14 }}>
+          <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" }}>
+            <div style={{ padding: "11px 16px", borderBottom: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontWeight: 500, fontSize: 13, color: "#1a1a3e" }}>Mes tickets récents</span>
+              <button onClick={() => go("tickets")} style={{ background: "none", border: "none", color: G, fontSize: 11, cursor: "pointer" }}>Tout voir →</button>
+            </div>
+            {myTkts.slice(0, 4).map(t => (
+              <div key={t.id} onClick={() => go("ticket", t.id)} style={{ padding: "9px 16px", borderBottom: "1px solid #F8F8FC", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <SourceBadge source={t.source} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{t.subj}</div>
+                </div>
+                <Badge label={STAT_L[t.status]} color={STAT_C[t.status]} />
+              </div>
+            ))}
+            {myTkts.length === 0 && <div style={{ padding: 20, color: "#999", fontSize: 13, textAlign: "center" }}>Aucun ticket pour le moment</div>}
+          </div>
+          <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" }}>
+            <div style={{ padding: "11px 16px", borderBottom: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontWeight: 500, fontSize: 13, color: "#1a1a3e" }}>Procédures disponibles</span>
+              <button onClick={() => go("knowledge")} style={{ background: "none", border: "none", color: G, fontSize: 11, cursor: "pointer" }}>Tout voir →</button>
+            </div>
+            {catProcs.map(cat => (
+              <div key={cat} onClick={() => { setKbCat(cat); go("knowledge"); }} style={{ padding: "9px 16px", borderBottom: "1px solid #F8F8FC", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <span style={{ fontSize: 16 }}>{CAT_ICONS[cat] || "📄"}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: "#333" }}>{cat}</div>
+                  <div style={{ fontSize: 10, color: "#999" }}>{myProcs.filter(p => p.cat === cat).length} procédure(s)</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // SEND EMAIL PAGE (client)
+  if (page === "send-email") {
+    const client = CLIENTS0.find(c => c.id === user.cid);
+    const emailBody = `Bonjour DSI Hotel,\n\n[Décrivez votre problème ici]\n\nInformations utiles :\n- Hôtel : ${user.name}\n- Date/heure du problème : \n- Poste concerné : \n- Message d'erreur éventuel : \n\nCordialement,\n${user.name}`;
+    content = (
+      <div style={{ maxWidth: 620 }}>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 14 }}>
+          <div style={{ background: SB, padding: "18px 22px" }}>
+            <div style={{ color: "rgba(255,255,255,.5)", fontSize: 11, marginBottom: 6 }}>VOTRE ADRESSE EMAIL SUPPORT DÉDIÉE</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontSize: 28 }}>📧</div>
+              <div>
+                <div style={{ color: G, fontSize: 18, fontWeight: 500, letterSpacing: "0.5px" }}>{client?.supportEmail}</div>
+                <div style={{ color: "rgba(255,255,255,.4)", fontSize: 12, marginTop: 3 }}>Tickets créés automatiquement · Réponse sous 1h en heures ouvrées</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ padding: "18px 22px" }}>
+            <div style={{ fontSize: 13, color: "#444", marginBottom: 16, lineHeight: 1.7 }}>
+              Envoyez simplement un email à cette adresse depuis votre messagerie habituelle. Un ticket sera <strong>créé automatiquement</strong> et assigné à votre hôtel. Vous recevrez une confirmation et pourrez suivre la réponse ici ou par email.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+              {[["✅ Sujet = titre du ticket", ""], ["✅ Corps = description", ""], ["✅ Réponse par email ou portail", ""], ["✅ Visible dans vos tickets", ""]].map(([label], i) => (
+                <div key={i} style={{ background: "#F8FFF8", border: "1px solid #C6F6D5", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#276749" }}>{label}</div>
+              ))}
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 8 }}>Modèle d'email suggéré :</div>
+              <div style={{ background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 8, padding: "12px 14px", fontFamily: "monospace", fontSize: 12, color: "#555", lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{emailBody}</div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => copyToClipboard(client?.supportEmail, "addr")} style={{ flex: 1, background: "none", border: `1px solid ${G}`, color: G2, borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: "10px" }}>{copied === "addr" ? "✓ Copié !" : "📋 Copier l'adresse"}</button>
+              <a href={`mailto:${client?.supportEmail}?subject=[Support] &body=${encodeURIComponent(emailBody)}`} style={{ flex: 1, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: "10px", textDecoration: "none", textAlign: "center", display: "block" }}>📧 Ouvrir mon client email</a>
+            </div>
+          </div>
+        </div>
+        <div style={{ background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 10, padding: "14px 18px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 20 }}>💡</span>
+          <div style={{ fontSize: 12, color: "#2B6CB0", lineHeight: 1.6 }}>
+            <strong>Préférez le portail pour les urgences.</strong> Les tickets créés via le portail sont immédiatement visibles et catégorisés. Par email, le traitement peut prendre quelques minutes supplémentaires.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // EMAIL IMPORT PAGE (admin)
+  if (page === "email-import") {
+    const importEmail = () => {
+      if (!emailImport.subj.trim() || !emailImport.body.trim()) return;
+      const client = CLIENTS0.find(c => c.id === emailImport.cid);
+      const id = "T" + String(tickets.length + 1).padStart(3, "0");
+      const t = {
+        id, cid: emailImport.cid, cname: client?.name.replace("Hôtel ", "") || "", subj: emailImport.subj, desc: emailImport.body,
+        cat: emailImport.cat, prio: emailImport.prio, status: "open", source: "email",
+        date: new Date().toISOString(), upd: new Date().toISOString(),
+        msgs: [{ f: "client", a: client?.name || "", t: emailImport.body, d: new Date().toISOString() }]
+      };
+      saveT([...tickets, t]);
+      setEmailImport({ cid: "c1", from: "", subj: "", body: "", prio: "medium", cat: CATS[0] });
+      go("ticket", id);
+    };
+    content = (
+      <div style={{ maxWidth: 700 }}>
+        <div style={{ background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 10, padding: "14px 18px", marginBottom: 18, fontSize: 12, color: "#2B6CB0", lineHeight: 1.7 }}>
+          <strong>En production,</strong> cette étape sera entièrement automatique — les emails envoyés à <code style={{ background: "#BEE3F8", padding: "1px 5px", borderRadius: 4 }}>*@support.dsihotel.com</code> créeront des tickets sans intervention manuelle (via Mailgun, Postmark ou Freshdesk). Pour l'instant, copiez-collez le contenu de l'email reçu.
+        </div>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 22 }}>
+          <div style={{ fontWeight: 500, fontSize: 14, color: "#1a1a3e", marginBottom: 18, display: "flex", alignItems: "center", gap: 8 }}>
+            <span>📧</span> Nouvel email reçu → créer un ticket
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Client (hôtel expéditeur)</label>
+              <select value={emailImport.cid} onChange={e => setEmailImport({ ...emailImport, cid: e.target.value })} style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 }}>
+                {CLIENTS0.map(c => <option key={c.id} value={c.id}>{c.name} — {c.supportEmail}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Email expéditeur (optionnel)</label>
+              <input value={emailImport.from} onChange={e => setEmailImport({ ...emailImport, from: e.target.value })} placeholder="ex: direction@legrandparis.fr" style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 }} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Objet de l'email (= sujet du ticket) *</label>
+            <input value={emailImport.subj} onChange={e => setEmailImport({ ...emailImport, subj: e.target.value })} placeholder="ex: Opera PMS ne démarre plus ce matin" style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 }} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Corps de l'email (= description du ticket) *</label>
+            <textarea value={emailImport.body} onChange={e => setEmailImport({ ...emailImport, body: e.target.value })} placeholder="Collez ici le contenu de l'email reçu..." style={{ width: "100%", minHeight: 130, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12, resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Catégorie</label>
+              <select value={emailImport.cat} onChange={e => setEmailImport({ ...emailImport, cat: e.target.value })} style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 }}>
+                {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Priorité</label>
+              <select value={emailImport.prio} onChange={e => setEmailImport({ ...emailImport, prio: e.target.value })} style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 }}>
+                {Object.entries(PRIO_L).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={importEmail} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 14, fontWeight: 500, cursor: "pointer", padding: "10px 24px", display: "flex", alignItems: "center", gap: 8 }}>
+              📧 Créer le ticket depuis cet email
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // TICKET LIST
+  if (page === "tickets") {
+    const tlist = user.role === "admin"
+      ? tickets.filter(t => (filter.status === "all" || t.status === filter.status) && (filter.cat === "all" || t.cat === filter.cat) && (filter.cid === "all" || t.cid === filter.cid) && (filter.source === "all" || t.source === filter.source))
+      : myTkts;
+    content = (
+      <div>
+        {user.role === "admin" && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            <select value={filter.status} onChange={e => setFilter({ ...filter, status: e.target.value })} style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 }}>
+              <option value="all">Tous les statuts</option>
+              {Object.entries(STAT_L).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <select value={filter.source} onChange={e => setFilter({ ...filter, source: e.target.value })} style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 }}>
+              <option value="all">Email + Portail</option>
+              <option value="email">📧 Email uniquement</option>
+              <option value="portal">🌐 Portail uniquement</option>
+            </select>
+            <select value={filter.cat} onChange={e => setFilter({ ...filter, cat: e.target.value })} style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 }}>
+              <option value="all">Toutes catégories</option>
+              {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={filter.cid} onChange={e => setFilter({ ...filter, cid: e.target.value })} style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 }}>
+              <option value="all">Tous les clients</option>
+              {CLIENTS0.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#F8F8FC" }}>
+                {(user.role === "admin" ? ["ID", "Source", "Hôtel", "Sujet", "Priorité", "Statut", "MAJ"] : ["ID", "Source", "Sujet", "Catégorie", "Priorité", "Statut"]).map(h => <th key={h} style={{ padding: "9px 14px", textAlign: "left", color: "#999", fontWeight: 500, fontSize: 11, borderBottom: "1px solid #EEE" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {tlist.map((t, i) => (
+                  <tr key={t.id} onClick={() => go("ticket", t.id)} style={{ background: i % 2 ? "#FAFAFA" : "white", borderBottom: "1px solid #F4F4F8", cursor: "pointer" }}>
+                    <td style={{ padding: "9px 14px", color: G, fontWeight: 500, fontFamily: "monospace", fontSize: 11 }}>{t.id}</td>
+                    <td style={{ padding: "9px 14px" }}><SourceBadge source={t.source} /></td>
+                    {user.role === "admin" && <td style={{ padding: "9px 14px", color: "#555" }}>{t.cname}</td>}
+                    <td style={{ padding: "9px 14px" }}><div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180, color: "#333" }}>{t.subj}</div></td>
+                    {user.role === "client" && <td style={{ padding: "9px 14px" }}><Badge label={t.cat} color="#718096" /></td>}
+                    <td style={{ padding: "9px 14px" }}><Badge label={PRIO_L[t.prio]} color={PRIO_C[t.prio]} /></td>
+                    <td style={{ padding: "9px 14px" }}><Badge label={STAT_L[t.status]} color={STAT_C[t.status]} /></td>
+                    <td style={{ padding: "9px 14px", color: "#AAA", fontSize: 11 }}>{fmt(t.upd)}</td>
+                  </tr>
+                ))}
+                {tlist.length === 0 && <tr><td colSpan={8} style={{ padding: 30, textAlign: "center", color: "#999" }}>Aucun ticket</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // TICKET DETAIL
+  if (page === "ticket" && updSel) {
+    const doReply = () => { if (!reply.trim()) return; const m = { f: user.role === "admin" ? "admin" : "client", a: user.name, t: reply.trim(), d: new Date().toISOString() }; saveT(tickets.map(t => t.id === updSel.id ? { ...t, msgs: [...t.msgs, m], upd: new Date().toISOString() } : t)); setReply(""); };
+    const chStat = s => saveT(tickets.map(t => t.id === updSel.id ? { ...t, status: s, upd: new Date().toISOString() } : t));
+    content = (
+      <div style={{ maxWidth: 760 }}>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: "16px 18px", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 500, color: "#1a1a3e", marginBottom: 8 }}>{updSel.subj}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <SourceBadge source={updSel.source} />
+                <Badge label={STAT_L[updSel.status]} color={STAT_C[updSel.status]} />
+                <Badge label={PRIO_L[updSel.prio]} color={PRIO_C[updSel.prio]} />
+                <Badge label={updSel.cat} color="#718096" />
+              </div>
+            </div>
+            {user.role === "admin" && (
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {updSel.status !== "in_progress" && updSel.status !== "closed" && <button onClick={() => chStat("in_progress")} style={{ padding: "4px 9px", background: "#D69E2E18", border: "1px solid #D69E2E44", borderRadius: 5, color: "#B7791F", fontSize: 11, cursor: "pointer" }}>En cours</button>}
+                {updSel.status !== "resolved" && updSel.status !== "closed" && <button onClick={() => chStat("resolved")} style={{ padding: "4px 9px", background: "#48BB7818", border: "1px solid #48BB7844", borderRadius: 5, color: "#276749", fontSize: 11, cursor: "pointer" }}>✓ Résoudre</button>}
+                {updSel.status !== "closed" && <button onClick={() => chStat("closed")} style={{ padding: "4px 9px", background: "#A0AEC018", border: "1px solid #A0AEC044", borderRadius: 5, color: "#718096", fontSize: 11, cursor: "pointer" }}>🔒 Fermer</button>}
+                {updSel.status === "closed" && <button onClick={() => chStat("open")} style={{ padding: "4px 9px", background: "#3182CE18", border: "1px solid #3182CE44", borderRadius: 5, color: "#2C5282", fontSize: 11, cursor: "pointer" }}>Réouvrir</button>}
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 10, padding: "9px 12px", background: "#F8F8FC", borderRadius: 7, fontSize: 12, color: "#555" }}><strong>Description : </strong>{updSel.desc}</div>
+          <div style={{ marginTop: 7, fontSize: 11, color: "#AAA", display: "flex", gap: 14, flexWrap: "wrap" }}>
+            <span>Client : <strong style={{ color: "#666" }}>{updSel.cname}</strong></span>
+            <span>Créé : {fmt(updSel.date)}</span>
+            <span>Source : <strong style={{ color: updSel.source === "email" ? "#2B6CB0" : "#276749" }}>{updSel.source === "email" ? "📧 Email" : "🌐 Portail"}</strong></span>
+          </div>
+        </div>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 14 }}>
+          <div style={{ padding: "11px 18px", borderBottom: "1px solid #F0F0F8", fontSize: 13, fontWeight: 500, color: "#1a1a3e" }}>Fil de discussion</div>
+          <div style={{ padding: "14px 18px" }}>
+            {updSel.msgs.map((m, i) => (
+              <div key={i} style={{ display: "flex", gap: 9, marginBottom: 12, flexDirection: m.f === "admin" ? "row-reverse" : "row" }}>
+                <div style={{ width: 30, height: 30, borderRadius: 20, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, background: m.f === "admin" ? G + "28" : "#3182CE18", color: m.f === "admin" ? G2 : "#3182CE" }}>{m.f === "admin" ? "D" : m.a.charAt(0)}</div>
+                <div style={{ maxWidth: "72%" }}>
+                  <div style={{ fontSize: 10, color: "#AAA", marginBottom: 3, textAlign: m.f === "admin" ? "right" : "left" }}><strong style={{ color: "#666" }}>{m.a}</strong> · {fmt(m.d)}</div>
+                  <div style={{ padding: "9px 13px", borderRadius: 10, fontSize: 12, lineHeight: 1.6, background: m.f === "admin" ? SB : "#EEF2FF", color: m.f === "admin" ? "rgba(255,255,255,.9)" : "#333", borderBottomRightRadius: m.f === "admin" ? 2 : 10, borderBottomLeftRadius: m.f === "admin" ? 10 : 2, whiteSpace: "pre-wrap" }}>{m.t}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {updSel.status !== "closed" ? (
+          <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a3e", marginBottom: 8 }}>Ajouter une réponse {updSel.source === "email" && <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>(sera envoyée par email au client)</span>}</div>
+            <textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Votre message..." style={{ width: "100%", minHeight: 80, padding: "9px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12, resize: "vertical", fontFamily: "inherit" }} />
+            <div style={{ marginTop: 7, display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={doReply} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: "8px 16px" }}>Envoyer →</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ background: "#F8F8FC", borderRadius: 8, padding: 12, textAlign: "center", color: "#999", fontSize: 12, border: "1px solid #EEE" }}>🔒 Ce ticket est fermé.</div>
+        )}
+      </div>
+    );
+  }
+
+  // NEW TICKET
+  if (page === "new-ticket") {
+    const submit = () => {
+      if (!nForm.subj.trim() || !nForm.desc.trim()) return;
+      const id = "T" + String(tickets.length + 1).padStart(3, "0");
+      const t = { id, cid: user.cid, cname: user.name.replace("Hôtel ", ""), subj: nForm.subj, desc: nForm.desc, cat: nForm.cat, prio: nForm.prio, status: "open", source: "portal", date: new Date().toISOString(), upd: new Date().toISOString(), msgs: [{ f: "client", a: user.name, t: nForm.desc, d: new Date().toISOString() }] };
+      saveT([...tickets, t]); setNForm({ subj: "", cat: CATS[0], prio: "medium", desc: "" }); go("tickets");
+    };
+    content = (
+      <div style={{ maxWidth: 580 }}>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 22 }}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Sujet *</label>
+            <input value={nForm.subj} onChange={e => setNForm({ ...nForm, subj: e.target.value })} placeholder="Décrivez brièvement votre problème" style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 }} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Catégorie *</label>
+              <select value={nForm.cat} onChange={e => setNForm({ ...nForm, cat: e.target.value })} style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 }}>
+                {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Priorité</label>
+              <select value={nForm.prio} onChange={e => setNForm({ ...nForm, prio: e.target.value })} style={{ width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 }}>
+                {Object.entries(PRIO_L).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 }}>Description *</label>
+            <textarea value={nForm.desc} onChange={e => setNForm({ ...nForm, desc: e.target.value })} placeholder="Décrivez le problème en détail : quand, sur quel poste, messages d'erreur éventuels..." style={{ width: "100%", minHeight: 110, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12, resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={() => go("dashboard")} style={{ background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 13, cursor: "pointer", padding: "8px 16px" }}>Annuler</button>
+            <button onClick={submit} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: "8px 16px" }}>Envoyer le ticket</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // CLIENTS
+  if (page === "clients") {
+    content = (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(270px,1fr))", gap: 14 }}>
+        {CLIENTS0.map(c => {
+          const ct = tickets.filter(t => t.cid === c.id), op = ct.filter(t => t.status === "open").length, cp = procs.filter(p => p.cid === c.id).length;
+          return (
+            <div key={c.id} style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 12 }}>
+                <div style={{ width: 38, height: 38, background: G + "20", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🏨</div>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 13, color: "#1a1a3e" }}>{c.name}</div>
+                  <div style={{ fontSize: 11, color: "#888" }}>{c.city} · {"★".repeat(c.stars)}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: "#777", marginBottom: 8 }}>
+                <div style={{ marginBottom: 3 }}>📧 Portail : {c.email}</div>
+                <div style={{ marginBottom: 3, display: "flex", alignItems: "center", gap: 5 }}>
+                  <span>📬 Support email :</span>
+                  <code style={{ color: G2, fontSize: 10, background: "#F8F0E0", padding: "1px 5px", borderRadius: 3 }}>{c.supportEmail}</code>
+                </div>
+                <div>📞 {c.phone}</div>
+              </div>
+              <div style={{ display: "flex", gap: 7, marginBottom: 11 }}>
+                <div style={{ flex: 1, background: "#F8F8FC", borderRadius: 7, padding: "7px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 17, fontWeight: 600, color: op > 0 ? "#E53E3E" : "#48BB78" }}>{op}</div>
+                  <div style={{ fontSize: 9, color: "#999" }}>ouverts</div>
+                </div>
+                <div style={{ flex: 1, background: "#F8F8FC", borderRadius: 7, padding: "7px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 17, fontWeight: 600, color: "#3182CE" }}>{ct.filter(t => t.source === "email").length}</div>
+                  <div style={{ fontSize: 9, color: "#999" }}>via email</div>
+                </div>
+                <div style={{ flex: 1, background: "#F8F8FC", borderRadius: 7, padding: "7px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 17, fontWeight: 600, color: "#805AD5" }}>{cp}</div>
+                  <div style={{ fontSize: 9, color: "#999" }}>procédures</div>
+                </div>
+              </div>
+              <button onClick={() => { setFilter({ status: "all", cat: "all", cid: c.id, source: "all" }); go("tickets"); }} style={{ width: "100%", padding: 7, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 }}>Voir les tickets →</button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // PROC ADMIN
+  if (page === "proc-admin") {
+    const cprocs = procs.filter(p => p.cid === editCid);
+    const cats = [...new Set(cprocs.map(p => p.cat))];
+    content = (
+      <div>
+        <div style={{ display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={editCid} onChange={e => setEditCid(e.target.value)} style={{ padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 }}>
+            {CLIENTS0.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button onClick={() => { setProcForm({ title: "", cat: CATS[0], content: "" }); setShowProcForm(!showProcForm); }} style={{ display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" }}>+ Ajouter une procédure</button>
+        </div>
+        {showProcForm && (
+          <div style={{ background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 }}>
+            <div style={{ fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 }}>Nouvelle procédure — {CLIENTS0.find(c => c.id === editCid)?.name}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div><label style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 }}>Titre</label><input value={procForm.title} onChange={e => setProcForm({ ...procForm, title: e.target.value })} placeholder="Titre de la procédure" style={{ width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 }} /></div>
+              <div><label style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 }}>Catégorie</label><select value={procForm.cat} onChange={e => setProcForm({ ...procForm, cat: e.target.value })} style={{ width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 }}>{CATS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+            </div>
+            <div style={{ marginBottom: 10 }}><label style={{ display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 }}>Contenu</label><textarea value={procForm.content} onChange={e => setProcForm({ ...procForm, content: e.target.value })} placeholder="Rédigez les étapes..." style={{ width: "100%", minHeight: 100, padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, resize: "vertical", fontFamily: "inherit" }} /></div>
+            <div style={{ display: "flex", gap: 7, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowProcForm(false)} style={{ background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" }}>Annuler</button>
+              <button onClick={() => { if (!procForm.title.trim() || !procForm.content.trim()) return; saveP([...procs, { id: "pr" + Date.now(), cid: editCid, ...procForm }]); setShowProcForm(false); }} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px" }}>Publier</button>
+            </div>
+          </div>
+        )}
+        {cats.length === 0 && !showProcForm && <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 }}>Aucune procédure. Ajoutez-en une !</div>}
+        {cats.map(cat => (
+          <div key={cat} style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 10 }}>
+            <div style={{ padding: "9px 15px", background: "#F8F8FC", borderBottom: "1px solid #EEE", display: "flex", alignItems: "center", gap: 8 }}>
+              <span>📁</span><span style={{ fontWeight: 500, fontSize: 12, color: "#1a1a3e" }}>{cat}</span>
+              <span style={{ marginLeft: "auto", fontSize: 10, color: "#AAA" }}>{cprocs.filter(p => p.cat === cat).length} procédure(s)</span>
+            </div>
+            {cprocs.filter(p => p.cat === cat).map(p => (
+              <div key={p.id} style={{ padding: "9px 15px", borderBottom: "1px solid #F4F4F8", display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ fontSize: 14 }}>📄</span>
+                <span style={{ flex: 1, fontSize: 12, color: "#333" }}>{p.title}</span>
+                <button onClick={() => go("proc-detail", p.id)} style={{ padding: "3px 8px", background: "none", border: `1px solid ${G}44`, borderRadius: 5, color: G, fontSize: 11, cursor: "pointer" }}>Voir</button>
+                <button onClick={() => saveP(procs.filter(x => x.id !== p.id))} style={{ padding: "3px 7px", background: "none", border: "1px solid #FFCDD2", borderRadius: 5, color: "#E53E3E", fontSize: 11, cursor: "pointer", marginLeft: 4 }}>✕</button>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // KNOWLEDGE BASE
+  if (page === "knowledge") {
+    const cats = [...new Set(myProcs.map(p => p.cat))];
+    const filtered = kbCat === "all" ? myProcs : myProcs.filter(p => p.cat === kbCat);
+    content = (
+      <div>
+        <div style={{ display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" }}>
+          {["all", ...cats].map(c => <button key={c} onClick={() => setKbCat(c)} style={{ padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer" }}>{c === "all" ? "Toutes" : c}</button>)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 12 }}>
+          {filtered.map(p => (
+            <div key={p.id} onClick={() => go("proc-detail", p.id)} style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 15, cursor: "pointer" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+                <div style={{ width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>{CAT_ICONS[p.cat] || "📄"}</div>
+                <span style={{ fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 }}>{p.cat}</span>
+              </div>
+              <div style={{ fontWeight: 500, fontSize: 12, color: "#1a1a3e", marginBottom: 5 }}>{p.title}</div>
+              <div style={{ fontSize: 11, color: "#AAA", marginBottom: 8 }}>{p.content.split("\n").find(l => l)?.slice(0, 55)}...</div>
+              <div style={{ fontSize: 11, color: G, fontWeight: 500 }}>Lire la procédure →</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // PROC DETAIL
+  if (page === "proc-detail" && selP) {
+    content = (
+      <div style={{ maxWidth: 680 }}>
+        <div style={{ background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 22 }}>
+          <Badge label={selP.cat} color={G2} />
+          <h3 style={{ margin: "10px 0 16px", fontSize: 16, fontWeight: 500, color: "#1a1a3e" }}>{selP.title}</h3>
+          <div style={{ borderTop: "1px solid #F0F0F8", paddingTop: 14 }}>
+            {selP.content.split("\n").map((line, i) => {
+              if (!line) return <div key={i} style={{ height: 6 }} />;
+              if (/^\d+\./.test(line)) return <div key={i} style={{ display: "flex", gap: 7, margin: "4px 0", fontSize: 13, color: "#444" }}><span style={{ color: G, fontWeight: 500, minWidth: 16 }}>{line.match(/^\d+/)[0]}.</span><span>{line.replace(/^\d+\.\s*/, "")}</span></div>;
+              if (line.startsWith("⚠️") || line.startsWith("🔒")) return <div key={i} style={{ background: "#FFFDF0", border: "1px solid #F0E0A0", borderRadius: 6, padding: "7px 11px", margin: "8px 0", fontSize: 12, color: "#744" }}>{line}</div>;
+              return <p key={i} style={{ margin: "3px 0", fontSize: 13, color: "#555" }}>{line}</p>;
+            })}
+          </div>
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "#999" }}>Problème non résolu ?</span>
+            {user.role === "client" && <button onClick={() => go("new-ticket")} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 11, fontWeight: 500, cursor: "pointer", padding: "5px 12px" }}>Ouvrir un ticket →</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" }}>
+      <div style={sb}>
+        <div style={{ padding: "16px 14px 13px", borderBottom: `1px solid ${G}22` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <div style={{ width: 32, height: 32, background: G, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, color: "#111" }}>D</div>
+            <div><div style={{ color: G, fontWeight: 500, fontSize: 13 }}>DSI Hotel</div><div style={{ color: "rgba(255,255,255,.3)", fontSize: 10 }}>Support Portal</div></div>
+          </div>
+        </div>
+        <div style={{ padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" }}>
+          <div style={{ background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" }}>
+            <div style={{ color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 }}>CONNECTÉ</div>
+            <div style={{ color: "white", fontSize: 12, fontWeight: 500 }}>{user.name}</div>
+            <div style={{ color: G, fontSize: 10, marginTop: 2 }}>{user.role === "admin" ? "⚡ Administrateur" : "🏨 Client"}</div>
+          </div>
+        </div>
+        <nav style={{ flex: 1, padding: "6px 0" }}>
+          {nav.map(({ p, icon, label, badge }) => (
+            <button key={p} onClick={() => go(p)} style={btnStyle(page === p)}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>{icon}</span>
+              <span style={{ flex: 1 }}>{label}</span>
+              {badge && badgeCount > 0 && <span style={{ background: "#E53E3E", color: "white", borderRadius: 20, fontSize: 10, padding: "1px 5px", fontWeight: 600 }}>{badgeCount}</span>}
+            </button>
+          ))}
+        </nav>
+        <div style={{ padding: "10px 13px", borderTop: "1px solid rgba(255,255,255,.06)" }}>
+          <button onClick={() => { setUser(null); setPage("dashboard"); setEmail(""); setPw(""); }} style={btnStyle(false)}><span>🚪</span><span>Déconnexion</span></button>
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: "18px 22px", overflowX: "hidden" }}>
+        <div style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" }}>{pageTitle}</h2>
+            {(page === "ticket" || page === "proc-detail") && <button onClick={() => go(page === "ticket" ? "tickets" : user.role === "admin" ? "proc-admin" : "knowledge")} style={{ background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 }}>← Retour</button>}
+          </div>
+          {page === "dashboard" && user.role === "client" && (
+            <button onClick={() => go("new-ticket")} style={{ background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" }}>+ Nouveau ticket</button>
+          )}
+        </div>
+        {content}
+      </div>
+    </div>
+  );
+}
