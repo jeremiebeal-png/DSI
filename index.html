@@ -667,6 +667,9 @@ function App() {
         ),
         React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10, marginTop: 6 } }, isAdmin ? "Espace Admin" : "Intranet Client")
       ),
+      !isAdmin && client?.logo && React.createElement('div', { style: { padding: "14px 13px 0", display: "flex", justifyContent: "center" } },
+        React.createElement('img', { src: client.logo, alt: client.name, style: { maxHeight: 48, maxWidth: "100%", objectFit: "contain" } })
+      ),
       React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
         React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
           React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
