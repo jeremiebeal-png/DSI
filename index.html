@@ -20,12 +20,8 @@ const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
 const STORAGE_KEY = "dsi_procs_v1";
 
-const USERS = [
-  { id: "adm", email: "admin@dsihotel.com", pw: "admin123", role: "admin", name: "Admin DSI Hotel" },
-  { id: "u1", email: "paris@demo.com", pw: "hotel", role: "client", cid: "c1", name: "Hôtel Le Grand Paris" },
-  { id: "u2", email: "nice@demo.com", pw: "hotel", role: "client", cid: "c2", name: "Hôtel Riviera Nice" },
-  { id: "u3", email: "lyon@demo.com", pw: "hotel", role: "client", cid: "c3", name: "Hôtel Lumière Lyon" },
-];
+const ADMIN_USER = { id: "adm", email: "admin@dsihotel.com", pw: "admin123", role: "admin", name: "Admin DSI Hotel" };
+const CLIENTS_STORAGE_KEY = "dsi_clients_v1";
 
 const CATS = ["Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
 const CAT_ICONS = { "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
@@ -34,9 +30,9 @@ const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
 
 const CLIENTS0 = [
-  { id: "c1", name: "Hôtel Le Grand Paris", city: "Paris 8ème", stars: 5, phone: "+33 1 42 65 32 10" },
-  { id: "c2", name: "Hôtel Riviera Nice", city: "Nice", stars: 4, phone: "+33 4 93 87 12 34" },
-  { id: "c3", name: "Hôtel Lumière Lyon", city: "Lyon", stars: 4, phone: "+33 4 78 42 56 78" },
+  { id: "c1", name: "Hôtel Le Grand Paris", city: "Paris 8ème", stars: 5, phone: "+33 1 42 65 32 10", email: "paris@demo.com", pw: "hotel" },
+  { id: "c2", name: "Hôtel Riviera Nice", city: "Nice", stars: 4, phone: "+33 4 93 87 12 34", email: "nice@demo.com", pw: "hotel" },
+  { id: "c3", name: "Hôtel Lumière Lyon", city: "Lyon", stars: 4, phone: "+33 4 78 42 56 78", email: "lyon@demo.com", pw: "hotel" },
 ];
 
 const P0 = [
@@ -68,16 +64,27 @@ function App() {
   const [search, setSearch] = useState("");
   const [selId, setSelId] = useState(null);
   const [procs, setProcs] = useState(P0);
+  const [clients, setClients] = useState(CLIENTS0);
   const [editCid, setEditCid] = useState("c1");
   const [showProcForm, setShowProcForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false, files: [] });
   const [storageWarn, setStorageWarn] = useState(false);
+  const [showClientForm, setShowClientForm] = useState(false);
+  const [editingClientId, setEditingClientId] = useState(null);
+  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+  const [clientErr, setClientErr] = useState("");
+  const [supportForm, setSupportForm] = useState({ name: "", role: "Réceptionniste", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "" });
+  const [supportSent, setSupportSent] = useState(false);
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) setProcs(JSON.parse(raw));
+    } catch (e) {}
+    try {
+      const raw2 = localStorage.getItem(CLIENTS_STORAGE_KEY);
+      if (raw2) setClients(JSON.parse(raw2));
     } catch (e) {}
   }, []);
 
@@ -87,16 +94,68 @@ function App() {
     catch (e) { setStorageWarn(true); }
   };
 
+  const saveClients = (arr) => {
+    setClients(arr);
+    try { localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(arr)); } catch (e) {}
+  };
+
+  const openNewClientForm = () => {
+    setEditingClientId(null);
+    setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+    setClientErr("");
+    setShowClientForm(true);
+  };
+  const openEditClientForm = (c) => {
+    setEditingClientId(c.id);
+    setClientForm({ name: c.name, city: c.city, stars: c.stars, phone: c.phone, email: c.email, pw: c.pw });
+    setClientErr("");
+    setShowClientForm(true);
+  };
+  const submitClientForm = () => {
+    if (!clientForm.name.trim() || !clientForm.email.trim() || !clientForm.pw.trim()) { setClientErr("Nom, email et mot de passe sont obligatoires."); return; }
+    const emailTaken = clients.some(c => c.email === clientForm.email && c.id !== editingClientId) || clientForm.email === ADMIN_USER.email;
+    if (emailTaken) { setClientErr("Cet email est déjà utilisé par un autre compte."); return; }
+    if (editingClientId) {
+      saveClients(clients.map(c => c.id === editingClientId ? { ...c, ...clientForm } : c));
+    } else {
+      const newId = "c" + Date.now();
+      saveClients([...clients, { id: newId, ...clientForm }]);
+      setEditCid(newId);
+    }
+    setShowClientForm(false);
+  };
+  const deleteClient = (id) => {
+    saveClients(clients.filter(c => c.id !== id));
+    saveProcs(procs.filter(p => p.cid !== id));
+    if (editCid === id) setEditCid(clients.find(c => c.id !== id)?.id || "");
+  };
+
   const isAdmin = user?.role === "admin";
   const myProcs = isAdmin ? procs.filter(p => p.cid === editCid) : (user ? procs.filter(p => p.cid === user.cid) : []);
   const selP = procs.find(p => p.id === selId);
-  const client = user && !isAdmin ? CLIENTS0.find(c => c.id === user.cid) : (isAdmin ? CLIENTS0.find(c => c.id === editCid) : null);
+  const client = user && !isAdmin ? clients.find(c => c.id === user.cid) : (isAdmin ? clients.find(c => c.id === editCid) : null);
 
   const go = (p, id = null) => { setPage(p); setSelId(id); setShowProcForm(false); };
 
   const mailSubject = encodeURIComponent(`[Support] ${client ? client.name : ""}`);
   const mailBody = encodeURIComponent(`Bonjour,\n\nHôtel : ${client ? client.name : ""}\n\n[Décrivez votre problème ici]\n\nCordialement,\n${client ? client.name : ""}`);
   const mailtoLink = `mailto:${SUPPORT_EMAIL}?subject=${mailSubject}&body=${mailBody}`;
+
+  const submitSupportForm = () => {
+    if (!supportForm.name.trim() || !supportForm.message.trim()) return;
+    const subj = encodeURIComponent(`[${supportForm.prio}] ${client ? client.name : ""} — ${supportForm.cat}`);
+    const body = encodeURIComponent(
+      `Hôtel : ${client ? client.name : ""}\n` +
+      `Contact : ${supportForm.name} (${supportForm.role})\n` +
+      `Email pro : ${supportForm.contactEmail || "-"}\n` +
+      `Téléphone : ${supportForm.phone || "-"}\n` +
+      `Catégorie : ${supportForm.cat}\n` +
+      `Priorité : ${supportForm.prio}\n\n` +
+      `Message :\n${supportForm.message}`
+    );
+    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${subj}&body=${body}`;
+    setSupportSent(true);
+  };
 
   const handleFilesAdd = (fileList) => {
     const arr = Array.from(fileList);
@@ -133,12 +192,17 @@ function App() {
   const deleteProc = (id) => { if (selId === id) go("proc-admin"); saveProcs(procs.filter(p => p.id !== id)); };
 
   if (!user) {
-    const doLogin = () => { const u = USERS.find(x => x.email === email && x.pw === pw); if (u) { setUser(u); setLoginErr(""); setPage(u.role === "admin" ? "proc-admin" : "knowledge"); } else setLoginErr("Email ou mot de passe incorrect."); };
+    const doLogin = () => {
+      if (email === ADMIN_USER.email && pw === ADMIN_USER.pw) { setUser(ADMIN_USER); setLoginErr(""); setPage("proc-admin"); return; }
+      const c = clients.find(x => x.email === email && x.pw === pw);
+      if (c) { setUser({ id: c.id, email: c.email, pw: c.pw, role: "client", cid: c.id, name: c.name }); setLoginErr(""); setPage("knowledge"); return; }
+      setLoginErr("Email ou mot de passe incorrect.");
+    };
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
       React.createElement('div', { style: { width: 420, maxWidth: "100%" } },
         React.createElement('div', { style: { textAlign: "center", marginBottom: 28 } },
           React.createElement('div', { style: { display: "inline-flex", alignItems: "center", marginBottom: 10 } },
-            React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 38 } })
+            React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 64 } })
           ),
           React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 13 } }, "Intranet Procédures & Support")
         ),
@@ -157,12 +221,12 @@ function App() {
         React.createElement('div', { style: { marginTop: 16, textAlign: "center" } },
           React.createElement('button', { onClick: () => setShowCreds(!showCreds), style: { background: "none", border: "none", color: "rgba(255,255,255,.3)", fontSize: 12, cursor: "pointer" } }, "↓ Accès de démonstration"),
           showCreds && React.createElement('div', { style: { marginTop: 10, background: "rgba(0,0,0,.35)", borderRadius: 8, padding: 14 } },
-            USERS.map(u => React.createElement('div', { key: u.id, onClick: () => { setEmail(u.email); setPw(u.pw); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", borderRadius: 6, color: "rgba(255,255,255,.75)", fontSize: 12 } },
+            [{ id: "adm", email: ADMIN_USER.email, pw: ADMIN_USER.pw, role: "admin", name: ADMIN_USER.name }, ...clients.map(c => ({ id: c.id, email: c.email, pw: c.pw, role: "client", name: c.name }))].map(u => React.createElement('div', { key: u.id, onClick: () => { setEmail(u.email); setPw(u.pw); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", borderRadius: 6, color: "rgba(255,255,255,.75)", fontSize: 12 } },
               React.createElement('span', null, u.role === "admin" ? "⚡" : "🏨"),
               React.createElement('span', { style: { flex: 1 } }, u.name),
               React.createElement('code', { style: { color: G, fontSize: 11 } }, u.email)
             )),
-            React.createElement('div', { style: { marginTop: 8, color: "rgba(255,255,255,.3)", fontSize: 11, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 8 } }, "MDP : admin123 (admin) · hotel (clients)")
+            React.createElement('div', { style: { marginTop: 8, color: "rgba(255,255,255,.3)", fontSize: 11, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 8 } }, "Identifiants définis par votre administrateur DSI Hotel.")
           )
         )
       )
@@ -170,10 +234,82 @@ function App() {
   }
 
   const nav = isAdmin
-    ? [{ p: "proc-admin", icon: "📚", label: "Gérer les procédures" }]
+    ? [{ p: "client-admin", icon: "🏨", label: "Gérer les clients" }, { p: "proc-admin", icon: "📚", label: "Gérer les procédures" }]
     : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "contact", icon: "📧", label: "Contacter le support" }];
 
   let content = null;
+
+  // CLIENT MANAGEMENT PAGE (admin)
+  if (page === "client-admin" && isAdmin) {
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#2B6CB0" } }, "ℹ️ Les clients créés ici sont sauvegardés dans ce navigateur uniquement (pas encore de base de données partagée)."),
+      React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", marginBottom: 14 } },
+        React.createElement('button', { onClick: openNewClientForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter un client")
+      ),
+      showClientForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
+        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, editingClientId ? "Modifier le client" : "Nouveau client"),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Nom de l'hôtel *"),
+            React.createElement('input', { value: clientForm.name, onChange: e => setClientForm({ ...clientForm, name: e.target.value }), placeholder: "ex: Hôtel Le Grand Paris", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Ville"),
+            React.createElement('input', { value: clientForm.city, onChange: e => setClientForm({ ...clientForm, city: e.target.value }), placeholder: "ex: Paris 8ème", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          )
+        ),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Étoiles"),
+            React.createElement('select', { value: clientForm.stars, onChange: e => setClientForm({ ...clientForm, stars: parseInt(e.target.value, 10) }), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+              [1, 2, 3, 4, 5].map(n => React.createElement('option', { key: n, value: n }, n + " ★"))
+            )
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Téléphone"),
+            React.createElement('input', { value: clientForm.phone, onChange: e => setClientForm({ ...clientForm, phone: e.target.value }), placeholder: "+33 1 XX XX XX XX", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          )
+        ),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email de connexion *"),
+            React.createElement('input', { value: clientForm.email, onChange: e => setClientForm({ ...clientForm, email: e.target.value }), placeholder: "contact@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mot de passe *"),
+            React.createElement('input', { value: clientForm.pw, onChange: e => setClientForm({ ...clientForm, pw: e.target.value }), placeholder: "Mot de passe de connexion", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          )
+        ),
+        clientErr && React.createElement('div', { style: { color: "#E53E3E", fontSize: 12, marginBottom: 10 } }, clientErr),
+        React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => setShowClientForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
+          React.createElement('button', { onClick: submitClientForm, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px" } }, editingClientId ? "Enregistrer" : "Créer le client")
+        )
+      ),
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
+        clients.map(c => React.createElement('div', { key: c.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
+          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12 } },
+            React.createElement('div', { style: { width: 38, height: 38, background: G + "20", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨"),
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e" } }, c.name),
+              React.createElement('div', { style: { fontSize: 11, color: "#888" } }, c.city + " · " + "★".repeat(c.stars))
+            )
+          ),
+          React.createElement('div', { style: { fontSize: 11, color: "#777", marginBottom: 11 } },
+            React.createElement('div', { style: { marginBottom: 3 } }, "📧 " + c.email),
+            React.createElement('div', { style: { marginBottom: 3 } }, "🔑 " + c.pw),
+            React.createElement('div', null, "📞 " + c.phone)
+          ),
+          React.createElement('div', { style: { display: "flex", gap: 7 } },
+            React.createElement('button', { onClick: () => openEditClientForm(c), style: { flex: 1, padding: 7, background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Modifier"),
+            React.createElement('button', { onClick: () => { setEditCid(c.id); go("proc-admin"); }, style: { flex: 1, padding: 7, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Procédures →"),
+            React.createElement('button', { onClick: () => deleteClient(c.id), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
+          )
+        )),
+        clients.length === 0 && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !")
+      )
+    );
+  }
 
   // ADMIN PAGE
   if (page === "proc-admin" && isAdmin) {
@@ -184,12 +320,12 @@ function App() {
       React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#2B6CB0" } }, "ℹ️ Les procédures et fichiers sont sauvegardés dans ce navigateur uniquement (pas encore de base de données partagée)."),
       React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
         React.createElement('select', { value: editCid, onChange: e => setEditCid(e.target.value), style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 } },
-          CLIENTS0.map(c => React.createElement('option', { key: c.id, value: c.id }, c.name))
+          clients.map(c => React.createElement('option', { key: c.id, value: c.id }, c.name))
         ),
         React.createElement('button', { onClick: openNewForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter une procédure")
       ),
       showProcForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
-        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingId ? "Modifier — " : "Nouvelle procédure — ") + (CLIENTS0.find(c => c.id === editCid)?.name || "")),
+        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingId ? "Modifier — " : "Nouvelle procédure — ") + (clients.find(c => c.id === editCid)?.name || "")),
         React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Titre"),
@@ -344,42 +480,100 @@ function App() {
     );
   }
 
-  // CONTACT PAGE
+  // CONTACT PAGE — inspirée de dsihotel.com/contact
   if (page === "contact" && !isAdmin) {
-    content = React.createElement('div', { style: { maxWidth: 620 } },
-      React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 14 } },
-        React.createElement('div', { style: { background: SB, padding: "22px 24px" } },
-          React.createElement('div', { style: { color: "rgba(255,255,255,.5)", fontSize: 11, marginBottom: 8 } }, "BESOIN D'AIDE ? ÉCRIVEZ-NOUS"),
-          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 14 } },
-            React.createElement('div', { style: { fontSize: 30 } }, "📧"),
-            React.createElement('div', null,
-              React.createElement('div', { style: { color: G, fontSize: 19, fontWeight: 500, letterSpacing: "0.5px" } }, SUPPORT_EMAIL),
-              React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 12, marginTop: 3 } }, "Notre équipe vous répond rapidement en heures ouvrées")
+    const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit" };
+    const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
+
+    content = React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 20, alignItems: "start" } },
+      // LEFT: form card
+      React.createElement('div', { style: { background: "white", borderRadius: 12, border: "1px solid #E8E8F0", padding: 26 } },
+        React.createElement('div', { style: { fontSize: 11, color: G2, fontWeight: 600, letterSpacing: "0.5px", marginBottom: 6 } }, "PARLONS DE VOTRE PROBLÈME"),
+        React.createElement('h3', { style: { margin: "0 0 8px", fontSize: 20, fontWeight: 600, color: "#1a1a3e" } }, "Contactez notre support technique"),
+        React.createElement('div', { style: { fontSize: 13, color: "#777", marginBottom: 20, lineHeight: 1.6 } }, "Décrivez votre problème ci-dessous, un technicien DSI Hotel vous répond rapidement. Tous les champs marqués d'un * sont obligatoires."),
+
+        supportSent
+          ? React.createElement('div', { style: { background: "#F0FFF4", border: "1px solid #C6F6D5", borderRadius: 10, padding: "20px", textAlign: "center" } },
+              React.createElement('div', { style: { fontSize: 28, marginBottom: 8 } }, "✅"),
+              React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: "#276749", marginBottom: 4 } }, "Votre messagerie a été ouverte"),
+              React.createElement('div', { style: { fontSize: 12, color: "#2F855A" } }, "Finalisez l'envoi depuis votre client email pour que notre équipe reçoive votre demande."),
+              React.createElement('button', { onClick: () => setSupportSent(false), style: { marginTop: 14, background: "none", border: `1px solid ${G}`, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px" } }, "← Envoyer une autre demande")
             )
-          )
-        ),
-        React.createElement('div', { style: { padding: "20px 24px" } },
-          React.createElement('div', { style: { fontSize: 13, color: "#444", marginBottom: 18, lineHeight: 1.7 } }, "Cliquez ci-dessous pour ouvrir votre messagerie avec un email pré-rempli, déjà adressé à notre support et identifié avec le nom de votre hôtel."),
-          React.createElement('a', { href: mailtoLink, style: { display: "block", textAlign: "center", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", padding: "13px", textDecoration: "none" } }, "📧 Envoyer un email au support"),
-          React.createElement('div', { style: { marginTop: 18, paddingTop: 16, borderTop: "1px solid #F0F0F8" } },
-            React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 8 } }, "OU CONTACTEZ-NOUS PAR TÉLÉPHONE"),
-            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#333" } },
-              React.createElement('span', null, "📞"),
-              React.createElement('span', null, client?.phone || "")
+          : React.createElement('div', null,
+              React.createElement('div', { style: { marginBottom: 14 } },
+                React.createElement('label', { style: labelStyle }, "Votre nom *"),
+                React.createElement('input', { value: supportForm.name, onChange: e => setSupportForm({ ...supportForm, name: e.target.value }), placeholder: "Prénom et nom", style: inputStyle })
+              ),
+              React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 } },
+                React.createElement('div', null,
+                  React.createElement('label', { style: labelStyle }, "Fonction"),
+                  React.createElement('select', { value: supportForm.role, onChange: e => setSupportForm({ ...supportForm, role: e.target.value }), style: inputStyle },
+                    ["Réceptionniste", "Directeur Général", "Directeur des opérations", "Responsable IT", "Autre"].map(r => React.createElement('option', { key: r, value: r }, r))
+                  )
+                ),
+                React.createElement('div', null,
+                  React.createElement('label', { style: labelStyle }, "Téléphone"),
+                  React.createElement('input', { value: supportForm.phone, onChange: e => setSupportForm({ ...supportForm, phone: e.target.value }), placeholder: "+33 ...", style: inputStyle })
+                )
+              ),
+              React.createElement('div', { style: { marginBottom: 14 } },
+                React.createElement('label', { style: labelStyle }, "Email professionnel"),
+                React.createElement('input', { value: supportForm.contactEmail, onChange: e => setSupportForm({ ...supportForm, contactEmail: e.target.value }), placeholder: "vous@hotel.com", style: inputStyle })
+              ),
+              React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 } },
+                React.createElement('div', null,
+                  React.createElement('label', { style: labelStyle }, "Catégorie du problème *"),
+                  React.createElement('select', { value: supportForm.cat, onChange: e => setSupportForm({ ...supportForm, cat: e.target.value }), style: inputStyle },
+                    CATS.map(c => React.createElement('option', { key: c, value: c }, c))
+                  )
+                ),
+                React.createElement('div', null,
+                  React.createElement('label', { style: labelStyle }, "Urgence"),
+                  React.createElement('select', { value: supportForm.prio, onChange: e => setSupportForm({ ...supportForm, prio: e.target.value }), style: inputStyle },
+                    ["Urgent", "Haute", "Moyenne", "Basse"].map(p => React.createElement('option', { key: p, value: p }, p))
+                  )
+                )
+              ),
+              React.createElement('div', { style: { marginBottom: 20 } },
+                React.createElement('label', { style: labelStyle }, "Message *"),
+                React.createElement('textarea', { value: supportForm.message, onChange: e => setSupportForm({ ...supportForm, message: e.target.value }), placeholder: "Décrivez le problème : quand, sur quel poste, message d'erreur éventuel...", style: { ...inputStyle, minHeight: 120, resize: "vertical" } })
+              ),
+              React.createElement('button', { onClick: submitSupportForm, style: { width: "100%", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", padding: "13px" } }, "Envoyer ma demande →")
             )
-          )
-        )
       ),
-      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 10, padding: "14px 18px", display: "flex", gap: 12, alignItems: "flex-start" } },
-        React.createElement('span', { style: { fontSize: 20 } }, "💡"),
-        React.createElement('div', { style: { fontSize: 12, color: "#2B6CB0", lineHeight: 1.6 } },
-          React.createElement('strong', null, "Avant d'écrire, "), "consultez nos ", React.createElement('a', { onClick: () => go("knowledge"), style: { color: "#2B6CB0", textDecoration: "underline", cursor: "pointer" } }, "procédures"), " : votre problème y est peut-être déjà résolu en quelques étapes !"
+
+      // RIGHT: sidebar like the real contact page
+      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 14 } },
+        React.createElement('div', { style: { background: SB, borderRadius: 12, padding: 20 } },
+          React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, letterSpacing: "0.5px", marginBottom: 12 } }, "NOS COORDONNÉES"),
+          React.createElement('div', { style: { color: "white", fontSize: 13, marginBottom: 10, lineHeight: 1.6 } }, "60 Rue François 1er", React.createElement('br'), "75008 Paris"),
+          React.createElement('div', { style: { color: G, fontSize: 13, marginBottom: 8, fontWeight: 500 } }, "📞 +33 1 84 18 02 23"),
+          React.createElement('div', { style: { color: G, fontSize: 13, marginBottom: 10, fontWeight: 500 } }, "📧 " + SUPPORT_EMAIL),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.5)", fontSize: 11, lineHeight: 1.6 } }, "Lun–Ven 8h–19h", React.createElement('br'), "Support 24h/24 · 7j/7")
+        ),
+        React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, padding: 18 } },
+          React.createElement('div', { style: { fontSize: 11, color: "#999", letterSpacing: "0.5px", marginBottom: 12, fontWeight: 600 } }, "CE QUI SE PASSE ENSUITE"),
+          [["1", "Réponse rapide", "Un technicien qualifie votre demande"], ["2", "Diagnostic", "Analyse à distance ou intervention sur site"], ["3", "Résolution", "Suivi jusqu'à la résolution complète"]].map(([n, t, d]) => React.createElement('div', { key: n, style: { display: "flex", gap: 10, marginBottom: 12 } },
+            React.createElement('div', { style: { width: 22, height: 22, borderRadius: "50%", background: G + "20", color: G2, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, n),
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, t),
+              React.createElement('div', { style: { fontSize: 11, color: "#888", marginTop: 1 } }, d)
+            )
+          ))
+        ),
+        React.createElement('div', { style: { background: "#FFF8E8", border: `1px solid ${G}55`, borderRadius: 12, padding: 18 } },
+          React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: G2, marginBottom: 6 } }, "⚡ Une urgence IT ?"),
+          React.createElement('div', { style: { fontSize: 11, color: "#7A5C1E", marginBottom: 10, lineHeight: 1.6 } }, "Astreinte technique 24h/24 · 7j/7"),
+          React.createElement('a', { href: client?.phone ? `tel:${client.phone.replace(/\s/g, "")}` : "tel:+33184180223", style: { display: "block", textAlign: "center", background: G2, color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, padding: "9px", textDecoration: "none" } }, "📞 Appeler maintenant")
+        ),
+        React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 10, padding: "12px 16px", fontSize: 11, color: "#2B6CB0", lineHeight: 1.6 } },
+          React.createElement('strong', null, "Avant d'écrire, "), "consultez nos ", React.createElement('a', { onClick: () => go("knowledge"), style: { color: "#2B6CB0", textDecoration: "underline", cursor: "pointer" } }, "procédures"), " : la réponse y est peut-être déjà !"
         )
       )
     );
   }
 
-  const pageTitle = isAdmin ? "Gérer les procédures" : (page === "knowledge" ? "Procédures" : page === "contact" ? "Contacter le support" : "Procédure");
+  const pageTitle = isAdmin ? (page === "client-admin" ? "Gérer les clients" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "contact" ? "Contacter le support" : "Procédure");
 
   return React.createElement('div', { style: { display: "flex", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
     React.createElement('div', { style: { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, minHeight: "100vh" } },
