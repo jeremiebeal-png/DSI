@@ -30,6 +30,8 @@ const USERS = [
 const CATS = ["Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
 const CAT_ICONS = { "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
 const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
+const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
 
 const CLIENTS0 = [
   { id: "c1", name: "Hôtel Le Grand Paris", city: "Paris 8ème", stars: 5, phone: "+33 1 42 65 32 10" },
@@ -135,9 +137,8 @@ function App() {
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
       React.createElement('div', { style: { width: 420, maxWidth: "100%" } },
         React.createElement('div', { style: { textAlign: "center", marginBottom: 28 } },
-          React.createElement('div', { style: { display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 10 } },
-            React.createElement('div', { style: { width: 44, height: 44, background: G, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: "#111" } }, "D"),
-            React.createElement('div', { style: { color: G, fontSize: 21, fontWeight: 500, letterSpacing: "1px" } }, "DSI Hotel")
+          React.createElement('div', { style: { display: "inline-flex", alignItems: "center", marginBottom: 10 } },
+            React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 38 } })
           ),
           React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 13 } }, "Intranet Procédures & Support")
         ),
@@ -212,11 +213,13 @@ function App() {
           )
         ),
         React.createElement('div', { style: { marginBottom: 14 } },
-          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Pièces jointes (PDF, Word, Excel) — réservé admin"),
-          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx", onChange: e => handleFilesAdd(e.target.files), style: { fontSize: 12 } }),
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Pièces jointes & images (PDF, Word, Excel, PNG, JPG) — réservé admin"),
+          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => handleFilesAdd(e.target.files), style: { fontSize: 12 } }),
           procForm.files.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
             procForm.files.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
-              React.createElement('span', null, FILE_ICONS[fileExt(f.name)] || "📄"),
+              isImageFile(f.name)
+                ? React.createElement('img', { src: f.dataUrl, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } })
+                : React.createElement('span', null, FILE_ICONS[fileExt(f.name)] || "📄"),
               React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
               React.createElement('span', { style: { color: "#AAA" } }, f.size ? Math.round(f.size / 1024) + " Ko" : ""),
               React.createElement('button', { onClick: () => removeFormFile(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
@@ -317,10 +320,16 @@ function App() {
             return React.createElement('p', { key: i, style: { margin: "3px 0", fontSize: 13, color: "#555" } }, line);
           })
         ),
-        (selP.files || []).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
+        (selP.files || []).filter(f => isImageFile(f.name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
+          React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
+          React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
+            selP.files.filter(f => isImageFile(f.name)).map((f, i) => React.createElement('img', { key: i, src: f.dataUrl, alt: f.name, style: { width: "100%", borderRadius: 8, border: "1px solid #EEE" } }))
+          )
+        ),
+        (selP.files || []).filter(f => !isImageFile(f.name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
-            selP.files.map((f, i) => React.createElement('a', { key: i, href: f.dataUrl, download: f.name, style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
+            selP.files.filter(f => !isImageFile(f.name)).map((f, i) => React.createElement('a', { key: i, href: f.dataUrl, download: f.name, style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
               React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.name)] || "📄"),
               React.createElement('span', { style: { flex: 1 } }, f.name),
               React.createElement('span', { style: { color: G2, fontSize: 11 } }, "Télécharger ⬇")
@@ -376,12 +385,9 @@ function App() {
     React.createElement('div', { style: { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, minHeight: "100vh" } },
       React.createElement('div', { style: { padding: "16px 14px 13px", borderBottom: `1px solid ${G}22` } },
         React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9 } },
-          React.createElement('div', { style: { width: 32, height: 32, background: G, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, color: "#111" } }, "D"),
-          React.createElement('div', null,
-            React.createElement('div', { style: { color: G, fontWeight: 500, fontSize: 13 } }, "DSI Hotel"),
-            React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10 } }, isAdmin ? "Espace Admin" : "Intranet Client")
-          )
-        )
+          React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 26 } })
+        ),
+        React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10, marginTop: 6 } }, isAdmin ? "Espace Admin" : "Intranet Client")
       ),
       React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
         React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
