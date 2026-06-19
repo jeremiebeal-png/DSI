@@ -18,6 +18,7 @@ const { useState, useEffect } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
+const EMAIL_API_URL = "https://VOTRE-WORKER.workers.dev/send"; // À remplacer après déploiement du Worker (voir instructions)
 const STORAGE_KEY = "dsi_procs_v1";
 
 const ADMIN_USER = { id: "adm", email: "admin@dsihotel.com", pw: "admin123", role: "admin", name: "Admin DSI Hotel" };
@@ -74,8 +75,10 @@ function App() {
   const [editingClientId, setEditingClientId] = useState(null);
   const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
   const [clientErr, setClientErr] = useState("");
-  const [supportForm, setSupportForm] = useState({ name: "", role: "Réceptionniste", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "" });
+  const [supportForm, setSupportForm] = useState({ name: "", role: "Réceptionniste", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
   const [supportSent, setSupportSent] = useState(false);
+  const [supportSending, setSupportSending] = useState(false);
+  const [supportError, setSupportError] = useState("");
 
   useEffect(() => {
     try {
@@ -141,20 +144,70 @@ function App() {
   const mailBody = encodeURIComponent(`Bonjour,\n\nHôtel : ${client ? client.name : ""}\n\n[Décrivez votre problème ici]\n\nCordialement,\n${client ? client.name : ""}`);
   const mailtoLink = `mailto:${SUPPORT_EMAIL}?subject=${mailSubject}&body=${mailBody}`;
 
-  const submitSupportForm = () => {
-    if (!supportForm.name.trim() || !supportForm.message.trim()) return;
-    const subj = encodeURIComponent(`[${supportForm.prio}] ${client ? client.name : ""} — ${supportForm.cat}`);
-    const body = encodeURIComponent(
+  const handleSupportFilesAdd = (fileList) => {
+    Array.from(fileList).forEach(f => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setSupportForm(prev => ({ ...prev, files: [...prev.files, { name: f.name, dataUrl: reader.result, size: f.size }] }));
+      };
+      reader.readAsDataURL(f);
+    });
+  };
+  const removeSupportFile = (idx) => setSupportForm(prev => ({ ...prev, files: prev.files.filter((_, i) => i !== idx) }));
+
+  const buildSupportSubjectBody = () => {
+    const subject = `[${supportForm.prio}] ${client ? client.name : ""} — ${supportForm.cat}`;
+    const bodyText =
       `Hôtel : ${client ? client.name : ""}\n` +
       `Contact : ${supportForm.name} (${supportForm.role})\n` +
       `Email pro : ${supportForm.contactEmail || "-"}\n` +
       `Téléphone : ${supportForm.phone || "-"}\n` +
       `Catégorie : ${supportForm.cat}\n` +
       `Priorité : ${supportForm.prio}\n\n` +
-      `Message :\n${supportForm.message}`
-    );
-    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${subj}&body=${body}`;
-    setSupportSent(true);
+      `Message :\n${supportForm.message}`;
+    return { subject, bodyText };
+  };
+
+  const fallbackToMailto = () => {
+    const { subject, bodyText } = buildSupportSubjectBody();
+    const note = supportForm.files.length > 0 ? "\n\n⚠️ Pièces jointes non incluses (mailto ne le permet pas) — merci de les joindre manuellement avant l'envoi." : "";
+    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText + note)}`;
+  };
+
+  const submitSupportForm = async () => {
+    if (!supportForm.name.trim() || !supportForm.message.trim()) return;
+    setSupportError("");
+    const { subject, bodyText } = buildSupportSubjectBody();
+
+    if (!EMAIL_API_URL || EMAIL_API_URL.includes("VOTRE-WORKER")) {
+      // Pas encore de backend configuré : on utilise mailto en repli (sans pièces jointes)
+      fallbackToMailto();
+      setSupportSent(true);
+      return;
+    }
+
+    setSupportSending(true);
+    try {
+      const res = await fetch(EMAIL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: SUPPORT_EMAIL,
+          subject,
+          text: bodyText,
+          replyTo: supportForm.contactEmail || undefined,
+          attachments: supportForm.files.map(f => ({ filename: f.name, content: f.dataUrl.split(",")[1] }))
+        })
+      });
+      if (!res.ok) throw new Error("Échec de l'envoi (" + res.status + ")");
+      setSupportSent(true);
+    } catch (e) {
+      setSupportError("L'envoi automatique a échoué. Ouverture de votre messagerie en repli (sans pièces jointes).");
+      fallbackToMailto();
+      setSupportSent(true);
+    } finally {
+      setSupportSending(false);
+    }
   };
 
   const handleFilesAdd = (fileList) => {
@@ -538,7 +591,20 @@ function App() {
                 React.createElement('label', { style: labelStyle }, "Message *"),
                 React.createElement('textarea', { value: supportForm.message, onChange: e => setSupportForm({ ...supportForm, message: e.target.value }), placeholder: "Décrivez le problème : quand, sur quel poste, message d'erreur éventuel...", style: { ...inputStyle, minHeight: 120, resize: "vertical" } })
               ),
-              React.createElement('button', { onClick: submitSupportForm, style: { width: "100%", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", padding: "13px" } }, "Envoyer ma demande →")
+              React.createElement('div', { style: { marginBottom: 20 } },
+                React.createElement('label', { style: labelStyle }, "📎 Pièces jointes (PDF, Word, Excel, images)"),
+                React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => handleSupportFilesAdd(e.target.files), style: { fontSize: 12 } }),
+                supportForm.files.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
+                  supportForm.files.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+                    React.createElement('span', null, "📄"),
+                    React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
+                    React.createElement('span', { style: { color: "#AAA" } }, f.size ? Math.round(f.size / 1024) + " Ko" : ""),
+                    React.createElement('button', { onClick: () => removeSupportFile(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+                  ))
+                )
+              ),
+              supportError && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 7, padding: "9px 12px", fontSize: 12, color: "#C53030", marginBottom: 12 } }, supportError),
+              React.createElement('button', { onClick: submitSupportForm, disabled: supportSending, style: { width: "100%", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: supportSending ? "default" : "pointer", padding: "13px", opacity: supportSending ? 0.6 : 1 } }, supportSending ? "Envoi en cours..." : "Envoyer ma demande →")
             )
       ),
 
