@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DSI Hotel — Intranet Client</title>
+<title>DSI Hotel — Intranet</title>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <style>
@@ -14,19 +14,22 @@
 <body>
 <div id="root"></div>
 <script>
-const { useState } = React;
+const { useState, useEffect } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
+const STORAGE_KEY = "dsi_procs_v1";
 
 const USERS = [
-  { id: "u1", email: "paris@demo.com", pw: "hotel", cid: "c1", name: "Hôtel Le Grand Paris" },
-  { id: "u2", email: "nice@demo.com", pw: "hotel", cid: "c2", name: "Hôtel Riviera Nice" },
-  { id: "u3", email: "lyon@demo.com", pw: "hotel", cid: "c3", name: "Hôtel Lumière Lyon" },
+  { id: "adm", email: "admin@dsihotel.com", pw: "admin123", role: "admin", name: "Admin DSI Hotel" },
+  { id: "u1", email: "paris@demo.com", pw: "hotel", role: "client", cid: "c1", name: "Hôtel Le Grand Paris" },
+  { id: "u2", email: "nice@demo.com", pw: "hotel", role: "client", cid: "c2", name: "Hôtel Riviera Nice" },
+  { id: "u3", email: "lyon@demo.com", pw: "hotel", role: "client", cid: "c3", name: "Hôtel Lumière Lyon" },
 ];
 
 const CATS = ["Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
 const CAT_ICONS = { "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
+const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
 
 const CLIENTS0 = [
   { id: "c1", name: "Hôtel Le Grand Paris", city: "Paris 8ème", stars: 5, phone: "+33 1 42 65 32 10" },
@@ -35,20 +38,22 @@ const CLIENTS0 = [
 ];
 
 const P0 = [
-  { id: "pr01", cid: "c1", title: "Redémarrer Opera PMS", cat: "Problème Opera", pinned: true, content: "Étapes pour redémarrer Opera PMS :\n1. Fermez toutes les fenêtres Opera ouvertes\n2. Ouvrez le Gestionnaire des tâches (Ctrl + Alt + Suppr)\n3. Onglet \"Processus\" → cherchez \"Opera.exe\"\n4. Clic droit → Terminer la tâche\n5. Attendez 30 secondes puis relancez depuis le raccourci bureau\n\n⚠️ Si le problème persiste, contactez le support." },
-  { id: "pr02", cid: "c1", title: "Réinitialiser un mot de passe Opera", cat: "Problème Opera", pinned: false, content: "Réservée au Super Administrateur.\n1. Connectez-vous avec les identifiants Super Admin\n2. Administration → Utilisateurs et Rôles\n3. Recherchez l'utilisateur concerné\n4. Cliquez \"Réinitialiser le mot de passe\"\n5. Communiquez le MDP temporaire en personne\n\n🔒 Ne jamais envoyer de mot de passe par email." },
-  { id: "pr03", cid: "c1", title: "Configurer Outlook (nouvel employé)", cat: "Problème Office", pinned: false, content: "1. Ouvrez Microsoft Outlook\n2. Fichier → Ajouter un compte\n3. Saisissez l'adresse email professionnelle\n4. Sélectionnez \"Microsoft 365\"\n5. Activez le MFA via Microsoft Authenticator\n\nPour les boîtes partagées, contactez le support." },
-  { id: "pr04", cid: "c1", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", pinned: true, content: "1. Appelez le support : +33 1 XX XX XX XX\n2. Communiquez votre nom et identifiant Windows\n3. Répondez à votre question de sécurité\n4. MDP temporaire communiqué oralement\n5. À changer immédiatement à la 1ère connexion\n\n🔒 PCI-DSS : aucune réinitialisation par email." },
-  { id: "pr05", cid: "c2", title: "Redémarrer Opera PMS", cat: "Problème Opera", pinned: true, content: "Procédure Riviera Nice :\n1. Fermer toutes les instances Opera\n2. Ctrl+Alt+Suppr → Gestionnaire des tâches\n3. Terminer Opera.exe\n4. Ouvrir Services.msc → Redémarrer \"Opera PMS Service\"\n5. Relancer Opera depuis le bureau" },
-  { id: "pr06", cid: "c2", title: "Connexion au Wi-Fi staff", cat: "Problème Réseau", pinned: true, content: "Réseau staff : DSI-STAFF-NICE-5G\n\nLe mot de passe est communiqué uniquement par votre directeur ou le support.\n\nEn cas de perte :\n1. Contactez votre responsable de site\n2. Si urgence : contactez le support → réponse < 1h\n\n⚠️ Ne jamais communiquer le mot de passe staff aux clients." },
-  { id: "pr07", cid: "c2", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", pinned: false, content: "1. Appelez le support (Nice) : +33 4 XX XX XX XX\n2. Identifiez-vous avec votre matricule\n3. Répondez à votre question de sécurité\n4. Nouveau MDP envoyé par SMS\n5. À changer dès la 1ère connexion\n\nHoraires : 7h–22h · 7j/7" },
-  { id: "pr08", cid: "c3", title: "Configurer emails sur smartphone", cat: "Problème Office", pinned: true, content: "iPhone :\n1. Réglages → Mail → Ajouter un compte\n2. Sélectionner Microsoft Exchange\n3. Email : prenom.nom@luminelyon.com\n4. Valider avec code MFA\n\nAndroid :\n1. Installer Microsoft Outlook\n2. Ajouter compte → Microsoft 365\n3. Saisir votre email + code MFA" },
-  { id: "pr09", cid: "c3", title: "Réinitialiser mot de passe Opera", cat: "Problème Opera", pinned: false, content: "Le Super Admin Opera est le Directeur Général + support.\n\n1. Contactez votre Directeur Général\n2. Si urgence et DG indisponible → contactez le support\n3. Précisez l'ID utilisateur Opera concerné + motif\n4. Délai de traitement : moins de 2 heures\n\nComptes Super Admin : ne jamais partager." },
+  { id: "pr01", cid: "c1", title: "Redémarrer Opera PMS", cat: "Problème Opera", pinned: true, files: [], content: "Étapes pour redémarrer Opera PMS :\n1. Fermez toutes les fenêtres Opera ouvertes\n2. Ouvrez le Gestionnaire des tâches (Ctrl + Alt + Suppr)\n3. Onglet \"Processus\" → cherchez \"Opera.exe\"\n4. Clic droit → Terminer la tâche\n5. Attendez 30 secondes puis relancez depuis le raccourci bureau\n\n⚠️ Si le problème persiste, contactez le support." },
+  { id: "pr02", cid: "c1", title: "Réinitialiser un mot de passe Opera", cat: "Problème Opera", pinned: false, files: [], content: "Réservée au Super Administrateur.\n1. Connectez-vous avec les identifiants Super Admin\n2. Administration → Utilisateurs et Rôles\n3. Recherchez l'utilisateur concerné\n4. Cliquez \"Réinitialiser le mot de passe\"\n5. Communiquez le MDP temporaire en personne\n\n🔒 Ne jamais envoyer de mot de passe par email." },
+  { id: "pr03", cid: "c1", title: "Configurer Outlook (nouvel employé)", cat: "Problème Office", pinned: false, files: [], content: "1. Ouvrez Microsoft Outlook\n2. Fichier → Ajouter un compte\n3. Saisissez l'adresse email professionnelle\n4. Sélectionnez \"Microsoft 365\"\n5. Activez le MFA via Microsoft Authenticator\n\nPour les boîtes partagées, contactez le support." },
+  { id: "pr04", cid: "c1", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", pinned: true, files: [], content: "1. Appelez le support : +33 1 XX XX XX XX\n2. Communiquez votre nom et identifiant Windows\n3. Répondez à votre question de sécurité\n4. MDP temporaire communiqué oralement\n5. À changer immédiatement à la 1ère connexion\n\n🔒 PCI-DSS : aucune réinitialisation par email." },
+  { id: "pr05", cid: "c2", title: "Redémarrer Opera PMS", cat: "Problème Opera", pinned: true, files: [], content: "Procédure Riviera Nice :\n1. Fermer toutes les instances Opera\n2. Ctrl+Alt+Suppr → Gestionnaire des tâches\n3. Terminer Opera.exe\n4. Ouvrir Services.msc → Redémarrer \"Opera PMS Service\"\n5. Relancer Opera depuis le bureau" },
+  { id: "pr06", cid: "c2", title: "Connexion au Wi-Fi staff", cat: "Problème Réseau", pinned: true, files: [], content: "Réseau staff : DSI-STAFF-NICE-5G\n\nLe mot de passe est communiqué uniquement par votre directeur ou le support.\n\nEn cas de perte :\n1. Contactez votre responsable de site\n2. Si urgence : contactez le support → réponse < 1h\n\n⚠️ Ne jamais communiquer le mot de passe staff aux clients." },
+  { id: "pr07", cid: "c2", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", pinned: false, files: [], content: "1. Appelez le support (Nice) : +33 4 XX XX XX XX\n2. Identifiez-vous avec votre matricule\n3. Répondez à votre question de sécurité\n4. Nouveau MDP envoyé par SMS\n5. À changer dès la 1ère connexion\n\nHoraires : 7h–22h · 7j/7" },
+  { id: "pr08", cid: "c3", title: "Configurer emails sur smartphone", cat: "Problème Office", pinned: true, files: [], content: "iPhone :\n1. Réglages → Mail → Ajouter un compte\n2. Sélectionner Microsoft Exchange\n3. Email : prenom.nom@luminelyon.com\n4. Valider avec code MFA\n\nAndroid :\n1. Installer Microsoft Outlook\n2. Ajouter compte → Microsoft 365\n3. Saisir votre email + code MFA" },
+  { id: "pr09", cid: "c3", title: "Réinitialiser mot de passe Opera", cat: "Problème Opera", pinned: false, files: [], content: "Le Super Admin Opera est le Directeur Général + support.\n\n1. Contactez votre Directeur Général\n2. Si urgence et DG indisponible → contactez le support\n3. Précisez l'ID utilisateur Opera concerné + motif\n4. Délai de traitement : moins de 2 heures\n\nComptes Super Admin : ne jamais partager." },
 ];
 
 const Badge = ({ label, color }) => (
   React.createElement('span', { style: { display: "inline-block", padding: "2px 8px", borderRadius: 100, fontSize: 11, fontWeight: 500, background: color + "22", color, border: `1px solid ${color}44` } }, label)
 );
+
+const fileExt = (name) => (name.split('.').pop() || '').toLowerCase();
 
 function App() {
   const [user, setUser] = useState(null);
@@ -60,20 +65,73 @@ function App() {
   const [kbCat, setKbCat] = useState("all");
   const [search, setSearch] = useState("");
   const [selId, setSelId] = useState(null);
+  const [procs, setProcs] = useState(P0);
+  const [editCid, setEditCid] = useState("c1");
+  const [showProcForm, setShowProcForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false, files: [] });
+  const [storageWarn, setStorageWarn] = useState(false);
 
-  const procs = P0;
-  const myProcs = user ? procs.filter(p => p.cid === user.cid) : [];
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setProcs(JSON.parse(raw));
+    } catch (e) {}
+  }, []);
+
+  const saveProcs = (arr) => {
+    setProcs(arr);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); setStorageWarn(false); }
+    catch (e) { setStorageWarn(true); }
+  };
+
+  const isAdmin = user?.role === "admin";
+  const myProcs = isAdmin ? procs.filter(p => p.cid === editCid) : (user ? procs.filter(p => p.cid === user.cid) : []);
   const selP = procs.find(p => p.id === selId);
-  const client = user ? CLIENTS0.find(c => c.id === user.cid) : null;
+  const client = user && !isAdmin ? CLIENTS0.find(c => c.id === user.cid) : (isAdmin ? CLIENTS0.find(c => c.id === editCid) : null);
 
-  const go = (p, id = null) => { setPage(p); setSelId(id); };
+  const go = (p, id = null) => { setPage(p); setSelId(id); setShowProcForm(false); };
 
   const mailSubject = encodeURIComponent(`[Support] ${client ? client.name : ""}`);
   const mailBody = encodeURIComponent(`Bonjour,\n\nHôtel : ${client ? client.name : ""}\n\n[Décrivez votre problème ici]\n\nCordialement,\n${client ? client.name : ""}`);
   const mailtoLink = `mailto:${SUPPORT_EMAIL}?subject=${mailSubject}&body=${mailBody}`;
 
+  const handleFilesAdd = (fileList) => {
+    const arr = Array.from(fileList);
+    arr.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setProcForm(prev => ({ ...prev, files: [...prev.files, { name: f.name, dataUrl: reader.result, size: f.size }] }));
+      };
+      reader.readAsDataURL(f);
+    });
+  };
+
+  const removeFormFile = (idx) => setProcForm(prev => ({ ...prev, files: prev.files.filter((_, i) => i !== idx) }));
+
+  const openEditForm = (p) => {
+    setEditingId(p.id);
+    setProcForm({ title: p.title, cat: p.cat, content: p.content, pinned: !!p.pinned, files: p.files || [] });
+    setShowProcForm(true);
+  };
+  const openNewForm = () => {
+    setEditingId(null);
+    setProcForm({ title: "", cat: CATS[0], content: "", pinned: false, files: [] });
+    setShowProcForm(true);
+  };
+  const submitProcForm = () => {
+    if (!procForm.title.trim() || !procForm.content.trim()) return;
+    if (editingId) {
+      saveProcs(procs.map(p => p.id === editingId ? { ...p, ...procForm } : p));
+    } else {
+      saveProcs([...procs, { id: "pr" + Date.now(), cid: editCid, ...procForm }]);
+    }
+    setShowProcForm(false);
+  };
+  const deleteProc = (id) => { if (selId === id) go("proc-admin"); saveProcs(procs.filter(p => p.id !== id)); };
+
   if (!user) {
-    const doLogin = () => { const u = USERS.find(x => x.email === email && x.pw === pw); if (u) { setUser(u); setLoginErr(""); setPage("knowledge"); } else setLoginErr("Email ou mot de passe incorrect."); };
+    const doLogin = () => { const u = USERS.find(x => x.email === email && x.pw === pw); if (u) { setUser(u); setLoginErr(""); setPage(u.role === "admin" ? "proc-admin" : "knowledge"); } else setLoginErr("Email ou mot de passe incorrect."); };
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
       React.createElement('div', { style: { width: 420, maxWidth: "100%" } },
         React.createElement('div', { style: { textAlign: "center", marginBottom: 28 } },
@@ -99,25 +157,98 @@ function App() {
           React.createElement('button', { onClick: () => setShowCreds(!showCreds), style: { background: "none", border: "none", color: "rgba(255,255,255,.3)", fontSize: 12, cursor: "pointer" } }, "↓ Accès de démonstration"),
           showCreds && React.createElement('div', { style: { marginTop: 10, background: "rgba(0,0,0,.35)", borderRadius: 8, padding: 14 } },
             USERS.map(u => React.createElement('div', { key: u.id, onClick: () => { setEmail(u.email); setPw(u.pw); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", borderRadius: 6, color: "rgba(255,255,255,.75)", fontSize: 12 } },
-              React.createElement('span', null, "🏨"),
+              React.createElement('span', null, u.role === "admin" ? "⚡" : "🏨"),
               React.createElement('span', { style: { flex: 1 } }, u.name),
               React.createElement('code', { style: { color: G, fontSize: 11 } }, u.email)
             )),
-            React.createElement('div', { style: { marginTop: 8, color: "rgba(255,255,255,.3)", fontSize: 11, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 8 } }, "Mot de passe : hotel")
+            React.createElement('div', { style: { marginTop: 8, color: "rgba(255,255,255,.3)", fontSize: 11, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 8 } }, "MDP : admin123 (admin) · hotel (clients)")
           )
         )
       )
     );
   }
 
-  const nav = [
-    { p: "knowledge", icon: "📖", label: "Procédures" },
-    { p: "contact", icon: "📧", label: "Contacter le support" },
-  ];
+  const nav = isAdmin
+    ? [{ p: "proc-admin", icon: "📚", label: "Gérer les procédures" }]
+    : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "contact", icon: "📧", label: "Contacter le support" }];
 
   let content = null;
 
-  if (page === "knowledge") {
+  // ADMIN PAGE
+  if (page === "proc-admin" && isAdmin) {
+    const cprocs = procs.filter(p => p.cid === editCid);
+    const cats = [...new Set(cprocs.map(p => p.cat))];
+    content = React.createElement('div', null,
+      storageWarn && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#C53030" } }, "⚠️ Stockage local plein ou indisponible — les fichiers volumineux risquent de ne pas être sauvegardés. Privilégiez des PDF compressés."),
+      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#2B6CB0" } }, "ℹ️ Les procédures et fichiers sont sauvegardés dans ce navigateur uniquement (pas encore de base de données partagée)."),
+      React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
+        React.createElement('select', { value: editCid, onChange: e => setEditCid(e.target.value), style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 } },
+          CLIENTS0.map(c => React.createElement('option', { key: c.id, value: c.id }, c.name))
+        ),
+        React.createElement('button', { onClick: openNewForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter une procédure")
+      ),
+      showProcForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
+        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingId ? "Modifier — " : "Nouvelle procédure — ") + (CLIENTS0.find(c => c.id === editCid)?.name || "")),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Titre"),
+            React.createElement('input', { value: procForm.title, onChange: e => setProcForm({ ...procForm, title: e.target.value }), placeholder: "Titre de la procédure", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Catégorie"),
+            React.createElement('select', { value: procForm.cat, onChange: e => setProcForm({ ...procForm, cat: e.target.value }), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+              CATS.map(c => React.createElement('option', { key: c, value: c }, c))
+            )
+          )
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Contenu"),
+          React.createElement('textarea', { value: procForm.content, onChange: e => setProcForm({ ...procForm, content: e.target.value }), placeholder: "Rédigez les étapes...", style: { width: "100%", minHeight: 100, padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, resize: "vertical", fontFamily: "inherit" } })
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#444", cursor: "pointer" } },
+            React.createElement('input', { type: "checkbox", checked: procForm.pinned, onChange: e => setProcForm({ ...procForm, pinned: e.target.checked } )}),
+            "⭐ Mettre en avant (procédure épinglée)"
+          )
+        ),
+        React.createElement('div', { style: { marginBottom: 14 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Pièces jointes (PDF, Word, Excel) — réservé admin"),
+          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx", onChange: e => handleFilesAdd(e.target.files), style: { fontSize: 12 } }),
+          procForm.files.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
+            procForm.files.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              React.createElement('span', null, FILE_ICONS[fileExt(f.name)] || "📄"),
+              React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
+              React.createElement('span', { style: { color: "#AAA" } }, f.size ? Math.round(f.size / 1024) + " Ko" : ""),
+              React.createElement('button', { onClick: () => removeFormFile(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+            ))
+          )
+        ),
+        React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => setShowProcForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
+          React.createElement('button', { onClick: submitProcForm, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px" } }, editingId ? "Enregistrer" : "Publier")
+        )
+      ),
+      cats.length === 0 && !showProcForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune procédure pour ce client. Ajoutez-en une !"),
+      cats.map(cat => React.createElement('div', { key: cat, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 10 } },
+        React.createElement('div', { style: { padding: "9px 15px", background: "#F8F8FC", borderBottom: "1px solid #EEE", display: "flex", alignItems: "center", gap: 8 } },
+          React.createElement('span', null, "📁"),
+          React.createElement('span', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e" } }, cat),
+          React.createElement('span', { style: { marginLeft: "auto", fontSize: 10, color: "#AAA" } }, cprocs.filter(p => p.cat === cat).length + " procédure(s)")
+        ),
+        cprocs.filter(p => p.cat === cat).map(p => React.createElement('div', { key: p.id, style: { padding: "9px 15px", borderBottom: "1px solid #F4F4F8", display: "flex", alignItems: "center", gap: 9 } },
+          React.createElement('span', { style: { fontSize: 14 } }, "📄"),
+          p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐"),
+          React.createElement('span', { style: { flex: 1, fontSize: 12, color: "#333" } }, p.title),
+          (p.files || []).length > 0 && React.createElement('span', { style: { fontSize: 10, color: "#888" } }, "📎 " + p.files.length),
+          React.createElement('button', { onClick: () => openEditForm(p), style: { padding: "3px 8px", background: "none", border: `1px solid ${G}44`, borderRadius: 5, color: G, fontSize: 11, cursor: "pointer" } }, "Modifier"),
+          React.createElement('button', { onClick: () => deleteProc(p.id), style: { padding: "3px 7px", background: "none", border: "1px solid #FFCDD2", borderRadius: 5, color: "#E53E3E", fontSize: 11, cursor: "pointer", marginLeft: 4 } }, "✕")
+        ))
+      ))
+    );
+  }
+
+  // CLIENT KNOWLEDGE PAGE
+  if (page === "knowledge" && !isAdmin) {
     const cats = [...new Set(myProcs.map(p => p.cat))];
     const pinned = myProcs.filter(p => p.pinned);
     let filtered = kbCat === "all" ? myProcs : myProcs.filter(p => p.cat === kbCat);
@@ -141,10 +272,7 @@ function App() {
         )
       ),
       React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        React.createElement('input', {
-          value: search, onChange: e => setSearch(e.target.value), placeholder: "🔍 Rechercher une procédure...",
-          style: { flex: "1 1 220px", padding: "8px 13px", borderRadius: 8, border: "1px solid #DDD", fontSize: 13, outline: "none" }
-        })
+        React.createElement('input', { value: search, onChange: e => setSearch(e.target.value), placeholder: "🔍 Rechercher une procédure...", style: { flex: "1 1 220px", padding: "8px 13px", borderRadius: 8, border: "1px solid #DDD", fontSize: 13, outline: "none" } })
       ),
       React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
@@ -157,7 +285,8 @@ function App() {
             p.pinned && React.createElement('span', { style: { marginLeft: "auto", fontSize: 12 } }, "⭐")
           ),
           React.createElement('div', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e", marginBottom: 5 } }, p.title),
-          React.createElement('div', { style: { fontSize: 11, color: "#AAA", marginBottom: 8 } }, (p.content.split("\n").find(l => l) || "").slice(0, 55) + "..."),
+          React.createElement('div', { style: { fontSize: 11, color: "#AAA", marginBottom: 8 } }, ((p.content.split("\n").find(l => l)) || "").slice(0, 55) + "..."),
+          (p.files || []).length > 0 && React.createElement('div', { style: { fontSize: 10, color: G2, marginBottom: 6 } }, "📎 " + p.files.length + " fichier(s) joint(s)"),
           React.createElement('div', { style: { fontSize: 11, color: G, fontWeight: 500 } }, "Lire la procédure →")
         )),
         filtered.length === 0 && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
@@ -165,6 +294,7 @@ function App() {
     );
   }
 
+  // PROC DETAIL (shared by client + admin preview)
   if (page === "proc-detail" && selP) {
     content = React.createElement('div', { style: { maxWidth: 680 } },
       React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 22 } },
@@ -187,7 +317,17 @@ function App() {
             return React.createElement('p', { key: i, style: { margin: "3px 0", fontSize: 13, color: "#555" } }, line);
           })
         ),
-        React.createElement('div', { style: { marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center" } },
+        (selP.files || []).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
+          React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"),
+          React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            selP.files.map((f, i) => React.createElement('a', { key: i, href: f.dataUrl, download: f.name, style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
+              React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.name)] || "📄"),
+              React.createElement('span', { style: { flex: 1 } }, f.name),
+              React.createElement('span', { style: { color: G2, fontSize: 11 } }, "Télécharger ⬇")
+            ))
+          )
+        ),
+        !isAdmin && React.createElement('div', { style: { marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center" } },
           React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Problème non résolu ?"),
           React.createElement('a', { href: mailtoLink, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 11, fontWeight: 500, cursor: "pointer", padding: "5px 12px", textDecoration: "none" } }, "📧 Contacter le support →")
         )
@@ -195,7 +335,8 @@ function App() {
     );
   }
 
-  if (page === "contact") {
+  // CONTACT PAGE
+  if (page === "contact" && !isAdmin) {
     content = React.createElement('div', { style: { maxWidth: 620 } },
       React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 14 } },
         React.createElement('div', { style: { background: SB, padding: "22px 24px" } },
@@ -209,9 +350,7 @@ function App() {
           )
         ),
         React.createElement('div', { style: { padding: "20px 24px" } },
-          React.createElement('div', { style: { fontSize: 13, color: "#444", marginBottom: 18, lineHeight: 1.7 } },
-            "Cliquez ci-dessous pour ouvrir votre messagerie avec un email pré-rempli, déjà adressé à notre support et identifié avec le nom de votre hôtel."
-          ),
+          React.createElement('div', { style: { fontSize: 13, color: "#444", marginBottom: 18, lineHeight: 1.7 } }, "Cliquez ci-dessous pour ouvrir votre messagerie avec un email pré-rempli, déjà adressé à notre support et identifié avec le nom de votre hôtel."),
           React.createElement('a', { href: mailtoLink, style: { display: "block", textAlign: "center", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", padding: "13px", textDecoration: "none" } }, "📧 Envoyer un email au support"),
           React.createElement('div', { style: { marginTop: 18, paddingTop: 16, borderTop: "1px solid #F0F0F8" } },
             React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 8 } }, "OU CONTACTEZ-NOUS PAR TÉLÉPHONE"),
@@ -231,6 +370,8 @@ function App() {
     );
   }
 
+  const pageTitle = isAdmin ? "Gérer les procédures" : (page === "knowledge" ? "Procédures" : page === "contact" ? "Contacter le support" : "Procédure");
+
   return React.createElement('div', { style: { display: "flex", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
     React.createElement('div', { style: { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, minHeight: "100vh" } },
       React.createElement('div', { style: { padding: "16px 14px 13px", borderBottom: `1px solid ${G}22` } },
@@ -238,7 +379,7 @@ function App() {
           React.createElement('div', { style: { width: 32, height: 32, background: G, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, color: "#111" } }, "D"),
           React.createElement('div', null,
             React.createElement('div', { style: { color: G, fontWeight: 500, fontSize: 13 } }, "DSI Hotel"),
-            React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10 } }, "Intranet Client")
+            React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10 } }, isAdmin ? "Espace Admin" : "Intranet Client")
           )
         )
       ),
@@ -246,7 +387,7 @@ function App() {
         React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
           React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
           React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, user.name),
-          React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, "🏨 " + (client ? client.city : ""))
+          React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? client.city : ""))
         )
       ),
       React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
@@ -267,8 +408,8 @@ function App() {
     ),
     React.createElement('div', { style: { flex: 1, padding: "18px 22px", overflowX: "hidden" } },
       React.createElement('div', { style: { marginBottom: 16 } },
-        React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, page === "knowledge" ? "Procédures" : page === "contact" ? "Contacter le support" : "Procédure"),
-        page === "proc-detail" && React.createElement('button', { onClick: () => go("knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour aux procédures")
+        React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
+        page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
       ),
       content
     )
