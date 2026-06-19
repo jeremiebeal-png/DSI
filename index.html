@@ -198,7 +198,13 @@ function App() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Réponse invalide du serveur (statut ${res.status}). Vérifiez que le Worker est bien déployé et que ses variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY) sont configurées. ${text ? "Détail : " + text.slice(0, 200) : ""}`);
+    }
     if (!res.ok) throw new Error(data.error || "Erreur serveur");
     return data;
   };
