@@ -75,7 +75,7 @@ function App() {
   const [editingClientId, setEditingClientId] = useState(null);
   const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
   const [clientErr, setClientErr] = useState("");
-  const [supportForm, setSupportForm] = useState({ name: "", role: "Réceptionniste", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
+  const [supportForm, setSupportForm] = useState({ name: "", role: "Front Office", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
   const [supportSent, setSupportSent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
@@ -527,7 +527,7 @@ function App() {
         ),
         !isAdmin && React.createElement('div', { style: { marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center" } },
           React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Problème non résolu ?"),
-          React.createElement('a', { href: mailtoLink, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 11, fontWeight: 500, cursor: "pointer", padding: "5px 12px", textDecoration: "none" } }, "📧 Contacter le support →")
+          React.createElement('button', { onClick: () => go("contact"), style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 11, fontWeight: 500, cursor: "pointer", padding: "5px 12px" } }, "📧 Contacter le support →")
         )
       )
     );
@@ -561,7 +561,7 @@ function App() {
                 React.createElement('div', null,
                   React.createElement('label', { style: labelStyle }, "Fonction"),
                   React.createElement('select', { value: supportForm.role, onChange: e => setSupportForm({ ...supportForm, role: e.target.value }), style: inputStyle },
-                    ["Réceptionniste", "Directeur Général", "Directeur des opérations", "Responsable IT", "Autre"].map(r => React.createElement('option', { key: r, value: r }, r))
+                    ["Front Office", "Directeur Général", "Directeur des opérations", "Finance", "Technique", "Sales", "Revenue", "HK", "Autre"].map(r => React.createElement('option', { key: r, value: r }, r))
                   )
                 ),
                 React.createElement('div', null,
