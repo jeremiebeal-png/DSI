@@ -6,6 +6,7 @@
 <title>DSI Hotel — Intranet</title>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
@@ -18,146 +19,286 @@ const { useState, useEffect } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
-const EMAIL_API_URL = "https://VOTRE-WORKER.workers.dev/send"; // À remplacer après déploiement du Worker (voir instructions)
-const STORAGE_KEY = "dsi_procs_v1";
+const EMAIL_API_URL = "https://VOTRE-WORKER.workers.dev/send"; // À remplacer après déploiement du Worker Resend (optionnel)
 
-const ADMIN_USER = { id: "adm", email: "admin@dsihotel.com", pw: "admin123", role: "admin", name: "Admin DSI Hotel" };
-const CLIENTS_STORAGE_KEY = "dsi_clients_v1";
+// ====== CONFIGURATION SUPABASE ======
+const SUPABASE_URL = "https://vkamubvlbezhpbunvdai.supabase.co";
+const SUPABASE_KEY = "sb_publishable_0bUT3AjMaWBI9qQa9ZKmrA_3BRqNvbL";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const STORAGE_BUCKET = "uploads";
 
 const CATS = ["Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
 const CAT_ICONS = { "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
 const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
-
-const CLIENTS0 = [
-  { id: "c1", name: "Hôtel Le Grand Paris", city: "Paris 8ème", stars: 5, phone: "+33 1 42 65 32 10", email: "paris@demo.com", pw: "hotel" },
-  { id: "c2", name: "Hôtel Riviera Nice", city: "Nice", stars: 4, phone: "+33 4 93 87 12 34", email: "nice@demo.com", pw: "hotel" },
-  { id: "c3", name: "Hôtel Lumière Lyon", city: "Lyon", stars: 4, phone: "+33 4 78 42 56 78", email: "lyon@demo.com", pw: "hotel" },
-];
-
-const P0 = [
-  { id: "pr01", cid: "c1", title: "Redémarrer Opera PMS", cat: "Problème Opera", pinned: true, files: [], content: "Étapes pour redémarrer Opera PMS :\n1. Fermez toutes les fenêtres Opera ouvertes\n2. Ouvrez le Gestionnaire des tâches (Ctrl + Alt + Suppr)\n3. Onglet \"Processus\" → cherchez \"Opera.exe\"\n4. Clic droit → Terminer la tâche\n5. Attendez 30 secondes puis relancez depuis le raccourci bureau\n\n⚠️ Si le problème persiste, contactez le support." },
-  { id: "pr02", cid: "c1", title: "Réinitialiser un mot de passe Opera", cat: "Problème Opera", pinned: false, files: [], content: "Réservée au Super Administrateur.\n1. Connectez-vous avec les identifiants Super Admin\n2. Administration → Utilisateurs et Rôles\n3. Recherchez l'utilisateur concerné\n4. Cliquez \"Réinitialiser le mot de passe\"\n5. Communiquez le MDP temporaire en personne\n\n🔒 Ne jamais envoyer de mot de passe par email." },
-  { id: "pr03", cid: "c1", title: "Configurer Outlook (nouvel employé)", cat: "Problème Office", pinned: false, files: [], content: "1. Ouvrez Microsoft Outlook\n2. Fichier → Ajouter un compte\n3. Saisissez l'adresse email professionnelle\n4. Sélectionnez \"Microsoft 365\"\n5. Activez le MFA via Microsoft Authenticator\n\nPour les boîtes partagées, contactez le support." },
-  { id: "pr04", cid: "c1", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", pinned: true, files: [], content: "1. Appelez le support : +33 1 XX XX XX XX\n2. Communiquez votre nom et identifiant Windows\n3. Répondez à votre question de sécurité\n4. MDP temporaire communiqué oralement\n5. À changer immédiatement à la 1ère connexion\n\n🔒 PCI-DSS : aucune réinitialisation par email." },
-  { id: "pr05", cid: "c2", title: "Redémarrer Opera PMS", cat: "Problème Opera", pinned: true, files: [], content: "Procédure Riviera Nice :\n1. Fermer toutes les instances Opera\n2. Ctrl+Alt+Suppr → Gestionnaire des tâches\n3. Terminer Opera.exe\n4. Ouvrir Services.msc → Redémarrer \"Opera PMS Service\"\n5. Relancer Opera depuis le bureau" },
-  { id: "pr06", cid: "c2", title: "Connexion au Wi-Fi staff", cat: "Problème Réseau", pinned: true, files: [], content: "Réseau staff : DSI-STAFF-NICE-5G\n\nLe mot de passe est communiqué uniquement par votre directeur ou le support.\n\nEn cas de perte :\n1. Contactez votre responsable de site\n2. Si urgence : contactez le support → réponse < 1h\n\n⚠️ Ne jamais communiquer le mot de passe staff aux clients." },
-  { id: "pr07", cid: "c2", title: "Réinitialiser mot de passe Windows", cat: "Problème Mot de Passe", pinned: false, files: [], content: "1. Appelez le support (Nice) : +33 4 XX XX XX XX\n2. Identifiez-vous avec votre matricule\n3. Répondez à votre question de sécurité\n4. Nouveau MDP envoyé par SMS\n5. À changer dès la 1ère connexion\n\nHoraires : 7h–22h · 7j/7" },
-  { id: "pr08", cid: "c3", title: "Configurer emails sur smartphone", cat: "Problème Office", pinned: true, files: [], content: "iPhone :\n1. Réglages → Mail → Ajouter un compte\n2. Sélectionner Microsoft Exchange\n3. Email : prenom.nom@luminelyon.com\n4. Valider avec code MFA\n\nAndroid :\n1. Installer Microsoft Outlook\n2. Ajouter compte → Microsoft 365\n3. Saisir votre email + code MFA" },
-  { id: "pr09", cid: "c3", title: "Réinitialiser mot de passe Opera", cat: "Problème Opera", pinned: false, files: [], content: "Le Super Admin Opera est le Directeur Général + support.\n\n1. Contactez votre Directeur Général\n2. Si urgence et DG indisponible → contactez le support\n3. Précisez l'ID utilisateur Opera concerné + motif\n4. Délai de traitement : moins de 2 heures\n\nComptes Super Admin : ne jamais partager." },
-];
+const fileExt = (name) => (name.split('.').pop() || '').toLowerCase();
 
 const Badge = ({ label, color }) => (
   React.createElement('span', { style: { display: "inline-block", padding: "2px 8px", borderRadius: 100, fontSize: 11, fontWeight: 500, background: color + "22", color, border: `1px solid ${color}44` } }, label)
 );
 
-const fileExt = (name) => (name.split('.').pop() || '').toLowerCase();
+// Upload un fichier vers Supabase Storage, retourne son URL publique
+async function uploadToStorage(file, pathPrefix) {
+  const cleanName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+  const path = `${pathPrefix}/${Date.now()}_${cleanName}`;
+  const { error } = await sb.storage.from(STORAGE_BUCKET).upload(path, file);
+  if (error) throw error;
+  const { data } = sb.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
 
 function App() {
-  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null); // { role, hotel_id }
+  const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("knowledge");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [loginErr, setLoginErr] = useState("");
-  const [showCreds, setShowCreds] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  const [hotels, setHotels] = useState([]);
+  const [hotelsLoading, setHotelsLoading] = useState(false);
+  const [procedures, setProcedures] = useState([]);
+  const [procsLoading, setProcsLoading] = useState(false);
+  const [procFiles, setProcFiles] = useState({}); // { procId: [{name, url}] }
+
   const [kbCat, setKbCat] = useState("all");
   const [search, setSearch] = useState("");
   const [selId, setSelId] = useState(null);
-  const [procs, setProcs] = useState(P0);
-  const [clients, setClients] = useState(CLIENTS0);
-  const [editCid, setEditCid] = useState("c1");
+  const [editCid, setEditCid] = useState(null);
+
   const [showProcForm, setShowProcForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false, files: [] });
-  const [storageWarn, setStorageWarn] = useState(false);
+  const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false });
+  const [procFormFiles, setProcFormFiles] = useState([]); // pending File objects to upload on submit
+  const [procFormExistingFiles, setProcFormExistingFiles] = useState([]); // already-saved files when editing
+  const [savingProc, setSavingProc] = useState(false);
+
   const [showClientForm, setShowClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
-  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", logo: "" });
+  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+  const [clientLogoFile, setClientLogoFile] = useState(null);
   const [clientErr, setClientErr] = useState("");
+  const [savingClient, setSavingClient] = useState(false);
+
   const [supportForm, setSupportForm] = useState({ name: "", role: "Front Office", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
   const [supportSent, setSupportSent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
 
+  const isAdmin = profile?.role === "admin";
+  const myHotelId = profile?.hotel_id;
+  const client = isAdmin ? hotels.find(h => h.id === editCid) : hotels.find(h => h.id === myHotelId);
+  const selP = procedures.find(p => p.id === selId);
+
+  // ---------- AUTH ----------
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setProcs(JSON.parse(raw));
-    } catch (e) {}
-    try {
-      const raw2 = localStorage.getItem(CLIENTS_STORAGE_KEY);
-      if (raw2) setClients(JSON.parse(raw2));
-    } catch (e) {}
+    sb.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+    const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+    });
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  const saveProcs = (arr) => {
-    setProcs(arr);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); setStorageWarn(false); }
-    catch (e) { setStorageWarn(true); }
+  useEffect(() => {
+    if (!session) { setProfile(null); return; }
+    sb.from("profiles").select("role, hotel_id").eq("id", session.user.id).single()
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setProfile(data);
+          setPage(data.role === "admin" ? "client-admin" : "knowledge");
+        }
+      });
+  }, [session]);
+
+  // ---------- LOAD HOTELS ----------
+  useEffect(() => {
+    if (!profile) return;
+    setHotelsLoading(true);
+    sb.from("hotels").select("*").order("name")
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setHotels(data);
+          if (isAdmin && !editCid && data.length > 0) setEditCid(data[0].id);
+        }
+        setHotelsLoading(false);
+      });
+  }, [profile]);
+
+  // ---------- LOAD PROCEDURES for relevant hotel ----------
+  const activeHotelId = isAdmin ? editCid : myHotelId;
+  useEffect(() => {
+    if (!profile || !activeHotelId) return;
+    setProcsLoading(true);
+    sb.from("procedures").select("*").eq("hotel_id", activeHotelId).order("created_at")
+      .then(({ data, error }) => {
+        if (!error && data) setProcedures(data);
+        setProcsLoading(false);
+      });
+  }, [profile, activeHotelId]);
+
+  const loadFilesFor = (procId) => {
+    if (procFiles[procId]) return;
+    sb.from("procedure_files").select("*").eq("procedure_id", procId)
+      .then(({ data, error }) => {
+        if (!error) setProcFiles(prev => ({ ...prev, [procId]: data || [] }));
+      });
   };
 
-  const saveClients = (arr) => {
-    setClients(arr);
-    try { localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(arr)); } catch (e) {}
+  const go = (p, id = null) => {
+    setPage(p);
+    setSelId(id);
+    setShowProcForm(false);
+    if (id && p === "proc-detail") loadFilesFor(id);
   };
 
+  // ---------- LOGIN / LOGOUT ----------
+  const doLogin = async () => {
+    setLoggingIn(true);
+    setLoginErr("");
+    const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+    if (error) setLoginErr("Email ou mot de passe incorrect.");
+    setLoggingIn(false);
+  };
+  const doLogout = async () => {
+    await sb.auth.signOut();
+    setEmail(""); setPw(""); setHotels([]); setProcedures([]); setEditCid(null);
+  };
+
+  // ---------- HOTEL (CLIENT) CRUD ----------
   const openNewClientForm = () => {
     setEditingClientId(null);
     setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+    setClientLogoFile(null);
     setClientErr("");
     setShowClientForm(true);
   };
-  const openEditClientForm = (c) => {
-    setEditingClientId(c.id);
-    setClientForm({ name: c.name, city: c.city, stars: c.stars, phone: c.phone, email: c.email, pw: c.pw, logo: c.logo || "" });
+  const openEditClientForm = (h) => {
+    setEditingClientId(h.id);
+    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: "", pw: "" });
+    setClientLogoFile(null);
     setClientErr("");
     setShowClientForm(true);
   };
-  const handleClientLogoUpload = (file) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setClientForm(prev => ({ ...prev, logo: reader.result }));
-    reader.readAsDataURL(file);
-  };
-  const submitClientForm = () => {
-    if (!clientForm.name.trim() || !clientForm.email.trim() || !clientForm.pw.trim()) { setClientErr("Nom, email et mot de passe sont obligatoires."); return; }
-    const emailTaken = clients.some(c => c.email === clientForm.email && c.id !== editingClientId) || clientForm.email === ADMIN_USER.email;
-    if (emailTaken) { setClientErr("Cet email est déjà utilisé par un autre compte."); return; }
-    if (editingClientId) {
-      saveClients(clients.map(c => c.id === editingClientId ? { ...c, ...clientForm } : c));
-    } else {
-      const newId = "c" + Date.now();
-      saveClients([...clients, { id: newId, ...clientForm }]);
-      setEditCid(newId);
+
+  const submitClientForm = async () => {
+    setClientErr("");
+    if (!clientForm.name.trim()) { setClientErr("Le nom de l'hôtel est obligatoire."); return; }
+    setSavingClient(true);
+    try {
+      let logoUrl;
+      if (clientLogoFile) {
+        logoUrl = await uploadToStorage(clientLogoFile, "logos");
+      }
+      if (editingClientId) {
+        const update = { name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone };
+        if (logoUrl) update.logo_url = logoUrl;
+        const { error } = await sb.from("hotels").update(update).eq("id", editingClientId);
+        if (error) throw error;
+        setHotels(prev => prev.map(h => h.id === editingClientId ? { ...h, ...update } : h));
+      } else {
+        if (!clientForm.email.trim() || !clientForm.pw.trim()) { setClientErr("Email et mot de passe sont obligatoires pour un nouveau client."); setSavingClient(false); return; }
+        // 1. créer le compte d'authentification
+        const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email: clientForm.email, password: clientForm.pw });
+        if (signUpErr) throw signUpErr;
+        // 2. créer l'hôtel
+        const { data: hotelData, error: hotelErr } = await sb.from("hotels")
+          .insert({ name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, logo_url: logoUrl || null })
+          .select().single();
+        if (hotelErr) throw hotelErr;
+        // 3. lier le profil (rôle + hôtel)
+        if (signUpData.user) {
+          const { error: profErr } = await sb.from("profiles").insert({ id: signUpData.user.id, role: "client", hotel_id: hotelData.id });
+          if (profErr) throw profErr;
+        }
+        setHotels(prev => [...prev, hotelData]);
+        setEditCid(hotelData.id);
+      }
+      setShowClientForm(false);
+    } catch (e) {
+      setClientErr(e.message || "Une erreur est survenue.");
+    } finally {
+      setSavingClient(false);
     }
-    setShowClientForm(false);
-  };
-  const deleteClient = (id) => {
-    saveClients(clients.filter(c => c.id !== id));
-    saveProcs(procs.filter(p => p.cid !== id));
-    if (editCid === id) setEditCid(clients.find(c => c.id !== id)?.id || "");
   };
 
-  const isAdmin = user?.role === "admin";
-  const myProcs = isAdmin ? procs.filter(p => p.cid === editCid) : (user ? procs.filter(p => p.cid === user.cid) : []);
-  const selP = procs.find(p => p.id === selId);
-  const client = user && !isAdmin ? clients.find(c => c.id === user.cid) : (isAdmin ? clients.find(c => c.id === editCid) : null);
+  const deleteClient = async (id) => {
+    const { error } = await sb.from("hotels").delete().eq("id", id);
+    if (!error) {
+      setHotels(prev => prev.filter(h => h.id !== id));
+      if (editCid === id) setEditCid(hotels.find(h => h.id !== id)?.id || null);
+    }
+  };
 
-  const go = (p, id = null) => { setPage(p); setSelId(id); setShowProcForm(false); };
+  // ---------- PROCEDURE CRUD ----------
+  const openNewProcForm = () => {
+    setEditingId(null);
+    setProcForm({ title: "", cat: CATS[0], content: "", pinned: false });
+    setProcFormFiles([]);
+    setProcFormExistingFiles([]);
+    setShowProcForm(true);
+  };
+  const openEditProcForm = (p) => {
+    setEditingId(p.id);
+    setProcForm({ title: p.title, cat: p.category, content: p.content, pinned: !!p.pinned });
+    setProcFormFiles([]);
+    setProcFormExistingFiles(procFiles[p.id] || []);
+    loadFilesFor(p.id);
+    setShowProcForm(true);
+  };
+  const removeExistingProcFile = async (fileId) => {
+    await sb.from("procedure_files").delete().eq("id", fileId);
+    setProcFormExistingFiles(prev => prev.filter(f => f.id !== fileId));
+  };
 
-  const mailSubject = encodeURIComponent(`[Support] ${client ? client.name : ""}`);
-  const mailBody = encodeURIComponent(`Bonjour,\n\nHôtel : ${client ? client.name : ""}\n\n[Décrivez votre problème ici]\n\nCordialement,\n${client ? client.name : ""}`);
-  const mailtoLink = `mailto:${SUPPORT_EMAIL}?subject=${mailSubject}&body=${mailBody}`;
+  const submitProcForm = async () => {
+    if (!procForm.title.trim() || !procForm.content.trim() || !activeHotelId) return;
+    setSavingProc(true);
+    try {
+      let procId = editingId;
+      if (editingId) {
+        const { error } = await sb.from("procedures").update({
+          title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned, updated_at: new Date().toISOString()
+        }).eq("id", editingId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await sb.from("procedures").insert({
+          hotel_id: activeHotelId, title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned
+        }).select().single();
+        if (error) throw error;
+        procId = data.id;
+      }
+      // Upload des nouveaux fichiers
+      for (const file of procFormFiles) {
+        const url = await uploadToStorage(file, "procedures");
+        await sb.from("procedure_files").insert({ procedure_id: procId, file_name: file.name, file_url: url });
+      }
+      // Recharge la liste
+      const { data: refreshed } = await sb.from("procedures").select("*").eq("hotel_id", activeHotelId).order("created_at");
+      if (refreshed) setProcedures(refreshed);
+      setProcFiles(prev => { const copy = { ...prev }; delete copy[procId]; return copy; });
+      setShowProcForm(false);
+    } catch (e) {
+      alert("Erreur : " + e.message);
+    } finally {
+      setSavingProc(false);
+    }
+  };
 
+  const deleteProc = async (id) => {
+    await sb.from("procedures").delete().eq("id", id);
+    setProcedures(prev => prev.filter(p => p.id !== id));
+    if (selId === id) go("proc-admin");
+  };
+
+  // ---------- SUPPORT FORM ----------
   const handleSupportFilesAdd = (fileList) => {
-    Array.from(fileList).forEach(f => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setSupportForm(prev => ({ ...prev, files: [...prev.files, { name: f.name, dataUrl: reader.result, size: f.size }] }));
-      };
-      reader.readAsDataURL(f);
-    });
+    setSupportForm(prev => ({ ...prev, files: [...prev.files, ...Array.from(fileList)] }));
   };
   const removeSupportFile = (idx) => setSupportForm(prev => ({ ...prev, files: prev.files.filter((_, i) => i !== idx) }));
 
@@ -180,13 +321,30 @@ function App() {
     window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText + note)}`;
   };
 
+  const logTicketToDb = async () => {
+    try {
+      await sb.from("tickets").insert({
+        hotel_id: myHotelId,
+        contact_name: supportForm.name,
+        contact_role: supportForm.role,
+        contact_email: supportForm.contactEmail,
+        contact_phone: supportForm.phone,
+        category: supportForm.cat,
+        priority: supportForm.prio,
+        message: supportForm.message,
+        status: "open"
+      });
+    } catch (e) { /* silencieux : l'email reste l'envoi prioritaire */ }
+  };
+
   const submitSupportForm = async () => {
     if (!supportForm.name.trim() || !supportForm.message.trim()) return;
     setSupportError("");
     const { subject, bodyText } = buildSupportSubjectBody();
 
+    logTicketToDb();
+
     if (!EMAIL_API_URL || EMAIL_API_URL.includes("VOTRE-WORKER")) {
-      // Pas encore de backend configuré : on utilise mailto en repli (sans pièces jointes)
       fallbackToMailto();
       setSupportSent(true);
       return;
@@ -194,16 +352,15 @@ function App() {
 
     setSupportSending(true);
     try {
+      const attachments = await Promise.all(supportForm.files.map(f => new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ filename: f.name, content: reader.result.split(",")[1] });
+        reader.readAsDataURL(f);
+      })));
       const res = await fetch(EMAIL_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: SUPPORT_EMAIL,
-          subject,
-          text: bodyText,
-          replyTo: supportForm.contactEmail || undefined,
-          attachments: supportForm.files.map(f => ({ filename: f.name, content: f.dataUrl.split(",")[1] }))
-        })
+        body: JSON.stringify({ to: SUPPORT_EMAIL, subject, text: bodyText, replyTo: supportForm.contactEmail || undefined, attachments })
       });
       if (!res.ok) throw new Error("Échec de l'envoi (" + res.status + ")");
       setSupportSent(true);
@@ -216,47 +373,15 @@ function App() {
     }
   };
 
-  const handleFilesAdd = (fileList) => {
-    const arr = Array.from(fileList);
-    arr.forEach(f => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setProcForm(prev => ({ ...prev, files: [...prev.files, { name: f.name, dataUrl: reader.result, size: f.size }] }));
-      };
-      reader.readAsDataURL(f);
-    });
-  };
+  // ====================== RENDU ======================
 
-  const removeFormFile = (idx) => setProcForm(prev => ({ ...prev, files: prev.files.filter((_, i) => i !== idx) }));
+  if (authLoading) {
+    return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center" } },
+      React.createElement('div', { style: { color: "rgba(255,255,255,.5)", fontSize: 13 } }, "Chargement...")
+    );
+  }
 
-  const openEditForm = (p) => {
-    setEditingId(p.id);
-    setProcForm({ title: p.title, cat: p.cat, content: p.content, pinned: !!p.pinned, files: p.files || [] });
-    setShowProcForm(true);
-  };
-  const openNewForm = () => {
-    setEditingId(null);
-    setProcForm({ title: "", cat: CATS[0], content: "", pinned: false, files: [] });
-    setShowProcForm(true);
-  };
-  const submitProcForm = () => {
-    if (!procForm.title.trim() || !procForm.content.trim()) return;
-    if (editingId) {
-      saveProcs(procs.map(p => p.id === editingId ? { ...p, ...procForm } : p));
-    } else {
-      saveProcs([...procs, { id: "pr" + Date.now(), cid: editCid, ...procForm }]);
-    }
-    setShowProcForm(false);
-  };
-  const deleteProc = (id) => { if (selId === id) go("proc-admin"); saveProcs(procs.filter(p => p.id !== id)); };
-
-  if (!user) {
-    const doLogin = () => {
-      if (email === ADMIN_USER.email && pw === ADMIN_USER.pw) { setUser(ADMIN_USER); setLoginErr(""); setPage("proc-admin"); return; }
-      const c = clients.find(x => x.email === email && x.pw === pw);
-      if (c) { setUser({ id: c.id, email: c.email, pw: c.pw, role: "client", cid: c.id, name: c.name }); setLoginErr(""); setPage("knowledge"); return; }
-      setLoginErr("Email ou mot de passe incorrect.");
-    };
+  if (!session || !profile) {
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
       React.createElement('div', { style: { width: 420, maxWidth: "100%" } },
         React.createElement('div', { style: { textAlign: "center", marginBottom: 28 } },
@@ -275,18 +400,7 @@ function App() {
             React.createElement('input', { type: "password", value: pw, onChange: e => { setPw(e.target.value); setLoginErr(""); }, onKeyDown: e => e.key === "Enter" && doLogin(), placeholder: "••••••••", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none" } })
           ),
           loginErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 14 } }, loginErr),
-          React.createElement('button', { onClick: doLogin, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: "pointer" } }, "Se connecter")
-        ),
-        React.createElement('div', { style: { marginTop: 16, textAlign: "center" } },
-          React.createElement('button', { onClick: () => setShowCreds(!showCreds), style: { background: "none", border: "none", color: "rgba(255,255,255,.3)", fontSize: 12, cursor: "pointer" } }, "↓ Accès de démonstration"),
-          showCreds && React.createElement('div', { style: { marginTop: 10, background: "rgba(0,0,0,.35)", borderRadius: 8, padding: 14 } },
-            [{ id: "adm", email: ADMIN_USER.email, pw: ADMIN_USER.pw, role: "admin", name: ADMIN_USER.name }, ...clients.map(c => ({ id: c.id, email: c.email, pw: c.pw, role: "client", name: c.name }))].map(u => React.createElement('div', { key: u.id, onClick: () => { setEmail(u.email); setPw(u.pw); }, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", cursor: "pointer", borderRadius: 6, color: "rgba(255,255,255,.75)", fontSize: 12 } },
-              React.createElement('span', null, u.role === "admin" ? "⚡" : "🏨"),
-              React.createElement('span', { style: { flex: 1 } }, u.name),
-              React.createElement('code', { style: { color: G, fontSize: 11 } }, u.email)
-            )),
-            React.createElement('div', { style: { marginTop: 8, color: "rgba(255,255,255,.3)", fontSize: 11, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 8 } }, "Identifiants définis par votre administrateur DSI Hotel.")
-          )
+          React.createElement('button', { onClick: doLogin, disabled: loggingIn, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: loggingIn ? "default" : "pointer", opacity: loggingIn ? 0.6 : 1 } }, loggingIn ? "Connexion..." : "Se connecter")
         )
       )
     );
@@ -298,10 +412,9 @@ function App() {
 
   let content = null;
 
-  // CLIENT MANAGEMENT PAGE (admin)
+  // ---------- ADMIN : GESTION CLIENTS ----------
   if (page === "client-admin" && isAdmin) {
     content = React.createElement('div', null,
-      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#2B6CB0" } }, "ℹ️ Les clients créés ici sont sauvegardés dans ce navigateur uniquement (pas encore de base de données partagée)."),
       React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", marginBottom: 14 } },
         React.createElement('button', { onClick: openNewClientForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter un client")
       ),
@@ -329,7 +442,7 @@ function App() {
             React.createElement('input', { value: clientForm.phone, onChange: e => setClientForm({ ...clientForm, phone: e.target.value }), placeholder: "+33 1 XX XX XX XX", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           )
         ),
-        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+        !editingClientId && React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email de connexion *"),
             React.createElement('input', { value: clientForm.email, onChange: e => setClientForm({ ...clientForm, email: e.target.value }), placeholder: "contact@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
@@ -339,64 +452,62 @@ function App() {
             React.createElement('input', { value: clientForm.pw, onChange: e => setClientForm({ ...clientForm, pw: e.target.value }), placeholder: "Mot de passe de connexion", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           )
         ),
+        editingClientId && React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 7, padding: "8px 12px", fontSize: 11, color: "#2B6CB0", marginBottom: 10 } }, "ℹ️ Pour changer l'email/mot de passe de connexion d'un client existant, utilisez Supabase → Authentication → Users."),
         React.createElement('div', { style: { marginBottom: 10 } },
           React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "🖼️ Logo de l'hôtel"),
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12 } },
-            clientForm.logo
-              ? React.createElement('img', { src: clientForm.logo, alt: "Logo", style: { width: 48, height: 48, objectFit: "contain", borderRadius: 8, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
-              : React.createElement('div', { style: { width: 48, height: 48, borderRadius: 8, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨"),
-            React.createElement('input', { type: "file", accept: ".png,.jpg,.jpeg,.svg,.webp", onChange: e => handleClientLogoUpload(e.target.files[0]), style: { fontSize: 12 } }),
-            clientForm.logo && React.createElement('button', { onClick: () => setClientForm({ ...clientForm, logo: "" }), style: { background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 6, fontSize: 11, cursor: "pointer", padding: "4px 9px" } }, "Retirer")
+            clientLogoFile
+              ? React.createElement('img', { src: URL.createObjectURL(clientLogoFile), alt: "Logo", style: { width: 48, height: 48, objectFit: "contain", borderRadius: 8, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
+              : (editingClientId && hotels.find(h => h.id === editingClientId)?.logo_url
+                  ? React.createElement('img', { src: hotels.find(h => h.id === editingClientId).logo_url, alt: "Logo", style: { width: 48, height: 48, objectFit: "contain", borderRadius: 8, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
+                  : React.createElement('div', { style: { width: 48, height: 48, borderRadius: 8, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨")),
+            React.createElement('input', { type: "file", accept: ".png,.jpg,.jpeg,.svg,.webp", onChange: e => setClientLogoFile(e.target.files[0] || null), style: { fontSize: 12 } })
           )
         ),
         clientErr && React.createElement('div', { style: { color: "#E53E3E", fontSize: 12, marginBottom: 10 } }, clientErr),
         React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
           React.createElement('button', { onClick: () => setShowClientForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
-          React.createElement('button', { onClick: submitClientForm, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px" } }, editingClientId ? "Enregistrer" : "Créer le client")
+          React.createElement('button', { onClick: submitClientForm, disabled: savingClient, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingClient ? 0.6 : 1 } }, savingClient ? "Enregistrement..." : (editingClientId ? "Enregistrer" : "Créer le client"))
         )
       ),
+      hotelsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des clients..."),
       React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
-        clients.map(c => React.createElement('div', { key: c.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
+        hotels.map(h => React.createElement('div', { key: h.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12 } },
-            c.logo
-              ? React.createElement('img', { src: c.logo, alt: c.name, style: { width: 38, height: 38, objectFit: "contain", borderRadius: 9, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
+            h.logo_url
+              ? React.createElement('img', { src: h.logo_url, alt: h.name, style: { width: 38, height: 38, objectFit: "contain", borderRadius: 9, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
               : React.createElement('div', { style: { width: 38, height: 38, background: G + "20", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨"),
             React.createElement('div', null,
-              React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e" } }, c.name),
-              React.createElement('div', { style: { fontSize: 11, color: "#888" } }, c.city + " · " + "★".repeat(c.stars))
+              React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e" } }, h.name),
+              React.createElement('div', { style: { fontSize: 11, color: "#888" } }, (h.city || "") + " · " + "★".repeat(h.stars || 0))
             )
           ),
           React.createElement('div', { style: { fontSize: 11, color: "#777", marginBottom: 11 } },
-            React.createElement('div', { style: { marginBottom: 3 } }, "📧 " + c.email),
-            React.createElement('div', { style: { marginBottom: 3 } }, "🔑 " + c.pw),
-            React.createElement('div', null, "📞 " + c.phone)
+            React.createElement('div', null, "📞 " + (h.phone || "-"))
           ),
           React.createElement('div', { style: { display: "flex", gap: 7 } },
-            React.createElement('button', { onClick: () => openEditClientForm(c), style: { flex: 1, padding: 7, background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Modifier"),
-            React.createElement('button', { onClick: () => { setEditCid(c.id); go("proc-admin"); }, style: { flex: 1, padding: 7, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Procédures →"),
-            React.createElement('button', { onClick: () => deleteClient(c.id), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
+            React.createElement('button', { onClick: () => openEditClientForm(h), style: { flex: 1, padding: 7, background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Modifier"),
+            React.createElement('button', { onClick: () => { setEditCid(h.id); go("proc-admin"); }, style: { flex: 1, padding: 7, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Procédures →"),
+            React.createElement('button', { onClick: () => deleteClient(h.id), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
           )
         )),
-        clients.length === 0 && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !")
+        hotels.length === 0 && !hotelsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !")
       )
     );
   }
 
-  // ADMIN PAGE
+  // ---------- ADMIN : GESTION PROCÉDURES ----------
   if (page === "proc-admin" && isAdmin) {
-    const cprocs = procs.filter(p => p.cid === editCid);
-    const cats = [...new Set(cprocs.map(p => p.cat))];
+    const cats = [...new Set(procedures.map(p => p.category))];
     content = React.createElement('div', null,
-      storageWarn && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#C53030" } }, "⚠️ Stockage local plein ou indisponible — les fichiers volumineux risquent de ne pas être sauvegardés. Privilégiez des PDF compressés."),
-      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#2B6CB0" } }, "ℹ️ Les procédures et fichiers sont sauvegardés dans ce navigateur uniquement (pas encore de base de données partagée)."),
       React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-        React.createElement('select', { value: editCid, onChange: e => setEditCid(e.target.value), style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 } },
-          clients.map(c => React.createElement('option', { key: c.id, value: c.id }, c.name))
+        React.createElement('select', { value: editCid || "", onChange: e => setEditCid(e.target.value), style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12 } },
+          hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
         ),
-        React.createElement('button', { onClick: openNewForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter une procédure")
+        React.createElement('button', { onClick: openNewProcForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter une procédure")
       ),
       showProcForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
-        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingId ? "Modifier — " : "Nouvelle procédure — ") + (clients.find(c => c.id === editCid)?.name || "")),
+        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingId ? "Modifier — " : "Nouvelle procédure — ") + (hotels.find(h => h.id === editCid)?.name || "")),
         React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Titre"),
@@ -415,66 +526,71 @@ function App() {
         ),
         React.createElement('div', { style: { marginBottom: 10 } },
           React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#444", cursor: "pointer" } },
-            React.createElement('input', { type: "checkbox", checked: procForm.pinned, onChange: e => setProcForm({ ...procForm, pinned: e.target.checked } )}),
+            React.createElement('input', { type: "checkbox", checked: procForm.pinned, onChange: e => setProcForm({ ...procForm, pinned: e.target.checked }) }),
             "⭐ Mettre en avant (procédure épinglée)"
           )
         ),
         React.createElement('div', { style: { marginBottom: 14 } },
           React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Pièces jointes & images (PDF, Word, Excel, PNG, JPG) — réservé admin"),
-          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => handleFilesAdd(e.target.files), style: { fontSize: 12 } }),
-          procForm.files.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
-            procForm.files.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
-              isImageFile(f.name)
-                ? React.createElement('img', { src: f.dataUrl, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } })
-                : React.createElement('span', null, FILE_ICONS[fileExt(f.name)] || "📄"),
+          procFormExistingFiles.length > 0 && React.createElement('div', { style: { marginBottom: 6, display: "flex", flexDirection: "column", gap: 5 } },
+            procFormExistingFiles.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              isImageFile(f.file_name) ? React.createElement('img', { src: f.file_url, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+              React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
+              React.createElement('button', { onClick: () => removeExistingProcFile(f.id), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+            ))
+          ),
+          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => setProcFormFiles(prev => [...prev, ...Array.from(e.target.files)]), style: { fontSize: 12 } }),
+          procFormFiles.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
+            procFormFiles.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              React.createElement('span', null, "🆕"),
               React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
-              React.createElement('span', { style: { color: "#AAA" } }, f.size ? Math.round(f.size / 1024) + " Ko" : ""),
-              React.createElement('button', { onClick: () => removeFormFile(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+              React.createElement('button', { onClick: () => setProcFormFiles(prev => prev.filter((_, idx) => idx !== i)), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
             ))
           )
         ),
         React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
           React.createElement('button', { onClick: () => setShowProcForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
-          React.createElement('button', { onClick: submitProcForm, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px" } }, editingId ? "Enregistrer" : "Publier")
+          React.createElement('button', { onClick: submitProcForm, disabled: savingProc, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingProc ? 0.6 : 1 } }, savingProc ? "Enregistrement..." : (editingId ? "Enregistrer" : "Publier"))
         )
       ),
-      cats.length === 0 && !showProcForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune procédure pour ce client. Ajoutez-en une !"),
+      procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des procédures..."),
+      cats.length === 0 && !showProcForm && !procsLoading && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune procédure pour ce client. Ajoutez-en une !"),
       cats.map(cat => React.createElement('div', { key: cat, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 10 } },
         React.createElement('div', { style: { padding: "9px 15px", background: "#F8F8FC", borderBottom: "1px solid #EEE", display: "flex", alignItems: "center", gap: 8 } },
           React.createElement('span', null, "📁"),
           React.createElement('span', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e" } }, cat),
-          React.createElement('span', { style: { marginLeft: "auto", fontSize: 10, color: "#AAA" } }, cprocs.filter(p => p.cat === cat).length + " procédure(s)")
+          React.createElement('span', { style: { marginLeft: "auto", fontSize: 10, color: "#AAA" } }, procedures.filter(p => p.category === cat).length + " procédure(s)")
         ),
-        cprocs.filter(p => p.cat === cat).map(p => React.createElement('div', { key: p.id, style: { padding: "9px 15px", borderBottom: "1px solid #F4F4F8", display: "flex", alignItems: "center", gap: 9 } },
+        procedures.filter(p => p.category === cat).map(p => React.createElement('div', { key: p.id, style: { padding: "9px 15px", borderBottom: "1px solid #F4F4F8", display: "flex", alignItems: "center", gap: 9 } },
           React.createElement('span', { style: { fontSize: 14 } }, "📄"),
           p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐"),
           React.createElement('span', { style: { flex: 1, fontSize: 12, color: "#333" } }, p.title),
-          (p.files || []).length > 0 && React.createElement('span', { style: { fontSize: 10, color: "#888" } }, "📎 " + p.files.length),
-          React.createElement('button', { onClick: () => openEditForm(p), style: { padding: "3px 8px", background: "none", border: `1px solid ${G}44`, borderRadius: 5, color: G, fontSize: 11, cursor: "pointer" } }, "Modifier"),
+          React.createElement('button', { onClick: () => openEditProcForm(p), style: { padding: "3px 8px", background: "none", border: `1px solid ${G}44`, borderRadius: 5, color: G, fontSize: 11, cursor: "pointer" } }, "Modifier"),
           React.createElement('button', { onClick: () => deleteProc(p.id), style: { padding: "3px 7px", background: "none", border: "1px solid #FFCDD2", borderRadius: 5, color: "#E53E3E", fontSize: 11, cursor: "pointer", marginLeft: 4 } }, "✕")
         ))
       ))
     );
   }
 
-  // CLIENT KNOWLEDGE PAGE
+  // ---------- CLIENT : PROCÉDURES ----------
   if (page === "knowledge" && !isAdmin) {
-    const cats = [...new Set(myProcs.map(p => p.cat))];
-    const pinned = myProcs.filter(p => p.pinned);
-    let filtered = kbCat === "all" ? myProcs : myProcs.filter(p => p.cat === kbCat);
+    const cats = [...new Set(procedures.map(p => p.category))];
+    const pinned = procedures.filter(p => p.pinned);
+    let filtered = kbCat === "all" ? procedures : procedures.filter(p => p.category === kbCat);
     if (search.trim()) {
       const s = search.trim().toLowerCase();
       filtered = filtered.filter(p => p.title.toLowerCase().includes(s) || p.content.toLowerCase().includes(s));
     }
     content = React.createElement('div', null,
+      procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
       pinned.length > 0 && kbCat === "all" && !search.trim() && React.createElement('div', { style: { marginBottom: 22 } },
         React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#888", marginBottom: 10, letterSpacing: "0.5px" } }, "⭐ PROCÉDURES LES PLUS UTILES"),
         React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
           pinned.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: `1.5px solid ${G}55`, padding: 15, cursor: "pointer", position: "relative" } },
             React.createElement('div', { style: { position: "absolute", top: 10, right: 10, fontSize: 13 } }, "⭐"),
             React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 8 } },
-              React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.cat] || "📄"),
-              React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.cat)
+              React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.category] || "📄"),
+              React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category)
             ),
             React.createElement('div', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e", marginBottom: 5 } }, p.title),
             React.createElement('div', { style: { fontSize: 11, color: G, fontWeight: 500 } }, "Lire la procédure →")
@@ -490,26 +606,26 @@ function App() {
       React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
         filtered.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 15, cursor: "pointer" } },
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 8 } },
-            React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.cat] || "📄"),
-            React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.cat),
+            React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.category] || "📄"),
+            React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category),
             p.pinned && React.createElement('span', { style: { marginLeft: "auto", fontSize: 12 } }, "⭐")
           ),
           React.createElement('div', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e", marginBottom: 5 } }, p.title),
           React.createElement('div', { style: { fontSize: 11, color: "#AAA", marginBottom: 8 } }, ((p.content.split("\n").find(l => l)) || "").slice(0, 55) + "..."),
-          (p.files || []).length > 0 && React.createElement('div', { style: { fontSize: 10, color: G2, marginBottom: 6 } }, "📎 " + p.files.length + " fichier(s) joint(s)"),
           React.createElement('div', { style: { fontSize: 11, color: G, fontWeight: 500 } }, "Lire la procédure →")
         )),
-        filtered.length === 0 && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
+        filtered.length === 0 && !procsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
       )
     );
   }
 
-  // PROC DETAIL (shared by client + admin preview)
+  // ---------- DÉTAIL PROCÉDURE (client + admin preview) ----------
   if (page === "proc-detail" && selP) {
+    const files = procFiles[selP.id] || [];
     content = React.createElement('div', { style: { maxWidth: 680 } },
       React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 22 } },
         React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
-          React.createElement(Badge, { label: selP.cat, color: G2 }),
+          React.createElement(Badge, { label: selP.category, color: G2 }),
           selP.pinned && React.createElement('span', { style: { fontSize: 13 } }, "⭐")
         ),
         React.createElement('h3', { style: { margin: "10px 0 16px", fontSize: 16, fontWeight: 500, color: "#1a1a3e" } }, selP.title),
@@ -527,18 +643,18 @@ function App() {
             return React.createElement('p', { key: i, style: { margin: "3px 0", fontSize: 13, color: "#555" } }, line);
           })
         ),
-        (selP.files || []).filter(f => isImageFile(f.name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
+        files.filter(f => isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
-            selP.files.filter(f => isImageFile(f.name)).map((f, i) => React.createElement('img', { key: i, src: f.dataUrl, alt: f.name, style: { width: "100%", borderRadius: 8, border: "1px solid #EEE" } }))
+            files.filter(f => isImageFile(f.file_name)).map((f, i) => React.createElement('img', { key: i, src: f.file_url, alt: f.file_name, style: { width: "100%", borderRadius: 8, border: "1px solid #EEE" } }))
           )
         ),
-        (selP.files || []).filter(f => !isImageFile(f.name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
+        files.filter(f => !isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
-            selP.files.filter(f => !isImageFile(f.name)).map((f, i) => React.createElement('a', { key: i, href: f.dataUrl, download: f.name, style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
-              React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.name)] || "📄"),
-              React.createElement('span', { style: { flex: 1 } }, f.name),
+            files.filter(f => !isImageFile(f.file_name)).map((f, i) => React.createElement('a', { key: i, href: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
+              React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+              React.createElement('span', { style: { flex: 1 } }, f.file_name),
               React.createElement('span', { style: { color: G2, fontSize: 11 } }, "Télécharger ⬇")
             ))
           )
@@ -551,13 +667,12 @@ function App() {
     );
   }
 
-  // CONTACT PAGE — inspirée de dsihotel.com/contact
+  // ---------- CONTACT ----------
   if (page === "contact" && !isAdmin) {
     const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit" };
     const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
 
     content = React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 20, alignItems: "start" } },
-      // LEFT: form card
       React.createElement('div', { style: { background: "white", borderRadius: 12, border: "1px solid #E8E8F0", padding: 26 } },
         React.createElement('div', { style: { fontSize: 11, color: G2, fontWeight: 600, letterSpacing: "0.5px", marginBottom: 6 } }, "PARLONS DE VOTRE PROBLÈME"),
         React.createElement('h3', { style: { margin: "0 0 8px", fontSize: 20, fontWeight: 600, color: "#1a1a3e" } }, "Contactez notre support technique"),
@@ -566,8 +681,8 @@ function App() {
         supportSent
           ? React.createElement('div', { style: { background: "#F0FFF4", border: "1px solid #C6F6D5", borderRadius: 10, padding: "20px", textAlign: "center" } },
               React.createElement('div', { style: { fontSize: 28, marginBottom: 8 } }, "✅"),
-              React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: "#276749", marginBottom: 4 } }, "Votre messagerie a été ouverte"),
-              React.createElement('div', { style: { fontSize: 12, color: "#2F855A" } }, "Finalisez l'envoi depuis votre client email pour que notre équipe reçoive votre demande."),
+              React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: "#276749", marginBottom: 4 } }, "Votre demande a été envoyée"),
+              React.createElement('div', { style: { fontSize: 12, color: "#2F855A" } }, "Notre équipe vous répond rapidement."),
               React.createElement('button', { onClick: () => setSupportSent(false), style: { marginTop: 14, background: "none", border: `1px solid ${G}`, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px" } }, "← Envoyer une autre demande")
             )
           : React.createElement('div', null,
@@ -625,8 +740,6 @@ function App() {
               React.createElement('button', { onClick: submitSupportForm, disabled: supportSending, style: { width: "100%", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: supportSending ? "default" : "pointer", padding: "13px", opacity: supportSending ? 0.6 : 1 } }, supportSending ? "Envoi en cours..." : "Envoyer ma demande →")
             )
       ),
-
-      // RIGHT: sidebar like the real contact page
       React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 14 } },
         React.createElement('div', { style: { background: SB, borderRadius: 12, padding: 20 } },
           React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, letterSpacing: "0.5px", marginBottom: 12 } }, "NOS COORDONNÉES"),
@@ -667,14 +780,14 @@ function App() {
         ),
         React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10, marginTop: 6 } }, isAdmin ? "Espace Admin" : "Intranet Client")
       ),
-      !isAdmin && client?.logo && React.createElement('div', { style: { padding: "14px 13px 0", display: "flex", justifyContent: "center" } },
-        React.createElement('img', { src: client.logo, alt: client.name, style: { maxHeight: 48, maxWidth: "100%", objectFit: "contain" } })
+      !isAdmin && client?.logo_url && React.createElement('div', { style: { padding: "18px 16px", display: "flex", justifyContent: "center", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+        React.createElement('img', { src: client.logo_url, alt: client.name, style: { maxHeight: 90, maxWidth: "100%", objectFit: "contain" } })
       ),
       React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
         React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
           React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
-          React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, user.name),
-          React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? client.city : ""))
+          React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
+          React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
         )
       ),
       React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
@@ -688,7 +801,7 @@ function App() {
       ),
       React.createElement('div', { style: { padding: "10px 13px", borderTop: "1px solid rgba(255,255,255,.06)" } },
         React.createElement('button', {
-          onClick: () => { setUser(null); setEmail(""); setPw(""); },
+          onClick: doLogout,
           style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: "transparent", color: "rgba(255,255,255,.65)" }
         }, React.createElement('span', null, "🚪"), React.createElement('span', null, "Déconnexion"))
       )
