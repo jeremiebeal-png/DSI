@@ -73,7 +73,7 @@ function App() {
   const [storageWarn, setStorageWarn] = useState(false);
   const [showClientForm, setShowClientForm] = useState(false);
   const [editingClientId, setEditingClientId] = useState(null);
-  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", logo: "" });
   const [clientErr, setClientErr] = useState("");
   const [supportForm, setSupportForm] = useState({ name: "", role: "Front Office", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
   const [supportSent, setSupportSent] = useState(false);
@@ -110,9 +110,15 @@ function App() {
   };
   const openEditClientForm = (c) => {
     setEditingClientId(c.id);
-    setClientForm({ name: c.name, city: c.city, stars: c.stars, phone: c.phone, email: c.email, pw: c.pw });
+    setClientForm({ name: c.name, city: c.city, stars: c.stars, phone: c.phone, email: c.email, pw: c.pw, logo: c.logo || "" });
     setClientErr("");
     setShowClientForm(true);
+  };
+  const handleClientLogoUpload = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setClientForm(prev => ({ ...prev, logo: reader.result }));
+    reader.readAsDataURL(file);
   };
   const submitClientForm = () => {
     if (!clientForm.name.trim() || !clientForm.email.trim() || !clientForm.pw.trim()) { setClientErr("Nom, email et mot de passe sont obligatoires."); return; }
@@ -333,6 +339,16 @@ function App() {
             React.createElement('input', { value: clientForm.pw, onChange: e => setClientForm({ ...clientForm, pw: e.target.value }), placeholder: "Mot de passe de connexion", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           )
         ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "🖼️ Logo de l'hôtel"),
+          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12 } },
+            clientForm.logo
+              ? React.createElement('img', { src: clientForm.logo, alt: "Logo", style: { width: 48, height: 48, objectFit: "contain", borderRadius: 8, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
+              : React.createElement('div', { style: { width: 48, height: 48, borderRadius: 8, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨"),
+            React.createElement('input', { type: "file", accept: ".png,.jpg,.jpeg,.svg,.webp", onChange: e => handleClientLogoUpload(e.target.files[0]), style: { fontSize: 12 } }),
+            clientForm.logo && React.createElement('button', { onClick: () => setClientForm({ ...clientForm, logo: "" }), style: { background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 6, fontSize: 11, cursor: "pointer", padding: "4px 9px" } }, "Retirer")
+          )
+        ),
         clientErr && React.createElement('div', { style: { color: "#E53E3E", fontSize: 12, marginBottom: 10 } }, clientErr),
         React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
           React.createElement('button', { onClick: () => setShowClientForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
@@ -342,7 +358,9 @@ function App() {
       React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
         clients.map(c => React.createElement('div', { key: c.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12 } },
-            React.createElement('div', { style: { width: 38, height: 38, background: G + "20", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨"),
+            c.logo
+              ? React.createElement('img', { src: c.logo, alt: c.name, style: { width: 38, height: 38, objectFit: "contain", borderRadius: 9, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
+              : React.createElement('div', { style: { width: 38, height: 38, background: G + "20", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 } }, "🏨"),
             React.createElement('div', null,
               React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e" } }, c.name),
               React.createElement('div', { style: { fontSize: 11, color: "#888" } }, c.city + " · " + "★".repeat(c.stars))
