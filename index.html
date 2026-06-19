@@ -19,7 +19,8 @@ const { useState, useEffect } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
-const EMAIL_API_URL = "https://VOTRE-WORKER.workers.dev/send"; // À remplacer après déploiement du Worker Resend (optionnel)
+const EMAIL_API_URL = "https://dsi-hotel-api.jeremie-beal.workers.dev/send";
+const ADMIN_API_URL = "https://dsi-hotel-api.jeremie-beal.workers.dev";
 
 // ====== CONFIGURATION SUPABASE ======
 const SUPABASE_URL = "https://vkamubvlbezhpbunvdai.supabase.co";
@@ -180,10 +181,25 @@ function App() {
   };
   const openEditClientForm = (h) => {
     setEditingClientId(h.id);
-    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: "", pw: "" });
+    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "" });
     setClientLogoFile(null);
     setClientErr("");
     setShowClientForm(true);
+  };
+
+  const adminApiReady = ADMIN_API_URL && !ADMIN_API_URL.includes("VOTRE-WORKER");
+
+  const callAdminApi = async (path, payload) => {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = sessionData.session?.access_token;
+    const res = await fetch(ADMIN_API_URL + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur serveur");
+    return data;
   };
 
   const submitClientForm = async () => {
@@ -203,21 +219,13 @@ function App() {
         setHotels(prev => prev.map(h => h.id === editingClientId ? { ...h, ...update } : h));
       } else {
         if (!clientForm.email.trim() || !clientForm.pw.trim()) { setClientErr("Email et mot de passe sont obligatoires pour un nouveau client."); setSavingClient(false); return; }
-        // 1. créer le compte d'authentification
-        const { data: signUpData, error: signUpErr } = await sb.auth.signUp({ email: clientForm.email, password: clientForm.pw });
-        if (signUpErr) throw signUpErr;
-        // 2. créer l'hôtel
-        const { data: hotelData, error: hotelErr } = await sb.from("hotels")
-          .insert({ name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, logo_url: logoUrl || null })
-          .select().single();
-        if (hotelErr) throw hotelErr;
-        // 3. lier le profil (rôle + hôtel)
-        if (signUpData.user) {
-          const { error: profErr } = await sb.from("profiles").insert({ id: signUpData.user.id, role: "client", hotel_id: hotelData.id });
-          if (profErr) throw profErr;
-        }
-        setHotels(prev => [...prev, hotelData]);
-        setEditCid(hotelData.id);
+        if (!adminApiReady) { setClientErr("La création de clients nécessite le Worker admin (voir instructions de déploiement). En attendant, créez le compte manuellement dans Supabase → Authentication → Users."); setSavingClient(false); return; }
+        const result = await callAdminApi("/admin/create-client", {
+          email: clientForm.email, password: clientForm.pw, hotelName: clientForm.name,
+          city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, logoUrl: logoUrl || null
+        });
+        setHotels(prev => [...prev, result.hotel]);
+        setEditCid(result.hotel.id);
       }
       setShowClientForm(false);
     } catch (e) {
@@ -227,13 +235,39 @@ function App() {
     }
   };
 
-  const deleteClient = async (id) => {
-    const { error } = await sb.from("hotels").delete().eq("id", id);
-    if (!error) {
-      setHotels(prev => prev.filter(h => h.id !== id));
-      if (editCid === id) setEditCid(hotels.find(h => h.id !== id)?.id || null);
+  const deleteClient = async (h) => {
+    if (!confirm(`Supprimer "${h.name}" ? Cette action est irréversible (procédures et compte de connexion inclus).`)) return;
+    try {
+      if (adminApiReady) {
+        await callAdminApi("/admin/delete-client", { hotelId: h.id, userEmail: h.account_email });
+      } else {
+        await sb.from("hotels").delete().eq("id", h.id);
+      }
+      setHotels(prev => prev.filter(x => x.id !== h.id));
+      if (editCid === h.id) setEditCid(hotels.find(x => x.id !== h.id)?.id || null);
+    } catch (e) {
+      alert("Erreur lors de la suppression : " + e.message);
     }
   };
+
+  const [resetPwTarget, setResetPwTarget] = useState(null); // hotel object en cours de réinitialisation
+  const [resetPwValue, setResetPwValue] = useState("");
+  const [resetPwBusy, setResetPwBusy] = useState(false);
+  const submitResetPassword = async () => {
+    if (!resetPwValue.trim() || !resetPwTarget) return;
+    setResetPwBusy(true);
+    try {
+      await callAdminApi("/admin/reset-password", { userEmail: resetPwTarget.account_email, newPassword: resetPwValue });
+      alert("Mot de passe mis à jour pour " + resetPwTarget.name);
+      setResetPwTarget(null);
+      setResetPwValue("");
+    } catch (e) {
+      alert("Erreur : " + e.message);
+    } finally {
+      setResetPwBusy(false);
+    }
+  };
+
 
   // ---------- PROCEDURE CRUD ----------
   const openNewProcForm = () => {
@@ -470,6 +504,17 @@ function App() {
           React.createElement('button', { onClick: submitClientForm, disabled: savingClient, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingClient ? 0.6 : 1 } }, savingClient ? "Enregistrement..." : (editingClientId ? "Enregistrer" : "Créer le client"))
         )
       ),
+      resetPwTarget && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 360, maxWidth: "90%" } },
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 14, color: "#1a1a3e", marginBottom: 4 } }, "Réinitialiser le mot de passe"),
+          React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, resetPwTarget.name + " (" + resetPwTarget.account_email + ")"),
+          React.createElement('input', { value: resetPwValue, onChange: e => setResetPwValue(e.target.value), placeholder: "Nouveau mot de passe", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 14 } }),
+          React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
+            React.createElement('button', { onClick: () => setResetPwTarget(null), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "7px 14px" } }, "Annuler"),
+            React.createElement('button', { onClick: submitResetPassword, disabled: resetPwBusy, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px", opacity: resetPwBusy ? 0.6 : 1 } }, resetPwBusy ? "..." : "Valider")
+          )
+        )
+      ),
       hotelsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des clients..."),
       React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
         hotels.map(h => React.createElement('div', { key: h.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
@@ -483,13 +528,15 @@ function App() {
             )
           ),
           React.createElement('div', { style: { fontSize: 11, color: "#777", marginBottom: 11 } },
+            React.createElement('div', { style: { marginBottom: 3 } }, "📧 " + (h.account_email || "-")),
             React.createElement('div', null, "📞 " + (h.phone || "-"))
           ),
-          React.createElement('div', { style: { display: "flex", gap: 7 } },
+          React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 7 } },
             React.createElement('button', { onClick: () => openEditClientForm(h), style: { flex: 1, padding: 7, background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Modifier"),
             React.createElement('button', { onClick: () => { setEditCid(h.id); go("proc-admin"); }, style: { flex: 1, padding: 7, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Procédures →"),
-            React.createElement('button', { onClick: () => deleteClient(h.id), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
-          )
+            React.createElement('button', { onClick: () => deleteClient(h), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
+          ),
+          h.account_email && React.createElement('button', { onClick: () => { setResetPwTarget(h); setResetPwValue(""); }, style: { width: "100%", padding: 6, background: "none", border: "1px solid #E8E8F0", color: "#888", borderRadius: 7, fontSize: 11, cursor: "pointer" } }, "🔑 Réinitialiser le mot de passe")
         )),
         hotels.length === 0 && !hotelsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !")
       )
