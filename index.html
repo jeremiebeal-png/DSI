@@ -356,12 +356,6 @@ function App() {
     return { subject, bodyText };
   };
 
-  const fallbackToMailto = () => {
-    const { subject, bodyText } = buildSupportSubjectBody();
-    const note = supportForm.files.length > 0 ? "\n\n⚠️ Pièces jointes non incluses (mailto ne le permet pas) — merci de les joindre manuellement avant l'envoi." : "";
-    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText + note)}`;
-  };
-
   const logTicketToDb = async () => {
     try {
       await sb.from("tickets").insert({
@@ -385,12 +379,6 @@ function App() {
 
     logTicketToDb();
 
-    if (!EMAIL_API_URL || EMAIL_API_URL.includes("VOTRE-WORKER")) {
-      fallbackToMailto();
-      setSupportSent(true);
-      return;
-    }
-
     setSupportSending(true);
     try {
       const attachments = await Promise.all(supportForm.files.map(f => new Promise((resolve) => {
@@ -403,12 +391,13 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to: SUPPORT_EMAIL, subject, text: bodyText, replyTo: supportForm.contactEmail || undefined, attachments })
       });
-      if (!res.ok) throw new Error("Échec de l'envoi (" + res.status + ")");
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        throw new Error("Statut " + res.status + (detail ? " — " + detail.slice(0, 300) : ""));
+      }
       setSupportSent(true);
     } catch (e) {
-      setSupportError("L'envoi automatique a échoué. Ouverture de votre messagerie en repli (sans pièces jointes).");
-      fallbackToMailto();
-      setSupportSent(true);
+      setSupportError("L'envoi automatique a échoué : " + (e.message || e) + ". Vérifiez que le Worker (route /send) est déployé et configuré (RESEND_API_KEY, CORS).");
     } finally {
       setSupportSending(false);
     }
