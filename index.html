@@ -501,6 +501,52 @@ function App() {
     setReplyBusy(false);
   };
 
+  // ---------- TICKETS : FERMER (avec ou sans notification email) ----------
+  const closeTicket = async (ticket, notify) => {
+    // 1) Fermer le ticket en base
+    const { error } = await sb.from("tickets").update({ status: "closed" }).eq("id", ticket.id);
+    if (error) { setReplyNote("Erreur : impossible de fermer le ticket (" + error.message + ")."); return; }
+    setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: "closed" } : t));
+
+    // 2) Notification email au client (optionnelle)
+    if (notify && ticket.contact_email) {
+      try {
+        const subject = `[Ticket ${ticket.category}] Votre demande est résolue`;
+        const text =
+          `Bonjour ${ticket.contact_name || ""},\n\n` +
+          `Votre demande de support a été traitée et est désormais marquée comme résolue.\n\n` +
+          `Si le problème persiste ou si vous avez une nouvelle question, n'hésitez pas à nous recontacter via votre espace intranet ou à l'adresse ${SUPPORT_EMAIL}.\n\n` +
+          `Nous vous remercions de votre confiance.\n\n` +
+          `— Support DSI Hotel`;
+        const res = await fetch(EMAIL_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: ticket.contact_email, subject, text, replyTo: SUPPORT_EMAIL })
+        });
+        if (!res.ok) {
+          const d = await res.text().catch(() => "");
+          setReplyNote("Ticket fermé ✅ mais l'email de notification n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
+        } else {
+          setReplyNote("Ticket fermé et client notifié par email ✅");
+        }
+      } catch (e) {
+        setReplyNote("Ticket fermé ✅ mais l'email a échoué (" + (e.message || e) + ").");
+      }
+    } else if (notify && !ticket.contact_email) {
+      setReplyNote("Ticket fermé ✅ (pas d'email client renseigné, aucune notification envoyée).");
+    } else {
+      setReplyNote("Ticket fermé sans notification ✅");
+    }
+  };
+
+  // ---------- TICKETS : RÉPONDRE PUIS FERMER (un seul geste) ----------
+  const replyAndClose = async (ticket) => {
+    if (!replyText.trim()) return;
+    await sendReply(ticket);        // enregistre + envoie la réponse
+    await closeTicket(ticket, false); // ferme sans 2e email (le client vient déjà de recevoir la réponse)
+    setReplyNote("Réponse envoyée et ticket fermé ✅");
+  };
+
   // ====================== RENDU ======================
 
   if (authLoading) {
@@ -969,8 +1015,10 @@ function App() {
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => setReplyText(e.target.value), placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 70, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 replyNote && React.createElement('div', { style: { fontSize: 11, color: replyNote.startsWith("Erreur") ? "#C53030" : "#2F855A", marginBottom: 8 } }, replyNote),
-                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
-                  React.createElement('button', { onClick: () => setTicketStatus(t, "closed"), style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer le ticket"),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
+                  React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
+                  React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
+                  React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
                   React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
                 )
               ),
