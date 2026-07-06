@@ -54,6 +54,15 @@ function App() {
   const [profile, setProfile] = useState(null); // { role, hotel_id }
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("knowledge");
+
+  // ---------- RESPONSIVE / MOBILE ----------
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [loginErr, setLoginErr] = useState("");
@@ -166,6 +175,7 @@ function App() {
     setPage(p);
     setSelId(id);
     setShowProcForm(false);
+    setMenuOpen(false); // referme le menu mobile après navigation
     if (id && p === "proc-detail") loadFilesFor(id);
   };
 
@@ -597,7 +607,7 @@ function App() {
       ),
       showClientForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
         React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, editingClientId ? "Modifier le client" : "Nouveau client"),
-        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Nom de l'hôtel *"),
             React.createElement('input', { value: clientForm.name, onChange: e => setClientForm({ ...clientForm, name: e.target.value }), placeholder: "ex: Hôtel Le Grand Paris", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
@@ -607,7 +617,7 @@ function App() {
             React.createElement('input', { value: clientForm.city, onChange: e => setClientForm({ ...clientForm, city: e.target.value }), placeholder: "ex: Paris 8ème", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           )
         ),
-        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Étoiles"),
             React.createElement('select', { value: clientForm.stars, onChange: e => setClientForm({ ...clientForm, stars: parseInt(e.target.value, 10) }), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
@@ -619,7 +629,7 @@ function App() {
             React.createElement('input', { value: clientForm.phone, onChange: e => setClientForm({ ...clientForm, phone: e.target.value }), placeholder: "+33 1 XX XX XX XX", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           )
         ),
-        !editingClientId && React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+        !editingClientId && React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email de connexion *"),
             React.createElement('input', { value: clientForm.email, onChange: e => setClientForm({ ...clientForm, email: e.target.value }), placeholder: "contact@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
@@ -659,7 +669,7 @@ function App() {
         )
       ),
       hotelsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des clients..."),
-      React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
         hotels.map(h => React.createElement('div', { key: h.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12 } },
             h.logo_url
@@ -698,7 +708,7 @@ function App() {
       ),
       showProcForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
         React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingId ? "Modifier — " : "Nouvelle procédure — ") + (hotels.find(h => h.id === editCid)?.name || "")),
-        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 } },
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Titre"),
             React.createElement('input', { value: procForm.title, onChange: e => setProcForm({ ...procForm, title: e.target.value }), placeholder: "Titre de la procédure", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
@@ -775,7 +785,7 @@ function App() {
       procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
       pinned.length > 0 && kbCat === "all" && !search.trim() && React.createElement('div', { style: { marginBottom: 22 } },
         React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#888", marginBottom: 10, letterSpacing: "0.5px" } }, "⭐ PROCÉDURES LES PLUS UTILES"),
-        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
           pinned.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: `1.5px solid ${G}55`, padding: 15, cursor: "pointer", position: "relative" } },
             React.createElement('div', { style: { position: "absolute", top: 10, right: 10, fontSize: 13 } }, "⭐"),
             React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 8 } },
@@ -793,7 +803,7 @@ function App() {
       React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
       ),
-      React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
         filtered.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 15, cursor: "pointer" } },
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 8 } },
             React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.category] || "📄"),
@@ -862,7 +872,7 @@ function App() {
     const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit" };
     const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
 
-    content = React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 20, alignItems: "start" } },
+    content = React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.6fr 1fr", gap: 20, alignItems: "start" } },
       React.createElement('div', { style: { background: "white", borderRadius: 12, border: "1px solid #E8E8F0", padding: 26 } },
         React.createElement('div', { style: { fontSize: 11, color: G2, fontWeight: 600, letterSpacing: "0.5px", marginBottom: 6 } }, "PARLONS DE VOTRE PROBLÈME"),
         React.createElement('h3', { style: { margin: "0 0 8px", fontSize: 20, fontWeight: 600, color: "#1a1a3e" } }, "Contactez notre support technique"),
@@ -880,7 +890,7 @@ function App() {
                 React.createElement('label', { style: labelStyle }, "Votre nom *"),
                 React.createElement('input', { value: supportForm.name, onChange: e => setSupportForm({ ...supportForm, name: e.target.value }), placeholder: "Prénom et nom", style: inputStyle })
               ),
-              React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 } },
+              React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 14 } },
                 React.createElement('div', null,
                   React.createElement('label', { style: labelStyle }, "Fonction"),
                   React.createElement('select', { value: supportForm.role, onChange: e => setSupportForm({ ...supportForm, role: e.target.value }), style: inputStyle },
@@ -896,7 +906,7 @@ function App() {
                 React.createElement('label', { style: labelStyle }, "Email professionnel"),
                 React.createElement('input', { value: supportForm.contactEmail, onChange: e => setSupportForm({ ...supportForm, contactEmail: e.target.value }), placeholder: "vous@hotel.com", style: inputStyle })
               ),
-              React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 } },
+              React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 14 } },
                 React.createElement('div', null,
                   React.createElement('label', { style: labelStyle }, "Catégorie du problème *"),
                   React.createElement('select', { value: supportForm.cat, onChange: e => setSupportForm({ ...supportForm, cat: e.target.value }), style: inputStyle },
@@ -981,23 +991,34 @@ function App() {
       React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
         list.map(t => {
           const h = hotels.find(x => x.id === t.hotel_id);
+          const hotelLabel = h ? h.name : (t.hotel_id ? "Hôtel inconnu" : "⚠️ Non assigné");
           const isOpen = openTicketId === t.id;
           const msgs = ticketMsgs[t.id] || [];
           return React.createElement('div', { key: t.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
             React.createElement('div', { onClick: () => toggleTicket(t.id), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
               React.createElement('div', { style: { flex: 1 } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" } },
-                  React.createElement('span', { style: { fontWeight: 600, fontSize: 13, color: "#1a1a3e" } }, h ? h.name : "Hôtel inconnu"),
+                  React.createElement('span', { style: { fontWeight: 600, fontSize: 13, color: t.hotel_id ? "#1a1a3e" : "#DD6B20" } }, hotelLabel),
+                  React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: t.source === "email" ? "#3182CE" : "#718096", background: (t.source === "email" ? "#3182CE" : "#718096") + "18", padding: "2px 8px", borderRadius: 20 } }, t.source === "email" ? "📧 Email" : "📝 Formulaire"),
                   React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prioColor(t.priority), background: prioColor(t.priority) + "18", padding: "2px 8px", borderRadius: 20 } }, t.priority),
                   React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
                   React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status))
                 ),
+                t.subject && React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "Objet : " + t.subject),
                 React.createElement('div', { style: { fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.contact_name || "?") + " — " + (t.message || "")),
                 React.createElement('div', { style: { fontSize: 10, color: "#AAA", marginTop: 3 } }, new Date(t.created_at).toLocaleString("fr-FR"))
               ),
               React.createElement('span', { style: { fontSize: 12, color: "#AAA" } }, isOpen ? "▲" : "▼")
             ),
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
+              !t.hotel_id && React.createElement('div', { style: { background: "#FFFAF0", border: "1px solid #FBD38D", borderRadius: 8, padding: "10px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                React.createElement('span', { style: { fontSize: 12, color: "#C05621", fontWeight: 500 } }, "⚠️ Ticket non assigné à un hôtel."),
+                React.createElement('select', { defaultValue: "", onChange: async (e) => { const hid = e.target.value; if (!hid) return; const { error } = await sb.from("tickets").update({ hotel_id: hid }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, hotel_id: hid } : x)); }, style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+                  React.createElement('option', { value: "" }, "Assigner à un hôtel…"),
+                  hotels.map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
+                )
+              ),
+              t.subject && React.createElement('div', { style: { fontSize: 12, color: "#444", marginBottom: 10 } }, React.createElement('strong', null, "Objet : "), t.subject),
               React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.7 } },
                 React.createElement('div', null, "📧 " + (t.contact_email || "-") + "   📞 " + (t.contact_phone || "-")),
                 React.createElement('div', null, "Fonction : " + (t.contact_role || "-"))
@@ -1095,46 +1116,65 @@ function App() {
 
   const pageTitle = isAdmin ? (page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "tickets-admin" ? "Tickets" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
 
-  return React.createElement('div', { style: { display: "flex", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
-    React.createElement('div', { style: { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, minHeight: "100vh" } },
-      React.createElement('div', { style: { padding: "16px 14px 13px", borderBottom: `1px solid ${G}22` } },
+  // Styles de la barre latérale : fixe/escamotable sur mobile, statique sur desktop
+  const sidebarStyle = isMobile
+    ? { width: 250, maxWidth: "80%", background: SB, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 60, transform: menuOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s ease", boxShadow: menuOpen ? "0 0 30px rgba(0,0,0,.4)" : "none" }
+    : { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, minHeight: "100vh" };
+
+  const sidebar = React.createElement('div', { style: sidebarStyle },
+    React.createElement('div', { style: { padding: "16px 14px 13px", borderBottom: `1px solid ${G}22`, display: "flex", alignItems: "center", justifyContent: "space-between" } },
+      React.createElement('div', null,
         React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9 } },
           React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 26 } })
         ),
         React.createElement('div', { style: { color: "rgba(255,255,255,.3)", fontSize: 10, marginTop: 6 } }, isAdmin ? "Espace Admin" : "Intranet Client")
       ),
-      !isAdmin && client?.logo_url && React.createElement('div', { style: { padding: "18px 16px", display: "flex", justifyContent: "center", borderBottom: "1px solid rgba(255,255,255,.06)" } },
-        React.createElement('img', { src: client.logo_url, alt: client.name, style: { maxHeight: 90, maxWidth: "100%", objectFit: "contain" } })
-      ),
-      React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
-        React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
-          React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
-          React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-          React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
-        )
-      ),
-      React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
-        nav.map(({ p, icon, label }) => React.createElement('button', {
-          key: p, onClick: () => go(p),
-          style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: page === p ? "rgba(201,168,76,.13)" : "transparent", color: page === p ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${page === p ? G : "transparent"}` }
-        },
-          React.createElement('span', { style: { fontSize: 16, flexShrink: 0 } }, icon),
-          React.createElement('span', { style: { flex: 1 } }, label)
-        ))
-      ),
-      React.createElement('div', { style: { padding: "10px 13px", borderTop: "1px solid rgba(255,255,255,.06)" } },
-        React.createElement('button', {
-          onClick: doLogout,
-          style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: "transparent", color: "rgba(255,255,255,.65)" }
-        }, React.createElement('span', null, "🚪"), React.createElement('span', null, "Déconnexion"))
+      isMobile && React.createElement('button', { onClick: () => setMenuOpen(false), style: { background: "none", border: "none", color: "rgba(255,255,255,.6)", fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 4 } }, "✕")
+    ),
+    !isAdmin && client?.logo_url && React.createElement('div', { style: { padding: "18px 16px", display: "flex", justifyContent: "center", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+      React.createElement('img', { src: client.logo_url, alt: client.name, style: { maxHeight: 90, maxWidth: "100%", objectFit: "contain" } })
+    ),
+    React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+      React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
+        React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
+        React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
+        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
       )
     ),
-    React.createElement('div', { style: { flex: 1, padding: "18px 22px", overflowX: "hidden" } },
-      React.createElement('div', { style: { marginBottom: 16 } },
-        React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
-        page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
+    React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
+      nav.map(({ p, icon, label }) => React.createElement('button', {
+        key: p, onClick: () => go(p),
+        style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: page === p ? "rgba(201,168,76,.13)" : "transparent", color: page === p ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${page === p ? G : "transparent"}` }
+      },
+        React.createElement('span', { style: { fontSize: 16, flexShrink: 0 } }, icon),
+        React.createElement('span', { style: { flex: 1 } }, label)
+      ))
+    ),
+    React.createElement('div', { style: { padding: "10px 13px", borderTop: "1px solid rgba(255,255,255,.06)" } },
+      React.createElement('button', {
+        onClick: doLogout,
+        style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: "transparent", color: "rgba(255,255,255,.65)" }
+      }, React.createElement('span', null, "🚪"), React.createElement('span', null, "Déconnexion"))
+    )
+  );
+
+  return React.createElement('div', { style: { display: "flex", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
+    sidebar,
+    // Overlay sombre derrière le menu sur mobile
+    isMobile && menuOpen && React.createElement('div', { onClick: () => setMenuOpen(false), style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 55 } }),
+    React.createElement('div', { style: { flex: 1, padding: isMobile ? "0 0 18px" : "18px 22px", overflowX: "hidden", width: "100%" } },
+      // Barre supérieure mobile avec bouton hamburger
+      isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", marginBottom: 16 } },
+        React.createElement('button', { onClick: () => setMenuOpen(true), style: { background: "none", border: "none", cursor: "pointer", color: G, fontSize: 24, lineHeight: 1, padding: 0 } }, "☰"),
+        React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 22 } })
       ),
-      content
+      React.createElement('div', { style: { padding: isMobile ? "0 16px" : 0 } },
+        React.createElement('div', { style: { marginBottom: 16 } },
+          React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
+          page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
+        ),
+        content
+      )
     )
   );
 }
