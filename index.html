@@ -28,8 +28,8 @@ const SUPABASE_KEY = "sb_publishable_0bUT3AjMaWBI9qQa9ZKmrA_3BRqNvbL";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const STORAGE_BUCKET = "uploads";
 
-const CATS = ["Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
-const CAT_ICONS = { "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
+const CATS = ["Cyber Sécurité", "Logiciel Marriott", "Logiciel Hilton", "Logiciel Radisson", "Logiciel IHG", "Adobe PDF", "Création de compte", "Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
+const CAT_ICONS = { "Cyber Sécurité": "🛡️", "Logiciel Marriott": "🏨", "Logiciel Hilton": "🏨", "Logiciel Radisson": "🏨", "Logiciel IHG": "🏨", "Adobe PDF": "📕", "Création de compte": "👤", "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
 const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
