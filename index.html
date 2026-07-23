@@ -77,6 +77,10 @@ const STORAGE_BUCKET = "uploads";
 const CATS = ["Cyber Sécurité", "Logiciel Marriott", "Logiciel Hilton", "Logiciel Radisson", "Logiciel IHG", "Adobe PDF", "Création de compte", "Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Autre"];
 const CAT_ICONS = { "Cyber Sécurité": "🛡️", "Logiciel Marriott": "🏨", "Logiciel Hilton": "🏨", "Logiciel Radisson": "🏨", "Logiciel IHG": "🏨", "Adobe PDF": "📕", "Création de compte": "👤", "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Autre": "❓" };
 const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
+
+// Catégories de la documentation technique (fiches par hôtel)
+const DOC_CATS = ["Baie informatique", "Plan caméras", "Schéma réseau", "Téléphonie", "Wi-Fi", "Matériel", "Accès et codes", "Autre"];
+const DOC_CAT_ICONS = { "Baie informatique": "🗄️", "Plan caméras": "📹", "Schéma réseau": "🌐", "Téléphonie": "☎️", "Wi-Fi": "📶", "Matériel": "🖥️", "Accès et codes": "🔑", "Autre": "📁" };
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
 const fileExt = (name) => (name.split('.').pop() || '').toLowerCase();
@@ -190,6 +194,20 @@ function App() {
   const [replyNote, setReplyNote] = useState(""); // info/erreur d'envoi email
   const [ticketFiles, setTicketFiles] = useState({}); // { ticketId: [fichiers] }
   const [replyFiles, setReplyFiles] = useState([]);   // fichiers à joindre à la réponse en cours
+
+  // ---------- DOCUMENTATION TECHNIQUE (admin uniquement) ----------
+  const [docs, setDocs] = useState([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [docFiles, setDocFiles] = useState({});       // { docId: [fichiers] }
+  const [docHotelId, setDocHotelId] = useState(null); // hôtel sélectionné dans l'onglet
+  const [docCatFilter, setDocCatFilter] = useState("all");
+  const [showDocForm, setShowDocForm] = useState(false);
+  const [editingDocId, setEditingDocId] = useState(null);
+  const [docForm, setDocForm] = useState({ titre: "", categorie: DOC_CATS[0], description: "", visible_client: false });
+  const [docNewFiles, setDocNewFiles] = useState([]);
+  const [docExistingFiles, setDocExistingFiles] = useState([]);
+  const [savingDoc, setSavingDoc] = useState(false);
+  const [docErr, setDocErr] = useState("");
 
   const isAdmin = profile?.role === "admin";
   const myHotelId = profile?.hotel_id;
@@ -802,6 +820,115 @@ function App() {
     setReplyNote("Réponse envoyée et ticket fermé ✅");
   };
 
+  // ================= DOCUMENTATION TECHNIQUE (ADMIN UNIQUEMENT) =================
+  // Charge les fiches d'un hôtel. La RLS filtre automatiquement :
+  // l'admin reçoit tout, le client uniquement les fiches partagées de son hôtel.
+  const loadDocs = async (hotelId) => {
+    if (!hotelId) return;
+    setDocsLoading(true);
+    const { data, error } = await sb.from("hotel_docs").select("*")
+      .eq("hotel_id", hotelId).order("categorie").order("created_at", { ascending: false });
+    if (!error && data) {
+      setDocs(data);
+      const ids = data.map(d => d.id);
+      if (ids.length) {
+        const { data: fl } = await sb.from("hotel_doc_fichiers").select("*").in("doc_id", ids).order("created_at");
+        const map = {};
+        (fl || []).forEach(f => { (map[f.doc_id] = map[f.doc_id] || []).push(f); });
+        setDocFiles(map);
+      } else {
+        setDocFiles({});
+      }
+    }
+    setDocsLoading(false);
+  };
+
+  // À l'ouverture de l'onglet : sélectionne le premier hôtel si aucun choix
+  useEffect(() => {
+    if (page !== "docs-techniques" || !isAdmin) return;
+    if (!docHotelId && hotels.length > 0) { setDocHotelId(hotels[0].id); return; }
+    if (docHotelId) loadDocs(docHotelId);
+  }, [page, profile, docHotelId, hotels.length]);
+
+  // Côté client : charge les fiches partagées de son propre hôtel
+  useEffect(() => {
+    if (page !== "mon-installation" || isAdmin || !myHotelId) return;
+    loadDocs(myHotelId);
+  }, [page, profile, myHotelId]);
+
+  const openNewDocForm = () => {
+    setEditingDocId(null);
+    setDocForm({ titre: "", categorie: DOC_CATS[0], description: "", visible_client: false });
+    setDocNewFiles([]);
+    setDocExistingFiles([]);
+    setDocErr("");
+    setShowDocForm(true);
+  };
+
+  const openEditDocForm = (d) => {
+    setEditingDocId(d.id);
+    setDocForm({ titre: d.titre || "", categorie: d.categorie || DOC_CATS[0], description: d.description || "", visible_client: !!d.visible_client });
+    setDocNewFiles([]);
+    setDocExistingFiles(docFiles[d.id] || []);
+    setDocErr("");
+    setShowDocForm(true);
+  };
+
+  const removeExistingDocFile = async (fileId) => {
+    await sb.from("hotel_doc_fichiers").delete().eq("id", fileId);
+    setDocExistingFiles(prev => prev.filter(f => f.id !== fileId));
+  };
+
+  // Bascule rapide du partage depuis la liste, sans ouvrir le formulaire
+  const toggleDocVisible = async (d) => {
+    const next = !d.visible_client;
+    const { error } = await sb.from("hotel_docs").update({ visible_client: next }).eq("id", d.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    setDocs(prev => prev.map(x => x.id === d.id ? { ...x, visible_client: next } : x));
+  };
+
+  const submitDocForm = async () => {
+    if (!docForm.titre.trim()) { setDocErr("Le titre est obligatoire."); return; }
+    if (!docHotelId) { setDocErr("Sélectionnez un hôtel."); return; }
+    setSavingDoc(true);
+    setDocErr("");
+    try {
+      let docId = editingDocId;
+      const payload = {
+        titre: docForm.titre.trim(),
+        categorie: docForm.categorie,
+        description: docForm.description || null,
+        visible_client: !!docForm.visible_client
+      };
+      if (editingDocId) {
+        const { error } = await sb.from("hotel_docs").update(payload).eq("id", editingDocId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await sb.from("hotel_docs")
+          .insert({ ...payload, hotel_id: docHotelId }).select().single();
+        if (error) throw error;
+        docId = data.id;
+      }
+      for (const file of docNewFiles) {
+        const url = await uploadToStorage(file, "docs-techniques");
+        await sb.from("hotel_doc_fichiers").insert({ doc_id: docId, file_name: file.name, file_url: url });
+      }
+      setShowDocForm(false);
+      await loadDocs(docHotelId);
+    } catch (e) {
+      setDocErr(e.message || "Une erreur est survenue.");
+    } finally {
+      setSavingDoc(false);
+    }
+  };
+
+  const deleteDoc = async (d) => {
+    if (!confirm(`Supprimer la fiche "${d.titre}" et tous ses fichiers ? Cette action est irréversible.`)) return;
+    const { error } = await sb.from("hotel_docs").delete().eq("id", d.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    setDocs(prev => prev.filter(x => x.id !== d.id));
+  };
+
   // ================= PROJETS (ADMIN UNIQUEMENT) =================
   const [projets, setProjets] = useState([]);
   const [projetsLoading, setProjetsLoading] = useState(false);
@@ -1058,8 +1185,8 @@ function App() {
   }
 
   const nav = isAdmin
-    ? [{ p: "client-admin", icon: "🏨", label: "Gérer les clients" }, { p: "proc-admin", icon: "📚", label: "Gérer les procédures" }, { p: "tickets-admin", icon: "🎫", label: "Tickets" }, { p: "projets", icon: "📊", label: "Projets" }]
-  : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "contact", icon: "📧", label: "Contacter le support" }];
+    ? [{ p: "client-admin", icon: "🏨", label: "Gérer les clients" }, { p: "proc-admin", icon: "📚", label: "Gérer les procédures" }, { p: "docs-techniques", icon: "🗂️", label: "Doc. technique" }, { p: "tickets-admin", icon: "🎫", label: "Tickets" }, { p: "projets", icon: "📊", label: "Projets" }]
+    : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "mon-installation", icon: "🗂️", label: "Mon installation" }, { p: "contact", icon: "📧", label: "Contacter le support" }, { p: "tickets-client", icon: "🎫", label: "Mes demandes" }];
 
   let content = null;
 
@@ -1606,6 +1733,157 @@ function App() {
     );
   }
 
+  // ---------- ADMIN : DOCUMENTATION TECHNIQUE ----------
+  if (page === "docs-techniques" && isAdmin) {
+    const inputD = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" };
+    const labelD = { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 };
+    const visibles = docCatFilter === "all" ? docs : docs.filter(d => d.categorie === docCatFilter);
+    const usedCats = [...new Set(docs.map(d => d.categorie))];
+
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
+        React.createElement('select', { value: docHotelId || "", onChange: e => { setDocHotelId(e.target.value); setShowDocForm(false); setDocCatFilter("all"); }, style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12, background: "white" } },
+          hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+        ),
+        React.createElement('button', { onClick: () => loadDocs(docHotelId), style: { padding: "7px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔄 Actualiser"),
+        React.createElement('button', { onClick: openNewDocForm, style: { marginLeft: isMobile ? 0 : "auto", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Nouvelle fiche")
+      ),
+
+      showDocForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
+        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, (editingDocId ? "Modifier la fiche — " : "Nouvelle fiche — ") + (hotels.find(h => h.id === docHotelId)?.name || "")),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
+          React.createElement('div', null,
+            React.createElement('label', { style: labelD }, "Titre *"),
+            React.createElement('input', { value: docForm.titre, onChange: e => setDocForm({ ...docForm, titre: e.target.value }), placeholder: "ex : Baie de brassage RDC", style: inputD })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: labelD }, "Catégorie"),
+            React.createElement('select', { value: docForm.categorie, onChange: e => setDocForm({ ...docForm, categorie: e.target.value }), style: inputD },
+              DOC_CATS.map(c => React.createElement('option', { key: c, value: c }, (DOC_CAT_ICONS[c] || "") + " " + c))
+            )
+          )
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: labelD }, "Description / notes"),
+          React.createElement('textarea', { value: docForm.description, onChange: e => setDocForm({ ...docForm, description: e.target.value }), placeholder: "Emplacement, références matériel, remarques...", style: { ...inputD, minHeight: 70, resize: "vertical" } })
+        ),
+        React.createElement('div', { style: { marginBottom: 12, background: docForm.visible_client ? "#F0FFF4" : "#FAFAFC", border: `1px solid ${docForm.visible_client ? "#C6F6D5" : "#E8E8F0"}`, borderRadius: 8, padding: "10px 12px" } },
+          React.createElement('label', { style: { display: "flex", alignItems: "flex-start", gap: 9, fontSize: 12.5, color: "#333", cursor: "pointer" } },
+            React.createElement('input', { type: "checkbox", checked: docForm.visible_client, onChange: e => setDocForm({ ...docForm, visible_client: e.target.checked }), style: { marginTop: 2, cursor: "pointer" } }),
+            React.createElement('span', null,
+              React.createElement('span', { style: { fontWeight: 600 } }, docForm.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
+              React.createElement('span', { style: { display: "block", fontSize: 11, color: "#888", marginTop: 2 } },
+                docForm.visible_client
+                  ? "Le client verra cette fiche et ses fichiers dans son espace « Mon installation »."
+                  : "Réservée à DSI Hotel. Cochez la case pour la partager avec le client."
+              )
+            )
+          )
+        ),
+        React.createElement('div', { style: { marginBottom: 14 } },
+          React.createElement('label', { style: labelD }, "📎 Photos, plans et documents"),
+          docExistingFiles.length > 0 && React.createElement('div', { style: { marginBottom: 7, display: "flex", flexDirection: "column", gap: 5 } },
+            docExistingFiles.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              isImageFile(f.file_name) ? React.createElement('img', { src: f.file_url, style: { width: 26, height: 26, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+              React.createElement('a', { href: f.file_url, target: "_blank", rel: "noreferrer", style: { flex: 1, color: "#333", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
+              React.createElement('button', { onClick: () => removeExistingDocFile(f.id), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+            ))
+          ),
+          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => setDocNewFiles(prev => [...prev, ...Array.from(e.target.files)]), style: { fontSize: 12 } }),
+          docNewFiles.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
+            docNewFiles.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              React.createElement('span', null, "🆕"),
+              React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
+              React.createElement('span', { style: { color: "#AAA" } }, f.size ? Math.round(f.size / 1024) + " Ko" : ""),
+              React.createElement('button', { onClick: () => setDocNewFiles(prev => prev.filter((_, idx) => idx !== i)), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+            ))
+          )
+        ),
+        docErr && React.createElement('div', { style: { color: "#E53E3E", fontSize: 12, marginBottom: 10 } }, docErr),
+        React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => setShowDocForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "7px 13px" } }, "Annuler"),
+          React.createElement('button', { onClick: submitDocForm, disabled: savingDoc, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: savingDoc ? "default" : "pointer", padding: "7px 15px", opacity: savingDoc ? 0.6 : 1 } }, savingDoc ? "Enregistrement..." : (editingDocId ? "Enregistrer" : "Créer la fiche"))
+        )
+      ),
+
+      usedCats.length > 0 && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
+        ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => setDocCatFilter(c), style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
+      ),
+
+      docsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
+      !docsLoading && docs.length === 0 && !showDocForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune fiche technique pour cet hôtel. Créez-en une !"),
+
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(300px,1fr))", gap: 14 } },
+        visibles.map(d => {
+          const fl = docFiles[d.id] || [];
+          const imgs = fl.filter(f => isImageFile(f.file_name));
+          return React.createElement('div', { key: d.id, style: { background: "white", borderRadius: 10, border: `1px solid ${d.visible_client ? "#C6F6D5" : "#E8E8F0"}`, padding: 15 } },
+            React.createElement('div', { style: { display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 8 } },
+              React.createElement('div', { style: { width: 32, height: 32, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 } }, DOC_CAT_ICONS[d.categorie] || "📁"),
+              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                React.createElement('div', { style: { fontWeight: 600, fontSize: 13, color: "#1a1a3e", marginBottom: 3 } }, d.titre),
+                React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, d.categorie)
+              )
+            ),
+            React.createElement('button', { onClick: () => toggleDocVisible(d), title: "Cliquez pour changer la visibilité", style: { display: "block", width: "100%", textAlign: "left", marginBottom: 9, padding: "5px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${d.visible_client ? "#9AE6B4" : "#E2E2E8"}`, background: d.visible_client ? "#F0FFF4" : "#FAFAFC", color: d.visible_client ? "#276749" : "#888" } }, d.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
+            d.description && React.createElement('div', { style: { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, d.description),
+            imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
+              imgs.slice(0, 4).map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { lineHeight: 0 } },
+                React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 62, height: 62, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8" } })
+              )),
+              imgs.length > 4 && React.createElement('div', { style: { width: 62, height: 62, borderRadius: 6, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#888", fontWeight: 600 } }, "+" + (imgs.length - 4))
+            ),
+            React.createElement(FileList, { files: fl.filter(f => !isImageFile(f.file_name)) }),
+            React.createElement('div', { style: { display: "flex", gap: 7, marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0F8" } },
+              React.createElement('button', { onClick: () => openEditDocForm(d), style: { flex: 1, padding: 6, background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 6, fontSize: 11.5, cursor: "pointer", fontWeight: 500 } }, "Modifier"),
+              React.createElement('button', { onClick: () => deleteDoc(d), style: { padding: "6px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 6, fontSize: 11.5, cursor: "pointer" } }, "🗑")
+            ),
+            React.createElement('div', { style: { fontSize: 10, color: "#BBB", marginTop: 7 } }, fl.length + " fichier(s)")
+          );
+        })
+      )
+    );
+  }
+
+  // ---------- CLIENT : MON INSTALLATION (fiches partagées) ----------
+  if (page === "mon-installation" && !isAdmin) {
+    const usedCats = [...new Set(docs.map(d => d.categorie))];
+    const visibles = docCatFilter === "all" ? docs : docs.filter(d => d.categorie === docCatFilter);
+
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
+        "Retrouvez ici la documentation technique de votre établissement : photos des baies informatiques, plans, schémas réseau et fiches matériel préparés par DSI Hotel."
+      ),
+      usedCats.length > 0 && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
+        ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => setDocCatFilter(c), style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
+      ),
+      docsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
+      !docsLoading && docs.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun document disponible pour le moment."),
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(300px,1fr))", gap: 14 } },
+        visibles.map(d => {
+          const fl = docFiles[d.id] || [];
+          const imgs = fl.filter(f => isImageFile(f.file_name));
+          return React.createElement('div', { key: d.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 15 } },
+            React.createElement('div', { style: { display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 9 } },
+              React.createElement('div', { style: { width: 32, height: 32, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 } }, DOC_CAT_ICONS[d.categorie] || "📁"),
+              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                React.createElement('div', { style: { fontWeight: 600, fontSize: 13, color: "#1a1a3e", marginBottom: 3 } }, d.titre),
+                React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, d.categorie)
+              )
+            ),
+            d.description && React.createElement('div', { style: { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, d.description),
+            imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
+              imgs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { lineHeight: 0 } },
+                React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 68, height: 68, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8" } })
+              ))
+            ),
+            React.createElement(FileList, { files: fl.filter(f => !isImageFile(f.file_name)) })
+          );
+        })
+      )
+    );
+  }
+
   // ---------- ADMIN : PROJETS (KANBAN) ----------
   if (page === "projets" && isAdmin) {
     const prioColorP = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
@@ -1821,7 +2099,7 @@ function App() {
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
+  const pageTitle = isAdmin ? (page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
 
   // Styles de la barre latérale : fixe/escamotable sur mobile, statique sur desktop
   const sidebarStyle = isMobile
