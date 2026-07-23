@@ -160,19 +160,84 @@ function App() {
   // ---------- VISIONNEUSE D'IMAGES ----------
   // { images: [{file_url, file_name}], index: n } ou null si fermée
   const [viewer, setViewer] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = React.useRef(null);   // position de départ d'un glisser
+  const pinchRef = React.useRef(null);  // écart initial entre deux doigts
 
-  const openViewer = (images, startIndex) => setViewer({ images, index: startIndex });
-  const closeViewer = () => setViewer(null);
-  const viewerNext = () => setViewer(v => v ? { ...v, index: (v.index + 1) % v.images.length } : v);
-  const viewerPrev = () => setViewer(v => v ? { ...v, index: (v.index - 1 + v.images.length) % v.images.length } : v);
+  const ZOOM_MIN = 1, ZOOM_MAX = 6;
+  const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  const resetZoom = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
-  // Navigation au clavier : ← → pour changer d'image, Échap pour fermer
+  const openViewer = (images, startIndex) => { resetZoom(); setViewer({ images, index: startIndex }); };
+  const closeViewer = () => { resetZoom(); setViewer(null); };
+  const viewerNext = () => { resetZoom(); setViewer(v => v ? { ...v, index: (v.index + 1) % v.images.length } : v); };
+  const viewerPrev = () => { resetZoom(); setViewer(v => v ? { ...v, index: (v.index - 1 + v.images.length) % v.images.length } : v); };
+  const goToImage = (i) => { resetZoom(); setViewer(v => v ? { ...v, index: i } : v); };
+
+  // Molette : zoom centré sur le curseur
+  const onWheelZoom = (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+    setZoom(prevZ => {
+      const nextZ = clampZoom(prevZ * factor);
+      if (nextZ === 1) setPan({ x: 0, y: 0 });
+      else {
+        // Garde le point sous le curseur à peu près fixe
+        const rect = e.currentTarget.getBoundingClientRect();
+        const cx = e.clientX - rect.left - rect.width / 2;
+        const cy = e.clientY - rect.top - rect.height / 2;
+        const ratio = nextZ / prevZ;
+        setPan(p => ({ x: cx - (cx - p.x) * ratio, y: cy - (cy - p.y) * ratio }));
+      }
+      return nextZ;
+    });
+  };
+
+  // Glisser à la souris (uniquement si zoomé)
+  const onDragStart = (e) => {
+    if (zoom <= 1) return;
+    e.preventDefault();
+    dragRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+  };
+  const onDragMove = (e) => {
+    if (!dragRef.current) return;
+    setPan({ x: e.clientX - dragRef.current.x, y: e.clientY - dragRef.current.y });
+  };
+  const onDragEnd = () => { dragRef.current = null; };
+
+  // Tactile : pincement à deux doigts, glissement à un doigt si zoomé
+  const touchDist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      pinchRef.current = { dist: touchDist(e.touches), zoom };
+    } else if (e.touches.length === 1 && zoom > 1) {
+      dragRef.current = { x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y };
+    }
+  };
+  const onTouchMove = (e) => {
+    if (e.touches.length === 2 && pinchRef.current) {
+      e.preventDefault();
+      const next = clampZoom(pinchRef.current.zoom * (touchDist(e.touches) / pinchRef.current.dist));
+      setZoom(next);
+      if (next === 1) setPan({ x: 0, y: 0 });
+    } else if (e.touches.length === 1 && dragRef.current) {
+      e.preventDefault();
+      setPan({ x: e.touches[0].clientX - dragRef.current.x, y: e.touches[0].clientY - dragRef.current.y });
+    }
+  };
+  const onTouchEnd = () => { pinchRef.current = null; dragRef.current = null; };
+
+  // Navigation au clavier : ← → images, + − zoom, 0 réinitialise, Échap ferme
   useEffect(() => {
     if (!viewer) return;
     const onKey = (e) => {
       if (e.key === "Escape") closeViewer();
       else if (e.key === "ArrowRight") viewerNext();
       else if (e.key === "ArrowLeft") viewerPrev();
+      else if (e.key === "+" || e.key === "=") setZoom(z => clampZoom(z * 1.25));
+      else if (e.key === "-") setZoom(z => { const n = clampZoom(z / 1.25); if (n === 1) setPan({ x: 0, y: 0 }); return n; });
+      else if (e.key === "0") resetZoom();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2182,26 +2247,59 @@ function App() {
       style: { position: "fixed", inset: 0, background: "rgba(10,10,20,.92)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: isMobile ? 12 : 30 }
     },
       // Barre supérieure : nom du fichier, compteur, télécharger, fermer
-      React.createElement('div', { style: { position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: "linear-gradient(rgba(0,0,0,.55), rgba(0,0,0,0))" } },
+      React.createElement('div', { style: { position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: "linear-gradient(rgba(0,0,0,.55), rgba(0,0,0,0))", zIndex: 3 } },
         React.createElement('span', { style: { color: "rgba(255,255,255,.9)", fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, viewer.images[viewer.index]?.file_name || ""),
         viewer.images.length > 1 && React.createElement('span', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, whiteSpace: "nowrap" } }, (viewer.index + 1) + " / " + viewer.images.length),
         React.createElement('a', { href: viewer.images[viewer.index]?.file_url, download: viewer.images[viewer.index]?.file_name, target: "_blank", rel: "noreferrer", onClick: e => e.stopPropagation(), title: "Télécharger", style: { color: G, fontSize: 18, textDecoration: "none", padding: "2px 6px" } }, "⬇"),
         React.createElement('button', { onClick: closeViewer, title: "Fermer (Échap)", style: { background: "none", border: "none", color: "rgba(255,255,255,.75)", fontSize: 26, cursor: "pointer", lineHeight: 1, padding: "0 4px" } }, "✕")
       ),
       // Flèche précédente
-      viewer.images.length > 1 && React.createElement('button', { onClick: (e) => { e.stopPropagation(); viewerPrev(); }, title: "Précédente (←)", style: { position: "absolute", left: isMobile ? 6 : 20, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.12)", border: "none", color: "white", fontSize: 26, cursor: "pointer", borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center" } }, "‹"),
-      // Image
-      React.createElement('img', {
-        src: viewer.images[viewer.index]?.file_url,
-        alt: viewer.images[viewer.index]?.file_name || "",
-        onClick: (e) => e.stopPropagation(),
-        style: { maxWidth: "100%", maxHeight: isMobile ? "78vh" : "84vh", objectFit: "contain", borderRadius: 6, boxShadow: "0 8px 40px rgba(0,0,0,.5)" }
-      }),
+      viewer.images.length > 1 && React.createElement('button', { onClick: (e) => { e.stopPropagation(); viewerPrev(); }, title: "Précédente (←)", style: { position: "absolute", left: isMobile ? 6 : 20, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.12)", border: "none", color: "white", fontSize: 26, cursor: "pointer", borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3 } }, "‹"),
+      // Zone d'image : molette pour zoomer, glisser pour déplacer
+      React.createElement('div', {
+        onClick: (e) => { e.stopPropagation(); if (zoom === 1 && e.target === e.currentTarget) closeViewer(); },
+        onWheel: onWheelZoom,
+        onMouseDown: onDragStart,
+        onMouseMove: onDragMove,
+        onMouseUp: onDragEnd,
+        onMouseLeave: onDragEnd,
+        onDoubleClick: () => (zoom > 1 ? resetZoom() : setZoom(2.5)),
+        onTouchStart: onTouchStart,
+        onTouchMove: onTouchMove,
+        onTouchEnd: onTouchEnd,
+        style: { width: "100%", height: isMobile ? "78vh" : "84vh", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: zoom > 1 ? "grab" : "zoom-in", touchAction: "none" }
+      },
+        React.createElement('div', {
+          style: {
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transition: "transform .1s ease-out",
+            maxWidth: "100%", maxHeight: "100%", display: "flex"
+          }
+        },
+          React.createElement('img', {
+            src: viewer.images[viewer.index]?.file_url,
+            alt: viewer.images[viewer.index]?.file_name || "",
+            draggable: false,
+            onClick: (e) => e.stopPropagation(),
+            style: {
+              maxWidth: "100%", maxHeight: "100%", objectFit: "contain",
+              borderRadius: 6, boxShadow: "0 8px 40px rgba(0,0,0,.5)",
+              userSelect: "none"
+            }
+          })
+        )
+      ),
       // Flèche suivante
-      viewer.images.length > 1 && React.createElement('button', { onClick: (e) => { e.stopPropagation(); viewerNext(); }, title: "Suivante (→)", style: { position: "absolute", right: isMobile ? 6 : 20, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.12)", border: "none", color: "white", fontSize: 26, cursor: "pointer", borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center" } }, "›"),
+      viewer.images.length > 1 && React.createElement('button', { onClick: (e) => { e.stopPropagation(); viewerNext(); }, title: "Suivante (→)", style: { position: "absolute", right: isMobile ? 6 : 20, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.12)", border: "none", color: "white", fontSize: 26, cursor: "pointer", borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3 } }, "›"),
+      // Contrôles de zoom
+      React.createElement('div', { onClick: e => e.stopPropagation(), style: { position: "absolute", bottom: viewer.images.length > 1 ? 46 : 18, display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,.1)", borderRadius: 24, padding: "4px 6px", zIndex: 3 } },
+        React.createElement('button', { onClick: () => setZoom(z => { const n = clampZoom(z / 1.25); if (n === 1) setPan({ x: 0, y: 0 }); return n; }), disabled: zoom <= ZOOM_MIN, title: "Dézoomer (−)", style: { background: "none", border: "none", color: "white", fontSize: 20, cursor: zoom <= ZOOM_MIN ? "default" : "pointer", opacity: zoom <= ZOOM_MIN ? .35 : 1, width: 32, height: 32, lineHeight: 1, padding: 0 } }, "−"),
+        React.createElement('button', { onClick: resetZoom, title: "Taille réelle (0)", style: { background: "none", border: "none", color: "rgba(255,255,255,.85)", fontSize: 12, cursor: "pointer", minWidth: 52, fontVariantNumeric: "tabular-nums" } }, Math.round(zoom * 100) + "%"),
+        React.createElement('button', { onClick: () => setZoom(z => clampZoom(z * 1.25)), disabled: zoom >= ZOOM_MAX, title: "Zoomer (+)", style: { background: "none", border: "none", color: "white", fontSize: 20, cursor: zoom >= ZOOM_MAX ? "default" : "pointer", opacity: zoom >= ZOOM_MAX ? .35 : 1, width: 32, height: 32, lineHeight: 1, padding: 0 } }, "+")
+      ),
       // Pastilles de navigation
-      viewer.images.length > 1 && React.createElement('div', { style: { position: "absolute", bottom: 18, display: "flex", gap: 7, justifyContent: "center", flexWrap: "wrap", maxWidth: "90%" } },
-        viewer.images.map((im, i) => React.createElement('button', { key: i, onClick: (e) => { e.stopPropagation(); setViewer(v => ({ ...v, index: i })); }, style: { width: 9, height: 9, borderRadius: "50%", border: "none", padding: 0, cursor: "pointer", background: i === viewer.index ? G : "rgba(255,255,255,.3)" } }))
+      viewer.images.length > 1 && React.createElement('div', { onClick: e => e.stopPropagation(), style: { position: "absolute", bottom: 18, display: "flex", gap: 7, justifyContent: "center", flexWrap: "wrap", maxWidth: "90%", zIndex: 3 } },
+        viewer.images.map((im, i) => React.createElement('button', { key: i, onClick: () => goToImage(i), style: { width: 9, height: 9, borderRadius: "50%", border: "none", padding: 0, cursor: "pointer", background: i === viewer.index ? G : "rgba(255,255,255,.3)" } }))
       )
     ),
     // Popup d'avertissement avant déconnexion automatique
