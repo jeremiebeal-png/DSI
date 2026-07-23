@@ -90,16 +90,20 @@ const Badge = ({ label, color }) => (
 );
 
 // Liste de pièces jointes : vignettes pour les images, liens pour les documents
-const FileList = ({ files, title }) => {
+// onOpenImage(images, index) ouvre la visionneuse ; si absent, lien classique
+const FileList = ({ files, title, onOpenImage }) => {
   if (!files || files.length === 0) return null;
   const imgs = files.filter(f => isImageFile(f.file_name));
   const docs = files.filter(f => !isImageFile(f.file_name));
   return React.createElement('div', { style: { marginBottom: 12 } },
     title && React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 6 } }, title),
     imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: docs.length ? 8 : 0 } },
-      imgs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { display: "block", lineHeight: 0 } },
-        React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8" } })
-      ))
+      imgs.map((f, i) => onOpenImage
+        ? React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => onOpenImage(imgs, i), style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } })
+        : React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { display: "block", lineHeight: 0 } },
+            React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8" } })
+          )
+      )
     ),
     docs.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 5 } },
       docs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "white", border: "1px solid #E8E8F0", borderRadius: 7, padding: "7px 11px", fontSize: 12, color: "#333", textDecoration: "none" } },
@@ -152,6 +156,27 @@ function App() {
   const [mfaCode, setMfaCode] = useState("");
   const [mfaErr, setMfaErr] = useState("");
   const [mfaBusy, setMfaBusy] = useState(false);
+
+  // ---------- VISIONNEUSE D'IMAGES ----------
+  // { images: [{file_url, file_name}], index: n } ou null si fermée
+  const [viewer, setViewer] = useState(null);
+
+  const openViewer = (images, startIndex) => setViewer({ images, index: startIndex });
+  const closeViewer = () => setViewer(null);
+  const viewerNext = () => setViewer(v => v ? { ...v, index: (v.index + 1) % v.images.length } : v);
+  const viewerPrev = () => setViewer(v => v ? { ...v, index: (v.index - 1 + v.images.length) % v.images.length } : v);
+
+  // Navigation au clavier : ← → pour changer d'image, Échap pour fermer
+  useEffect(() => {
+    if (!viewer) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closeViewer();
+      else if (e.key === "ArrowRight") viewerNext();
+      else if (e.key === "ArrowLeft") viewerPrev();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewer]);
 
   const [hotels, setHotels] = useState([]);
   const [hotelsLoading, setHotelsLoading] = useState(false);
@@ -375,7 +400,9 @@ function App() {
   };
 
   // ---------- DÉCONNEXION AUTOMATIQUE APRÈS INACTIVITÉ ----------
-  // 5 min d'inactivité -> déconnexion. Avertissement à 4 min (1 min avant).
+  // 30 min d'inactivité -> déconnexion. Avertissement à 29 min (1 min avant).
+  // Les minuteurs sont suspendus quand l'onglet est masqué (consultation d'un
+  // PDF ou d'une image dans un autre onglet) : ce n'est pas de l'inactivité.
   useEffect(() => {
     if (!session) return; // uniquement quand l'utilisateur est connecté
 
@@ -383,10 +410,15 @@ function App() {
     const LOGOUT_AFTER = 30 * 60 * 1000; // 30 minutes -> déconnexion
     let warnTimer, logoutTimer;
 
-    const resetTimers = () => {
+    const clearTimers = () => {
       clearTimeout(warnTimer);
       clearTimeout(logoutTimer);
+    };
+
+    const resetTimers = () => {
+      clearTimers();
       setIdleWarning(false);
+      if (document.hidden) return; // onglet en arrière-plan : on ne compte pas
       warnTimer = setTimeout(() => setIdleWarning(true), WARN_AFTER);
       logoutTimer = setTimeout(() => { setIdleWarning(false); doLogout(); }, LOGOUT_AFTER);
     };
@@ -396,12 +428,16 @@ function App() {
     const onActivity = () => resetTimers();
     events.forEach(ev => window.addEventListener(ev, onActivity));
 
+    // Onglet masqué -> suspend ; onglet réaffiché -> repart à zéro
+    const onVisibility = () => { if (document.hidden) clearTimers(); else resetTimers(); };
+    document.addEventListener("visibilitychange", onVisibility);
+
     resetTimers(); // démarre au montage
 
     return () => {
-      clearTimeout(warnTimer);
-      clearTimeout(logoutTimer);
+      clearTimers();
       events.forEach(ev => window.removeEventListener(ev, onActivity));
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [session]);
 
@@ -1437,7 +1473,7 @@ function App() {
         files.filter(f => isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
-            files.filter(f => isImageFile(f.file_name)).map((f, i) => React.createElement('img', { key: i, src: f.file_url, alt: f.file_name, style: { width: "100%", borderRadius: 8, border: "1px solid #EEE" } }))
+            files.filter(f => isImageFile(f.file_name)).map((f, i, arr) => React.createElement('img', { key: i, src: f.file_url, alt: f.file_name, title: "Cliquez pour agrandir", onClick: () => openViewer(arr, i), style: { width: "100%", borderRadius: 8, border: "1px solid #EEE", cursor: "zoom-in" } }))
           )
         ),
         files.filter(f => !isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
@@ -1618,12 +1654,12 @@ function App() {
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "DEMANDE INITIALE"),
                 t.message
               ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE" }),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               msgs.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
                 msgs.map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "white", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#EEE"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
-                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id) })
+                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer })
                 ))
               ),
               t.status !== "closed" && React.createElement('div', null,
@@ -1696,13 +1732,13 @@ function App() {
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
                 t.message
               ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES" }),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
               msgs.length > 0
                 ? React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
                     msgs.map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "white", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#EEE"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
-                      React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id) })
+                      React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer })
                     ))
                   )
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
@@ -1828,10 +1864,8 @@ function App() {
             React.createElement('button', { onClick: () => toggleDocVisible(d), title: "Cliquez pour changer la visibilité", style: { display: "block", width: "100%", textAlign: "left", marginBottom: 9, padding: "5px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${d.visible_client ? "#9AE6B4" : "#E2E2E8"}`, background: d.visible_client ? "#F0FFF4" : "#FAFAFC", color: d.visible_client ? "#276749" : "#888" } }, d.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
             d.description && React.createElement('div', { style: { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, d.description),
             imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
-              imgs.slice(0, 4).map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { lineHeight: 0 } },
-                React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 62, height: 62, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8" } })
-              )),
-              imgs.length > 4 && React.createElement('div', { style: { width: 62, height: 62, borderRadius: 6, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#888", fontWeight: 600 } }, "+" + (imgs.length - 4))
+              imgs.slice(0, 4).map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 62, height: 62, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } })),
+              imgs.length > 4 && React.createElement('div', { onClick: () => openViewer(imgs, 4), style: { width: 62, height: 62, borderRadius: 6, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#888", fontWeight: 600, cursor: "zoom-in" } }, "+" + (imgs.length - 4))
             ),
             React.createElement(FileList, { files: fl.filter(f => !isImageFile(f.file_name)) }),
             React.createElement('div', { style: { display: "flex", gap: 7, marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0F8" } },
@@ -1873,9 +1907,7 @@ function App() {
             ),
             d.description && React.createElement('div', { style: { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, d.description),
             imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
-              imgs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { lineHeight: 0 } },
-                React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 68, height: 68, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8" } })
-              ))
+              imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 68, height: 68, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
             ),
             React.createElement(FileList, { files: fl.filter(f => !isImageFile(f.file_name)) })
           );
@@ -2144,6 +2176,34 @@ function App() {
   );
 
   return React.createElement('div', { style: { display: "flex", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
+    // Visionneuse d'images plein écran
+    viewer && React.createElement('div', {
+      onClick: (e) => { if (e.target === e.currentTarget) closeViewer(); },
+      style: { position: "fixed", inset: 0, background: "rgba(10,10,20,.92)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: isMobile ? 12 : 30 }
+    },
+      // Barre supérieure : nom du fichier, compteur, télécharger, fermer
+      React.createElement('div', { style: { position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: "linear-gradient(rgba(0,0,0,.55), rgba(0,0,0,0))" } },
+        React.createElement('span', { style: { color: "rgba(255,255,255,.9)", fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, viewer.images[viewer.index]?.file_name || ""),
+        viewer.images.length > 1 && React.createElement('span', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, whiteSpace: "nowrap" } }, (viewer.index + 1) + " / " + viewer.images.length),
+        React.createElement('a', { href: viewer.images[viewer.index]?.file_url, download: viewer.images[viewer.index]?.file_name, target: "_blank", rel: "noreferrer", onClick: e => e.stopPropagation(), title: "Télécharger", style: { color: G, fontSize: 18, textDecoration: "none", padding: "2px 6px" } }, "⬇"),
+        React.createElement('button', { onClick: closeViewer, title: "Fermer (Échap)", style: { background: "none", border: "none", color: "rgba(255,255,255,.75)", fontSize: 26, cursor: "pointer", lineHeight: 1, padding: "0 4px" } }, "✕")
+      ),
+      // Flèche précédente
+      viewer.images.length > 1 && React.createElement('button', { onClick: (e) => { e.stopPropagation(); viewerPrev(); }, title: "Précédente (←)", style: { position: "absolute", left: isMobile ? 6 : 20, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.12)", border: "none", color: "white", fontSize: 26, cursor: "pointer", borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center" } }, "‹"),
+      // Image
+      React.createElement('img', {
+        src: viewer.images[viewer.index]?.file_url,
+        alt: viewer.images[viewer.index]?.file_name || "",
+        onClick: (e) => e.stopPropagation(),
+        style: { maxWidth: "100%", maxHeight: isMobile ? "78vh" : "84vh", objectFit: "contain", borderRadius: 6, boxShadow: "0 8px 40px rgba(0,0,0,.5)" }
+      }),
+      // Flèche suivante
+      viewer.images.length > 1 && React.createElement('button', { onClick: (e) => { e.stopPropagation(); viewerNext(); }, title: "Suivante (→)", style: { position: "absolute", right: isMobile ? 6 : 20, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.12)", border: "none", color: "white", fontSize: 26, cursor: "pointer", borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", justifyContent: "center" } }, "›"),
+      // Pastilles de navigation
+      viewer.images.length > 1 && React.createElement('div', { style: { position: "absolute", bottom: 18, display: "flex", gap: 7, justifyContent: "center", flexWrap: "wrap", maxWidth: "90%" } },
+        viewer.images.map((im, i) => React.createElement('button', { key: i, onClick: (e) => { e.stopPropagation(); setViewer(v => ({ ...v, index: i })); }, style: { width: 9, height: 9, borderRadius: "50%", border: "none", padding: 0, cursor: "pointer", background: i === viewer.index ? G : "rgba(255,255,255,.3)" } }))
+      )
+    ),
     // Popup d'avertissement avant déconnexion automatique
     idleWarning && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 } },
       React.createElement('div', { style: { background: "white", borderRadius: 14, padding: 26, width: 380, maxWidth: "100%", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,.3)" } },
