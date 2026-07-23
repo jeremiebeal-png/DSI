@@ -140,6 +140,15 @@ function App() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [showPw, setShowPw] = useState(false);
 
+  // ---------- MFA (double authentification, obligatoire pour l'admin) ----------
+  const [mfaState, setMfaState] = useState("checking"); // checking | ok | enroll | challenge
+  const [mfaFactorId, setMfaFactorId] = useState(null);
+  const [mfaQr, setMfaQr] = useState(null);       // QR code (data URI) lors de l'enrôlement
+  const [mfaSecret, setMfaSecret] = useState(""); // clé en clair, saisie manuelle si le QR ne passe pas
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaErr, setMfaErr] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+
   const [hotels, setHotels] = useState([]);
   const [hotelsLoading, setHotelsLoading] = useState(false);
   const [procedures, setProcedures] = useState([]);
@@ -200,7 +209,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!session) { setProfile(null); return; }
+    if (!session) { setProfile(null); setMfaState("checking"); return; }
     sb.from("profiles").select("role, hotel_id").eq("id", session.user.id).single()
       .then(({ data, error }) => {
         if (!error && data) {
@@ -209,6 +218,87 @@ function App() {
         }
       });
   }, [session]);
+
+  // ---------- MFA : contrôle d'accès obligatoire pour les admins ----------
+  // Démarre l'enrôlement TOTP : génère le QR code à scanner
+  const startEnroll = async (existingFactors) => {
+    try {
+      // Nettoie d'éventuels facteurs non vérifiés restés d'une tentative précédente
+      const stale = (existingFactors?.totp || []).filter(f => f.status !== "verified");
+      for (const f of stale) { try { await sb.auth.mfa.unenroll({ factorId: f.id }); } catch (e) {} }
+
+      const { data, error } = await sb.auth.mfa.enroll({
+        factorType: "totp",
+        friendlyName: "DSI Hotel Admin " + Date.now()
+      });
+      if (error) throw error;
+      setMfaFactorId(data.id);
+      setMfaQr(data.totp.qr_code);
+      setMfaSecret(data.totp.secret);
+      setMfaState("enroll");
+    } catch (e) {
+      setMfaErr("Impossible de démarrer l'enrôlement : " + (e.message || e));
+      setMfaState("enroll");
+    }
+  };
+
+  // aal1 = mot de passe seul ; aal2 = mot de passe + code TOTP validé
+  useEffect(() => {
+    if (!session || !profile) return;
+    if (profile.role !== "admin") { setMfaState("ok"); return; }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (cancelled) return;
+
+        // Session déjà élevée en aal2 : rien à demander
+        if (aal && aal.currentLevel === "aal2") { setMfaState("ok"); return; }
+
+        // Un facteur TOTP vérifié existe-t-il déjà sur ce compte ?
+        const { data: factors } = await sb.auth.mfa.listFactors();
+        if (cancelled) return;
+        const verified = (factors?.totp || []).filter(f => f.status === "verified");
+
+        if (verified.length > 0) {
+          // Facteur existant -> demander le code (challenge)
+          setMfaFactorId(verified[0].id);
+          setMfaState("challenge");
+        } else {
+          // Aucun facteur -> enrôlement forcé
+          await startEnroll(factors);
+        }
+      } catch (e) {
+        if (!cancelled) { setMfaErr("Erreur MFA : " + (e.message || e)); setMfaState("challenge"); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session, profile]);
+
+  // Valide le code à 6 chiffres (enrôlement ou connexion)
+  const submitMfaCode = async () => {
+    const code = mfaCode.replace(/\s/g, "");
+    if (code.length !== 6 || !mfaFactorId) { setMfaErr("Entrez le code à 6 chiffres."); return; }
+    setMfaBusy(true);
+    setMfaErr("");
+    try {
+      const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: mfaFactorId });
+      if (chErr) throw chErr;
+      const { error: vErr } = await sb.auth.mfa.verify({
+        factorId: mfaFactorId, challengeId: ch.id, code
+      });
+      if (vErr) throw vErr;
+      setMfaCode("");
+      setMfaQr(null);
+      setMfaSecret("");
+      setMfaState("ok");
+    } catch (e) {
+      setMfaErr("Code incorrect ou expiré. Vérifiez l'heure de votre téléphone et réessayez.");
+    } finally {
+      setMfaBusy(false);
+    }
+  };
 
   // ---------- LOAD HOTELS ----------
   useEffect(() => {
@@ -263,6 +353,7 @@ function App() {
   const doLogout = async () => {
     await sb.auth.signOut();
     setEmail(""); setPw(""); setHotels([]); setProcedures([]); setEditCid(null);
+    setMfaState("checking"); setMfaFactorId(null); setMfaQr(null); setMfaSecret(""); setMfaCode(""); setMfaErr("");
   };
 
   // ---------- DÉCONNEXION AUTOMATIQUE APRÈS INACTIVITÉ ----------
@@ -270,8 +361,8 @@ function App() {
   useEffect(() => {
     if (!session) return; // uniquement quand l'utilisateur est connecté
 
-    const WARN_AFTER = 4 * 60 * 1000;   // 4 minutes -> avertissement
-    const LOGOUT_AFTER = 5 * 60 * 1000; // 5 minutes -> déconnexion
+    const WARN_AFTER = 29 * 60 * 1000;   // 29 minutes -> avertissement
+    const LOGOUT_AFTER = 30 * 60 * 1000; // 30 minutes -> déconnexion
     let warnTimer, logoutTimer;
 
     const resetTimers = () => {
@@ -912,6 +1003,55 @@ function App() {
           ),
           loginErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 14 } }, loginErr),
           React.createElement('button', { onClick: doLogin, disabled: loggingIn, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: loggingIn ? "default" : "pointer", opacity: loggingIn ? 0.6 : 1 } }, loggingIn ? "Connexion..." : "Se connecter")
+        )
+      )
+    );
+  }
+
+  // ---------- ÉCRAN MFA : bloque l'accès admin tant que le code n'est pas validé ----------
+  if (isAdmin && mfaState !== "ok") {
+    const inputMfa = { width: "100%", padding: "12px 14px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 22, letterSpacing: "6px", textAlign: "center", outline: "none", fontFamily: "monospace" };
+
+    return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
+      React.createElement('div', { style: { width: 440, maxWidth: "100%" } },
+        React.createElement('div', { style: { textAlign: "center", marginBottom: 24 } },
+          React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 54 } }),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 13, marginTop: 8 } }, "Vérification en deux étapes")
+        ),
+
+        mfaState === "checking" && React.createElement('div', { style: { background: "rgba(255,255,255,.05)", borderRadius: 14, padding: 28, border: `1px solid ${G}30`, textAlign: "center", color: "rgba(255,255,255,.5)", fontSize: 13 } }, "Vérification de la sécurité..."),
+
+        mfaState === "enroll" && React.createElement('div', { style: { background: "rgba(255,255,255,.05)", borderRadius: 14, padding: 28, border: `1px solid ${G}30` } },
+          React.createElement('div', { style: { color: G, fontSize: 15, fontWeight: 600, marginBottom: 6 } }, "🔐 Activation obligatoire"),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 12.5, lineHeight: 1.6, marginBottom: 18 } },
+            "Le compte administrateur nécessite une double authentification. Scannez ce QR code avec une application d'authentification (Google Authenticator, Microsoft Authenticator, Authy…)."
+          ),
+          mfaQr && React.createElement('div', { style: { background: "white", borderRadius: 10, padding: 14, display: "flex", justifyContent: "center", marginBottom: 14 } },
+            React.createElement('img', { src: mfaQr, alt: "QR code MFA", style: { width: 190, height: 190, display: "block" } })
+          ),
+          mfaSecret && React.createElement('div', { style: { marginBottom: 18 } },
+            React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10.5, marginBottom: 5 } }, "Ou saisissez cette clé manuellement :"),
+            React.createElement('div', { style: { background: "rgba(255,255,255,.08)", borderRadius: 7, padding: "9px 11px", color: G, fontSize: 12.5, fontFamily: "monospace", wordBreak: "break-all", userSelect: "all" } }, mfaSecret)
+          ),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 12, marginBottom: 8 } }, "Entrez ensuite le code affiché par l'application :"),
+          React.createElement('input', { value: mfaCode, onChange: e => { setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setMfaErr(""); }, onKeyDown: e => e.key === "Enter" && submitMfaCode(), placeholder: "000000", inputMode: "numeric", autoFocus: true, style: inputMfa }),
+          mfaErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 12.5, marginTop: 12 } }, mfaErr),
+          React.createElement('button', { onClick: submitMfaCode, disabled: mfaBusy || mfaCode.length !== 6, style: { width: "100%", marginTop: 16, padding: 12, background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: (mfaBusy || mfaCode.length !== 6) ? "default" : "pointer", opacity: (mfaBusy || mfaCode.length !== 6) ? 0.5 : 1 } }, mfaBusy ? "Vérification..." : "Activer et continuer"),
+          React.createElement('div', { style: { background: "rgba(221,107,32,.12)", border: "1px solid rgba(221,107,32,.35)", borderRadius: 8, padding: "10px 12px", marginTop: 16, fontSize: 11.5, color: "#F6AD55", lineHeight: 1.6 } },
+            "⚠️ Conservez précieusement l'accès à cette application. Sans elle, la connexion administrateur sera impossible."
+          ),
+          React.createElement('button', { onClick: doLogout, style: { width: "100%", marginTop: 12, padding: 9, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler et se déconnecter")
+        ),
+
+        mfaState === "challenge" && React.createElement('div', { style: { background: "rgba(255,255,255,.05)", borderRadius: 14, padding: 28, border: `1px solid ${G}30` } },
+          React.createElement('div', { style: { color: G, fontSize: 15, fontWeight: 600, marginBottom: 6 } }, "🔐 Code de vérification"),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 12.5, lineHeight: 1.6, marginBottom: 18 } },
+            "Ouvrez votre application d'authentification et saisissez le code à 6 chiffres affiché."
+          ),
+          React.createElement('input', { value: mfaCode, onChange: e => { setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setMfaErr(""); }, onKeyDown: e => e.key === "Enter" && submitMfaCode(), placeholder: "000000", inputMode: "numeric", autoFocus: true, style: inputMfa }),
+          mfaErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 12.5, marginTop: 12 } }, mfaErr),
+          React.createElement('button', { onClick: submitMfaCode, disabled: mfaBusy || mfaCode.length !== 6, style: { width: "100%", marginTop: 16, padding: 12, background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: (mfaBusy || mfaCode.length !== 6) ? "default" : "pointer", opacity: (mfaBusy || mfaCode.length !== 6) ? 0.5 : 1 } }, mfaBusy ? "Vérification..." : "Vérifier"),
+          React.createElement('button', { onClick: doLogout, style: { width: "100%", marginTop: 12, padding: 9, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Se déconnecter")
         )
       )
     );
