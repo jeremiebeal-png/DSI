@@ -20,6 +20,52 @@ const { useState, useEffect } = React;
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
 const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
+
+// ====== SIGNATURE EMAIL DSI HOTEL ======
+const SIGN_LOGO_URL = "https://www.dsihotel.com/dsi-logo-gold.png";
+const SIGN_ADDRESS = "60 Rue François 1er, 75008 Paris";
+const SIGN_PHONE = "+33 1 84 18 02 23";
+const SIGN_PHONE_TEL = "+33184180223";
+
+// Signature au format texte brut (repli si le client mail n'affiche pas le HTML)
+const SIGNATURE_TEXT =
+  "\n\n--\n" +
+  "DSI Hotel\n" +
+  SIGN_ADDRESS + "\n" +
+  "Vous pouvez maintenant nous joindre au " + SIGN_PHONE + "\n" +
+  SUPPORT_EMAIL;
+
+// Signature au format HTML (styles inline : obligatoire pour les clients mail)
+const SIGNATURE_HTML =
+  '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;border-top:1px solid #E2E2E8;padding-top:16px;font-family:Arial,Helvetica,sans-serif;">' +
+    '<tr><td style="padding-bottom:8px;">' +
+      '<img src="' + SIGN_LOGO_URL + '" alt="DSI Hotel" width="130" style="display:block;border:0;outline:none;max-width:130px;height:auto;">' +
+    '</td></tr>' +
+    '<tr><td style="font-size:15px;font-weight:bold;color:#1a1a3e;padding-bottom:5px;">DSI Hotel</td></tr>' +
+    '<tr><td style="font-size:13px;color:#555555;padding-bottom:4px;">' + SIGN_ADDRESS + '</td></tr>' +
+    '<tr><td style="font-size:13px;color:#555555;padding-bottom:4px;">' +
+      'Vous pouvez maintenant nous joindre au ' +
+      '<a href="tel:' + SIGN_PHONE_TEL + '" style="color:#1155CC;text-decoration:none;">' + SIGN_PHONE + '</a>' +
+    '</td></tr>' +
+    '<tr><td style="font-size:13px;">' +
+      '<a href="mailto:' + SUPPORT_EMAIL + '" style="color:#1155CC;text-decoration:none;">' + SUPPORT_EMAIL + '</a>' +
+      '<span style="color:#999999;"> &nbsp;·&nbsp; </span>' +
+      '<a href="https://www.dsihotel.com" style="color:#1155CC;text-decoration:none;">www.dsihotel.com</a>' +
+    '</td></tr>' +
+  '</table>';
+
+// Échappe le HTML et convertit les retours à la ligne en <br> pour insérer du texte utilisateur
+const escapeHtml = (s) => String(s || "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const textToHtml = (s) => escapeHtml(s).replace(/\n/g, "<br>");
+
+// Assemble un email complet : corps + signature, en texte et en HTML
+const buildSignedEmail = (bodyText) => ({
+  text: bodyText + SIGNATURE_TEXT,
+  html: '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.6;">' +
+        textToHtml(bodyText) + SIGNATURE_HTML + '</div>'
+});
 const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
 
 // ====== CONFIGURATION SUPABASE ======
@@ -526,15 +572,15 @@ function App() {
     if (isAdmin && ticket.contact_email) {
       try {
         const subject = `[Ticket ${ticket.category}] Réponse de DSI Hotel`;
-        const text =
+        const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
           `${body}\n\n` +
-          `— Support DSI Hotel\n` +
           `(En réponse à votre demande : ${ticket.message ? ticket.message.slice(0, 120) : ""})`;
+        const mail = buildSignedEmail(bodyText);
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text, replyTo: SUPPORT_EMAIL })
+          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -562,16 +608,16 @@ function App() {
     if (notify && ticket.contact_email) {
       try {
         const subject = `[Ticket ${ticket.category}] Votre demande est résolue`;
-        const text =
+        const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
           `Votre demande de support a été traitée et est désormais marquée comme résolue.\n\n` +
           `Si le problème persiste ou si vous avez une nouvelle question, n'hésitez pas à nous recontacter via votre espace intranet ou à l'adresse ${SUPPORT_EMAIL}.\n\n` +
-          `Nous vous remercions de votre confiance.\n\n` +
-          `— Support DSI Hotel`;
+          `Nous vous remercions de votre confiance.`;
+        const mail = buildSignedEmail(bodyText);
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text, replyTo: SUPPORT_EMAIL })
+          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
