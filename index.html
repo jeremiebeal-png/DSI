@@ -300,6 +300,16 @@ function App() {
   const [docErr, setDocErr] = useState("");
 
   const isAdmin = profile?.role === "admin";
+ const isSuperAdmin = isAdmin && (profile?.email || "").toLowerCase() === "support@dsihotel.com";
+  // Le super-admin a tout ; les autres admins ont leur liste de permissions
+  const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
+  const ADMIN_SECTIONS = [
+    { key: "clients",    page: "client-admin",    icon: "🏨", label: "Gérer les clients" },
+    { key: "procedures", page: "proc-admin",      icon: "📚", label: "Gérer les procédures" },
+    { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Doc. technique" },
+    { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
+    { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
+  ];
   const myHotelId = profile?.hotel_id;
   const client = isAdmin ? hotels.find(h => h.id === editCid) : hotels.find(h => h.id === myHotelId);
   const selP = procedures.find(p => p.id === selId);
@@ -318,10 +328,10 @@ function App() {
 
   useEffect(() => {
     if (!session) { setProfile(null); setMfaState("checking"); return; }
-    sb.from("profiles").select("role, hotel_id").eq("id", session.user.id).single()
+sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.id).single()
       .then(({ data, error }) => {
         if (!error && data) {
-          setProfile(data);
+          setProfile({ ...data, email: session.user.email });
           setPage(data.role === "admin" ? "client-admin" : "knowledge");
         }
       });
@@ -1285,10 +1295,12 @@ function App() {
     );
   }
 
-  const nav = isAdmin
-    ? [{ p: "client-admin", icon: "🏨", label: "Gérer les clients" }, { p: "proc-admin", icon: "📚", label: "Gérer les procédures" }, { p: "docs-techniques", icon: "🗂️", label: "Doc. technique" }, { p: "tickets-admin", icon: "🎫", label: "Tickets" }, { p: "projets", icon: "📊", label: "Projets" }]
+const nav = isAdmin
+    ? [
+        ...ADMIN_SECTIONS.filter(s => hasPerm(s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label })),
+        ...(isSuperAdmin ? [{ p: "admins", icon: "👥", label: "Gérer les admins" }] : [])
+      ]
     : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "mon-installation", icon: "🗂️", label: "Mon installation" }, { p: "contact", icon: "📧", label: "Contacter le support" }, { p: "tickets-client", icon: "🎫", label: "Mes demandes" }];
-
   let content = null;
 
   // ---------- ADMIN : GESTION CLIENTS ----------
