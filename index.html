@@ -316,6 +316,7 @@ function App() {
   const [docErr, setDocErr] = useState("");
 
   const isAdmin = profile?.role === "admin";
+  const isSupervisor = profile?.role === "supervisor";
  const isSuperAdmin = isAdmin && (profile?.email || "").toLowerCase() === "support@dsihotel.com";
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
@@ -333,6 +334,12 @@ function App() {
     const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins"];
     if (adminPages.includes(page) && !allowedPages.includes(page) && page !== "proc-detail") {
       if (allowedPages.length > 0) setPage(allowedPages[0]);
+    }
+  }, [page, profile]);
+  // Un compte standard (client) ne peut pas rester sur "Mes demandes"
+  useEffect(() => {
+    if (profile && profile.role === "client" && page === "tickets-client") {
+      setPage("knowledge");
     }
   }, [page, profile]);
   const myHotelId = profile?.hotel_id;
@@ -1417,7 +1424,12 @@ const nav = isAdmin
         }
         return items;
       })()
-    : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "mon-installation", icon: "🗂️", label: "Mon installation" }, { p: "contact", icon: "📧", label: "Contacter le support" }, { p: "tickets-client", icon: "🎫", label: "Mes demandes" }];
+    : [
+        { p: "knowledge", icon: "📖", label: "Procédures" },
+        { p: "mon-installation", icon: "🗂️", label: "Mon installation" },
+        { p: "contact", icon: "📧", label: "Contacter le support" },
+        ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : [])
+      ];
   let content = null;
 
   // ---------- ADMIN : GESTION CLIENTS ----------
@@ -2069,7 +2081,7 @@ const nav = isAdmin
   }
 
   // ---------- CLIENT : MES DEMANDES ----------
-  if (page === "tickets-client" && !isAdmin) {
+  if (page === "tickets-client" && isSupervisor) {
     const statusColor = (s) => s === "closed" ? "#999" : "#2F855A";
     const statusLabel = (s) => s === "closed" ? "Fermé" : "Ouvert";
     const prioColor = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
