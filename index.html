@@ -691,8 +691,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         const result = await callAdminApi("/admin/create-client", {
           email: clientForm.email, password: clientForm.pw, hotelName: clientForm.name,
           city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, logoUrl: logoUrl || null,
-          standardEmail: clientForm.stdEmail.trim() || null,
-          standardPassword: clientForm.stdPw.trim() || null
+          standardEmail: (clientForm.stdEmail || "").trim() || null,
+          standardPassword: (clientForm.stdPw || "").trim() || null
         });
         setHotels(prev => [...prev, result.hotel]);
         setEditCid(result.hotel.id);
