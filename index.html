@@ -960,7 +960,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     // 3) Envoyer par email — uniquement l'admin notifie le client
     if (isAdmin && ticket.contact_email) {
       try {
-        const subject = `[Ticket ${ticket.category}] Réponse de DSI Hotel`;
+        const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"}`;
         const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
           `${body}\n\n` +
@@ -1002,7 +1002,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     // 2) Notification email au client (optionnelle)
     if (notify && ticket.contact_email) {
       try {
-        const subject = `[Ticket ${ticket.category}] Votre demande est résolue`;
+        const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"} — Résolu`;
         const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
           `Votre demande de support a été traitée et est désormais marquée comme résolue.\n\n` +
