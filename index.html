@@ -77,6 +77,20 @@ const stripSignature = (s) => {
   out = out.replace(/\n?\s*(60 Rue Fran[cç]ois 1er[^\n]*|Vous pouvez maintenant nous joindre[^\n]*|support@dsihotel\.com[^\n]*|www\.dsihotel\.com[^\n]*)\s*$/gi, "");
   return out.replace(/\s+$/, "");
 };
+
+// Bloc signature DSI Hotel affiché sous chaque message du support dans le fil du ticket.
+const SignatureBlock = () => React.createElement('div', {
+  style: { marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(0,0,0,.08)", fontSize: 11.5, color: "#555", lineHeight: 1.5 }
+},
+  React.createElement('div', { style: { fontWeight: 700, color: "#1a1a3e", marginBottom: 2 } }, "DSI Hotel"),
+  React.createElement('div', null, SIGN_ADDRESS),
+  React.createElement('div', null, "Vous pouvez maintenant nous joindre au " + SIGN_PHONE),
+  React.createElement('div', null,
+    React.createElement('a', { href: "mailto:" + SUPPORT_EMAIL, style: { color: "#1155CC", textDecoration: "none" } }, SUPPORT_EMAIL),
+    " · ",
+    React.createElement('a', { href: "https://www.dsihotel.com", target: "_blank", rel: "noreferrer", style: { color: "#1155CC", textDecoration: "none" } }, "www.dsihotel.com")
+  )
+);
 const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
 
 // ====== CONFIGURATION SUPABASE ======
@@ -2403,7 +2417,8 @@ const nav = isAdmin
                 msgs.map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "white", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#EEE"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
-                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer })
+                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
+                  m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
               t.status !== "closed" && React.createElement('div', null,
@@ -2483,7 +2498,8 @@ const nav = isAdmin
                     msgs.map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "white", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#EEE"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
-                      React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer })
+                      React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
+                      m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                     ))
                   )
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
