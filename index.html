@@ -292,6 +292,9 @@ function App() {
   const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all
   const [openTicketId, setOpenTicketId] = useState(null);
   const [ticketMsgs, setTicketMsgs] = useState({}); // { ticketId: [messages] }
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeSel, setMergeSel] = useState([]); // ids de tickets sélectionnés
+  const [mergeBusy, setMergeBusy] = useState(false)
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
   const [replyNote, setReplyNote] = useState(""); // info/erreur d'envoi email
@@ -1403,10 +1406,17 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   }
 
 const nav = isAdmin
-    ? [
-        ...ADMIN_SECTIONS.filter(s => hasPerm(s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label })),
-        ...(isSuperAdmin ? [{ p: "admins", icon: "👥", label: "Gérer les admins" }] : [])
-      ]
+    ? (() => {
+        const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label }));
+        // Insère "Gérer les admins" juste après "Gérer les clients"
+        if (isSuperAdmin) {
+          const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins" };
+          const idxClients = items.findIndex(i => i.p === "client-admin");
+          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem);
+          else items.unshift(adminItem);
+        }
+        return items;
+      })()
     : [{ p: "knowledge", icon: "📖", label: "Procédures" }, { p: "mon-installation", icon: "🗂️", label: "Mon installation" }, { p: "contact", icon: "📧", label: "Contacter le support" }, { p: "tickets-client", icon: "🎫", label: "Mes demandes" }];
   let content = null;
 
@@ -1915,6 +1925,46 @@ const nav = isAdmin
   }
 
   // ---------- ADMIN : TICKETS ----------
+  const toggleMergeSel = (id) => {
+    setMergeSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const doMergeTickets = async () => {
+    if (mergeSel.length < 2) return;
+    // Ticket de destination = le plus ancien parmi les sélectionnés
+    const selected = tickets.filter(t => mergeSel.includes(t.id));
+    const dest = selected.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+    const others = selected.filter(t => t.id !== dest.id);
+    if (!confirm(`Fusionner ${selected.length} tickets dans ${dest.reference || "le plus ancien"} ?\nLes autres seront fermés et vidés dans celui-ci.`)) return;
+    setMergeBusy(true);
+    try {
+      for (const o of others) {
+        // Déplace les messages
+        await sb.from("ticket_messages").update({ ticket_id: dest.id }).eq("ticket_id", o.id);
+        // Déplace les pièces jointes
+        await sb.from("ticket_fichiers").update({ ticket_id: dest.id }).eq("ticket_id", o.id);
+        // Message système marquant la fusion
+        await sb.from("ticket_messages").insert({
+          ticket_id: dest.id, sender_role: "admin", sender_name: "Système",
+          body: `--- Ticket ${o.reference || o.id} (${o.subject || "sans objet"}) fusionné ici ---`
+        });
+        // Ferme le ticket source
+        await sb.from("tickets").update({ status: "closed", subject: "[Fusionné dans " + (dest.reference || dest.id) + "] " + (o.subject || "") }).eq("id", o.id);
+      }
+      // Rouvre le ticket de destination si besoin
+      await sb.from("tickets").update({ status: "open" }).eq("id", dest.id);
+      setMergeMode(false);
+      setMergeSel([]);
+      await loadTickets();
+      loadTicketMsgs(dest.id);
+      setOpenTicketId(dest.id);
+    } catch (e) {
+      alert("Erreur lors de la fusion : " + (e.message || e));
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
   if (page === "tickets-admin" && isAdmin) {
     const statusColor = (s) => s === "closed" ? "#999" : "#2F855A";
     const statusLabel = (s) => s === "closed" ? "Fermé" : "Ouvert";
@@ -1928,7 +1978,13 @@ const nav = isAdmin
         [["open", "Ouverts"], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
         ),
-        React.createElement('button', { onClick: loadTickets, style: { marginLeft: "auto", padding: "6px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔄 Actualiser")
+        React.createElement('span', { style: { marginLeft: "auto", fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, list.length + (list.length > 1 ? " tickets" : " ticket")),
+        React.createElement('button', { onClick: () => { setMergeMode(m => !m); setMergeSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (mergeMode ? G : "#DDD"), background: mergeMode ? G + "18" : "white", color: mergeMode ? G2 : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: mergeMode ? 500 : 400 } }, mergeMode ? "✕ Annuler la fusion" : "⚄ Fusionner"),
+        React.createElement('button', { onClick: loadTickets, style: { padding: "6px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔄 Actualiser")
+      ),
+      mergeMode && React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+        React.createElement('span', { style: { fontSize: 12, color: "#2B6CB0", flex: 1 } }, mergeSel.length < 2 ? "Cochez au moins 2 tickets à fusionner. Le plus ancien deviendra le ticket principal." : (mergeSel.length + " tickets sélectionnés — ils seront fusionnés dans le plus ancien.")),
+        React.createElement('button', { onClick: doMergeTickets, disabled: mergeSel.length < 2 || mergeBusy, style: { padding: "7px 14px", background: mergeSel.length >= 2 ? G : "#CCC", border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: mergeSel.length >= 2 ? "pointer" : "default", opacity: mergeBusy ? 0.6 : 1 } }, mergeBusy ? "Fusion..." : "Fusionner les tickets")
       ),
       ticketsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des tickets..."),
       !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun ticket dans cette catégorie."),
@@ -1939,7 +1995,8 @@ const nav = isAdmin
           const isOpen = openTicketId === t.id;
           const msgs = ticketMsgs[t.id] || [];
           return React.createElement('div', { key: t.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
-            React.createElement('div', { onClick: () => toggleTicket(t.id), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+            React.createElement('div', { onClick: () => mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : "transparent" } },
+              mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
               React.createElement('div', { style: { flex: 1 } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" } },
                   React.createElement('span', { style: { fontWeight: 600, fontSize: 13, color: t.hotel_id ? "#1a1a3e" : "#DD6B20" } }, hotelLabel),
@@ -2032,7 +2089,8 @@ const nav = isAdmin
           const isOpen = openTicketId === t.id;
           const msgs = ticketMsgs[t.id] || [];
           return React.createElement('div', { key: t.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
-            React.createElement('div', { onClick: () => toggleTicket(t.id), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+            React.createElement('div', { onClick: () => mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : "transparent" } },
+              mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
               React.createElement('div', { style: { flex: 1 } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" } },
                   React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
