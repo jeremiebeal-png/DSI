@@ -272,7 +272,11 @@ function App() {
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [editingAdminPerms, setEditingAdminPerms] = useState(null);
   const [editingClientId, setEditingClientId] = useState(null);
-  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "" });
+  const [addAccountHotel, setAddAccountHotel] = useState(null);
+  const [addAccountForm, setAddAccountForm] = useState({ email: "", pw: "", level: "supervisor" });
+  const [addAccountErr, setAddAccountErr] = useState("");
+  const [savingAccount, setSavingAccount] = useState(false);
   const [clientLogoFile, setClientLogoFile] = useState(null);
   const [clientErr, setClientErr] = useState("");
   const [savingClient, setSavingClient] = useState(false);
@@ -550,7 +554,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   };
   const openEditClientForm = (h) => {
     setEditingClientId(h.id);
-    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "" });
+    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "" });
     setClientLogoFile(null);
     setClientErr("");
     setShowClientForm(true);
@@ -636,6 +640,26 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     }
   };
 
+  const submitAddAccount = async () => {
+    setAddAccountErr("");
+    if (!addAccountForm.email.trim() || !addAccountForm.pw.trim()) { setAddAccountErr("Email et mot de passe requis."); return; }
+    setSavingAccount(true);
+    try {
+      await callAdminApi("/admin/add-hotel-account", {
+        hotelId: addAccountHotel.id,
+        email: addAccountForm.email.trim(),
+        password: addAccountForm.pw,
+        level: addAccountForm.level,
+      });
+      setAddAccountHotel(null);
+      await loadHotels();
+    } catch (e) {
+      setAddAccountErr(e.message || "Erreur lors de la création du compte.");
+    } finally {
+      setSavingAccount(false);
+    }
+  };
+
   const submitClientForm = async () => {
     setClientErr("");
     if (!clientForm.name.trim()) { setClientErr("Le nom de l'hôtel est obligatoire."); return; }
@@ -656,7 +680,9 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         if (!adminApiReady) { setClientErr("La création de clients nécessite le Worker admin (voir instructions de déploiement). En attendant, créez le compte manuellement dans Supabase → Authentication → Users."); setSavingClient(false); return; }
         const result = await callAdminApi("/admin/create-client", {
           email: clientForm.email, password: clientForm.pw, hotelName: clientForm.name,
-          city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, logoUrl: logoUrl || null
+          city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, logoUrl: logoUrl || null,
+          standardEmail: clientForm.stdEmail.trim() || null,
+          standardPassword: clientForm.stdPw.trim() || null
         });
         setHotels(prev => [...prev, result.hotel]);
         setEditCid(result.hotel.id);
@@ -1416,12 +1442,25 @@ const nav = isAdmin
         ),
         !editingClientId && React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
-            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email de connexion *"),
-            React.createElement('input', { value: clientForm.email, onChange: e => setClientForm({ ...clientForm, email: e.target.value }), placeholder: "contact@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email compte administrateur *"),
+            React.createElement('input', { value: clientForm.email, onChange: e => setClientForm({ ...clientForm, email: e.target.value }), placeholder: "admin@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           ),
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mot de passe *"),
             React.createElement('input', { value: clientForm.pw, onChange: e => setClientForm({ ...clientForm, pw: e.target.value }), placeholder: "Mot de passe de connexion", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
+          )
+        ),
+        !editingClientId && React.createElement('div', { style: { background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 8, padding: 12, marginBottom: 10 } },
+          React.createElement('div', { style: { fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 8 } }, "👤 Compte standard (optionnel) — procédures, tickets et doc. technique, sans le suivi des dossiers"),
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 } },
+            React.createElement('div', null,
+              React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email compte standard"),
+              React.createElement('input', { value: clientForm.stdEmail, onChange: e => setClientForm({ ...clientForm, stdEmail: e.target.value }), placeholder: "standard@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mot de passe"),
+              React.createElement('input', { value: clientForm.stdPw, onChange: e => setClientForm({ ...clientForm, stdPw: e.target.value }), placeholder: "Mot de passe standard", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+            )
           )
         ),
         editingClientId && React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 7, padding: "8px 12px", fontSize: 11, color: "#2B6CB0", marginBottom: 10 } }, "ℹ️ Pour changer l'email/mot de passe de connexion d'un client existant, utilisez Supabase → Authentication → Users."),
@@ -1440,6 +1479,38 @@ const nav = isAdmin
         React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
           React.createElement('button', { onClick: () => setShowClientForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
           React.createElement('button', { onClick: submitClientForm, disabled: savingClient, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingClient ? 0.6 : 1 } }, savingClient ? "Enregistrement..." : (editingClientId ? "Enregistrer" : "Créer le client"))
+        )
+      ),
+            addAccountHotel && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: "90%", maxWidth: 420 } },
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, "Ajouter un compte"),
+          React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, addAccountHotel.name),
+          React.createElement('div', { style: { marginBottom: 10 } },
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 6 } }, "Niveau du compte"),
+            React.createElement('div', { style: { display: "flex", gap: 8 } },
+              [{ v: "supervisor", l: "Administrateur", d: "Suivi + tickets + doc" }, { v: "client", l: "Standard", d: "Procédures + tickets + doc" }].map(opt => {
+                const disabled = (opt.v === "supervisor" && addAccountHotel.account_email) || (opt.v === "client" && addAccountHotel.standard_email);
+                const active = addAccountForm.level === opt.v;
+                return React.createElement('button', { key: opt.v, disabled: disabled, onClick: () => setAddAccountForm({ ...addAccountForm, level: opt.v }), style: { flex: 1, padding: "8px 10px", background: active ? G + "18" : "#F8F8FC", border: "1px solid " + (active ? G + "66" : "#E8E8F0"), borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1, textAlign: "left" } },
+                  React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#1a1a3e" } }, opt.l),
+                  React.createElement('div', { style: { fontSize: 10, color: "#888", marginTop: 2 } }, disabled ? "Déjà existant" : opt.d)
+                );
+              })
+            )
+          ),
+          React.createElement('div', { style: { marginBottom: 10 } },
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email de connexion"),
+            React.createElement('input', { value: addAccountForm.email, onChange: e => setAddAccountForm({ ...addAccountForm, email: e.target.value }), placeholder: "email@hotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+          ),
+          React.createElement('div', { style: { marginBottom: 12 } },
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mot de passe"),
+            React.createElement('input', { value: addAccountForm.pw, onChange: e => setAddAccountForm({ ...addAccountForm, pw: e.target.value }), placeholder: "Mot de passe initial", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+          ),
+          addAccountErr && React.createElement('div', { style: { color: "#E53E3E", fontSize: 12, marginBottom: 10 } }, addAccountErr),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+            React.createElement('button', { onClick: () => setAddAccountHotel(null), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "7px 14px" } }, "Annuler"),
+            React.createElement('button', { onClick: submitAddAccount, disabled: savingAccount, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px", opacity: savingAccount ? 0.6 : 1 } }, savingAccount ? "Création..." : "Créer le compte")
+          )
         )
       ),
       resetPwTarget && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
@@ -1466,7 +1537,14 @@ const nav = isAdmin
             )
           ),
           React.createElement('div', { style: { fontSize: 11, color: "#777", marginBottom: 11 } },
-            React.createElement('div', { style: { marginBottom: 3 } }, "📧 " + (h.account_email || "-")),
+            React.createElement('div', { style: { marginBottom: 3, display: "flex", alignItems: "center", gap: 5 } },
+              React.createElement('span', { style: { fontSize: 9, background: G + "22", color: G2, padding: "1px 6px", borderRadius: 10, fontWeight: 600 } }, "ADMIN"),
+              React.createElement('span', null, h.account_email || "aucun")
+            ),
+            React.createElement('div', { style: { marginBottom: 3, display: "flex", alignItems: "center", gap: 5 } },
+              React.createElement('span', { style: { fontSize: 9, background: "#EDEDF5", color: "#666", padding: "1px 6px", borderRadius: 10, fontWeight: 600 } }, "STD"),
+              React.createElement('span', null, h.standard_email || "aucun")
+            ),
             React.createElement('div', null, "📞 " + (h.phone || "-"))
           ),
           React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 7 } },
@@ -1474,7 +1552,8 @@ const nav = isAdmin
             React.createElement('button', { onClick: () => { setEditCid(h.id); go("proc-admin"); }, style: { flex: 1, padding: 7, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "Procédures →"),
             React.createElement('button', { onClick: () => deleteClient(h), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
           ),
-          h.account_email && React.createElement('button', { onClick: () => { setResetPwTarget(h); setResetPwValue(""); }, style: { width: "100%", padding: 6, background: "none", border: "1px solid #E8E8F0", color: "#888", borderRadius: 7, fontSize: 11, cursor: "pointer" } }, "🔑 Réinitialiser le mot de passe")
+          h.account_email && React.createElement('button', { onClick: () => { setResetPwTarget(h); setResetPwValue(""); }, style: { width: "100%", padding: 6, background: "none", border: "1px solid #E8E8F0", color: "#888", borderRadius: 7, fontSize: 11, cursor: "pointer" } }, "🔑 Réinitialiser le mot de passe"),
+          (!h.account_email || !h.standard_email) && React.createElement('button', { onClick: () => { setAddAccountHotel(h); setAddAccountForm({ email: "", pw: "", level: !h.account_email ? "supervisor" : "client" }); setAddAccountErr(""); }, style: { width: "100%", padding: 6, marginTop: 6, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 500 } }, "+ Ajouter un compte")
         )),
         hotels.length === 0 && !hotelsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !")
       )
