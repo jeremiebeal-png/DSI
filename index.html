@@ -7,6 +7,7 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
@@ -1209,23 +1210,30 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   }, [page, profile]);
 
   // ================= RAPPORTS D'ACTIVITÉ =================
+  const SERVICES_LIST = ["FB", "Cuisine", "Finance", "F/O", "HK", "Technique", "Direction", "Sales", "Revenue", "RH"];
   const [rapports, setRapports] = useState([]);
   const [rapDemandes, setRapDemandes] = useState({});   // { rapportId: [demandes] }
+  const [rapServeurs, setRapServeurs] = useState({});   // { rapportId: [verifs serveurs] }
   const [rapLoading, setRapLoading] = useState(false);
   const [rapModal, setRapModal] = useState(null);       // null | "new" | rapport object
   const [rapForm, setRapForm] = useState(null);
   const [rapLignes, setRapLignes] = useState([]);       // demandes en cours d'édition
+  const [rapSrvLignes, setRapSrvLignes] = useState([]); // verifs serveurs en cours d'édition
   const [savingRap, setSavingRap] = useState(false);
   const [rapErr, setRapErr] = useState("");
   const [rapNote, setRapNote] = useState("");           // info envoi email
   const [rapFilterHotel, setRapFilterHotel] = useState("all");
+  const [rapSendModal, setRapSendModal] = useState(null); // rapport en cours d'envoi (saisie email)
+  const [rapSendTo, setRapSendTo] = useState("");
+  const [rapSending, setRapSending] = useState(false);
 
   const emptyRapForm = () => ({
     date_intervention: new Date().toISOString().slice(0, 10),
-    technicien: "", hotel_id: "", services: "",
+    technicien: "", hotel_id: "", services: [],
     serveurs_ok: true, serveurs_note: "", observations: ""
   });
   const emptyLigne = () => ({ description: "", demandeur: "", statut: "ok", motif: "" });
+  const emptySrv = () => ({ libelle: "", ok: true });
 
   const loadRapports = async () => {
     if (!isAdmin) return;
@@ -1236,13 +1244,17 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       setRapports(data);
       const ids = data.map(r => r.id);
       if (ids.length) {
-        const { data: dm } = await sb.from("rapport_demandes").select("*")
-          .in("rapport_id", ids).order("position");
-        const map = {};
-        (dm || []).forEach(d => { (map[d.rapport_id] = map[d.rapport_id] || []).push(d); });
-        setRapDemandes(map);
+        const [{ data: dm }, { data: sv }] = await Promise.all([
+          sb.from("rapport_demandes").select("*").in("rapport_id", ids).order("position"),
+          sb.from("rapport_serveurs").select("*").in("rapport_id", ids).order("position")
+        ]);
+        const dMap = {}, sMap = {};
+        (dm || []).forEach(d => { (dMap[d.rapport_id] = dMap[d.rapport_id] || []).push(d); });
+        (sv || []).forEach(s => { (sMap[s.rapport_id] = sMap[s.rapport_id] || []).push(s); });
+        setRapDemandes(dMap);
+        setRapServeurs(sMap);
       } else {
-        setRapDemandes({});
+        setRapDemandes({}); setRapServeurs({});
       }
     }
     setRapLoading(false);
@@ -1255,6 +1267,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   const openNewRapport = () => {
     setRapForm(emptyRapForm());
     setRapLignes([emptyLigne()]);
+    setRapSrvLignes([emptySrv()]);
     setRapErr(""); setRapNote("");
     setRapModal("new");
   };
@@ -1263,7 +1276,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     setRapForm({
       date_intervention: r.date_intervention || new Date().toISOString().slice(0, 10),
       technicien: r.technicien || "", hotel_id: r.hotel_id || "",
-      services: r.services || "", serveurs_ok: r.serveurs_ok !== false,
+      services: Array.isArray(r.services) ? r.services : [],
+      serveurs_ok: r.serveurs_ok !== false,
       serveurs_note: r.serveurs_note || "", observations: r.observations || ""
     });
     const lignes = (rapDemandes[r.id] || []).map(d => ({
@@ -1271,14 +1285,24 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       statut: d.statut || "ok", motif: d.motif || ""
     }));
     setRapLignes(lignes.length ? lignes : [emptyLigne()]);
+    const srv = (rapServeurs[r.id] || []).map(s => ({ libelle: s.libelle || "", ok: s.ok !== false }));
+    setRapSrvLignes(srv.length ? srv : [emptySrv()]);
     setRapErr(""); setRapNote("");
     setRapModal(r);
   };
+
+  const toggleService = (svc) =>
+    setRapForm(f => ({ ...f, services: f.services.includes(svc) ? f.services.filter(s => s !== svc) : [...f.services, svc] }));
 
   const setLigne = (i, field, val) =>
     setRapLignes(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l));
   const addLigne = () => setRapLignes(prev => [...prev, emptyLigne()]);
   const removeLigne = (i) => setRapLignes(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev);
+
+  const setSrv = (i, field, val) =>
+    setRapSrvLignes(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l));
+  const addSrv = () => setRapSrvLignes(prev => [...prev, emptySrv()]);
+  const removeSrv = (i) => setRapSrvLignes(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev);
 
   const submitRapForm = async () => {
     if (!rapForm.technicien.trim()) { setRapErr("Le nom du technicien est obligatoire."); return; }
@@ -1289,7 +1313,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         hotel_id: rapForm.hotel_id,
         date_intervention: rapForm.date_intervention,
         technicien: rapForm.technicien.trim(),
-        services: rapForm.services.trim() || null,
+        services: rapForm.services,
         serveurs_ok: !!rapForm.serveurs_ok,
         serveurs_note: rapForm.serveurs_note.trim() || null,
         observations: rapForm.observations.trim() || null,
@@ -1305,20 +1329,24 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         const { error } = await sb.from("rapports").update(payload).eq("id", rapId);
         if (error) throw error;
         await sb.from("rapport_demandes").delete().eq("rapport_id", rapId);
+        await sb.from("rapport_serveurs").delete().eq("rapport_id", rapId);
       }
-      // (Ré)insère les lignes de demandes non vides
-      const lignes = rapLignes
-        .filter(l => l.description.trim())
-        .map((l, i) => ({
-          rapport_id: rapId,
-          description: l.description.trim(),
-          demandeur: l.demandeur.trim() || null,
-          statut: l.statut === "attente" ? "attente" : "ok",
-          motif: l.statut === "attente" ? (l.motif.trim() || null) : null,
-          position: i,
-        }));
+      const lignes = rapLignes.filter(l => l.description.trim()).map((l, i) => ({
+        rapport_id: rapId, description: l.description.trim(),
+        demandeur: l.demandeur.trim() || null,
+        statut: l.statut === "attente" ? "attente" : "ok",
+        motif: l.statut === "attente" ? (l.motif.trim() || null) : null,
+        position: i,
+      }));
       if (lignes.length) {
         const { error } = await sb.from("rapport_demandes").insert(lignes);
+        if (error) throw error;
+      }
+      const srv = rapSrvLignes.filter(s => s.libelle.trim()).map((s, i) => ({
+        rapport_id: rapId, libelle: s.libelle.trim(), ok: !!s.ok, position: i,
+      }));
+      if (srv.length) {
+        const { error } = await sb.from("rapport_serveurs").insert(srv);
         if (error) throw error;
       }
       await loadRapports();
@@ -1332,66 +1360,172 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
 
   const deleteRapport = async (r) => {
     if (!window.confirm("Supprimer définitivement ce rapport ?")) return;
-    await sb.from("rapports").delete().eq("id", r.id);   // cascade sur les demandes
+    await sb.from("rapports").delete().eq("id", r.id);
     setRapModal(null);
     await loadRapports();
   };
 
-  // Construit le corps texte du rapport pour l'email client
-  const rapportToText = (r, hotel) => {
+  const fmtDateFr = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch (e) { return d; } };
+
+  // ---- Génère le PDF du rapport (jsPDF) et retourne l'objet doc ----
+  const buildRapportPdf = (r) => {
+    const hotel = hotels.find(h => h.id === r.hotel_id);
     const dems = rapDemandes[r.id] || [];
-    const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return d; } };
-    let t = "";
-    t += "RAPPORT D'ACTIVITÉ — DSI HOTEL\n";
-    t += "──────────────────────────────\n\n";
-    t += "Établissement : " + (hotel ? hotel.name : "—") + "\n";
-    t += "Date d'intervention : " + fmtDate(r.date_intervention) + "\n";
-    t += "Technicien : " + r.technicien + "\n";
-    if (r.services) t += "Services visités : " + r.services + "\n";
-    t += "\nDEMANDES TRAITÉES :\n";
+    const srv = rapServeurs[r.id] || [];
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const pageW = 210, mL = 15, mR = 15, contentW = pageW - mL - mR;
+    let y = 18;
+    const line = (h) => { y += h; if (y > 275) { doc.addPage(); y = 20; } };
+
+    // En-tête
+    doc.setFillColor(15, 15, 36);
+    doc.rect(0, 0, pageW, 30, "F");
+    doc.setTextColor(201, 168, 76);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(18);
+    doc.text("DSI HOTEL", mL, 14);
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(11);
+    doc.text("Rapport d'activité", mL, 22);
+    doc.setFontSize(9);
+    doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23", pageW - mR, 14, { align: "right" });
+    doc.text("support@dsihotel.com  •  www.dsihotel.com", pageW - mR, 20, { align: "right" });
+
+    y = 42;
+    doc.setTextColor(20, 20, 40);
+    const field = (label, val) => {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+      doc.text(label, mL, y);
+      doc.setFont("helvetica", "normal");
+      const lines = doc.splitTextToSize(String(val || "—"), contentW - 45);
+      doc.text(lines, mL + 45, y);
+      line(Math.max(6, lines.length * 5));
+    };
+    field("Établissement :", hotel ? hotel.name : "—");
+    field("Date d'intervention :", fmtDateFr(r.date_intervention));
+    field("Technicien :", r.technicien);
+    field("Services visités :", (r.services && r.services.length) ? r.services.join(", ") : "—");
+
+    // Section demandes
+    line(4);
+    doc.setDrawColor(201, 168, 76); doc.setLineWidth(0.5);
+    doc.line(mL, y, pageW - mR, y); line(6);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(12);
+    doc.setTextColor(15, 15, 36);
+    doc.text("Demandes réalisées", mL, y); line(7);
+    doc.setTextColor(30, 30, 30);
     if (dems.length === 0) {
-      t += "  (aucune)\n";
+      doc.setFont("helvetica", "italic"); doc.setFontSize(10);
+      doc.text("Aucune demande enregistrée.", mL, y); line(6);
     } else {
       dems.forEach((d, i) => {
         const st = d.statut === "attente" ? "EN ATTENTE" : "OK";
-        t += "  " + (i + 1) + ". " + d.description + "\n";
-        if (d.demandeur) t += "     Demandé par : " + d.demandeur + "\n";
-        t += "     Statut : " + st + "\n";
-        if (d.statut === "attente" && d.motif) t += "     Motif : " + d.motif + "\n";
+        doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+        if (d.statut === "attente") doc.setTextColor(178, 106, 0); else doc.setTextColor(46, 125, 50);
+        doc.text("[" + st + "]", mL, y);
+        doc.setTextColor(30, 30, 30); doc.setFont("helvetica", "normal");
+        const txt = doc.splitTextToSize((i + 1) + ". " + d.description + (d.demandeur ? "  (demandé par " + d.demandeur + ")" : ""), contentW - 28);
+        doc.text(txt, mL + 28, y);
+        line(Math.max(6, txt.length * 5));
+        if (d.statut === "attente" && d.motif) {
+          doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(178, 106, 0);
+          const m = doc.splitTextToSize("Motif : " + d.motif, contentW - 30);
+          doc.text(m, mL + 30, y); line(m.length * 4.5 + 1);
+          doc.setTextColor(30, 30, 30);
+        }
       });
     }
-    t += "\nÉTAT DES SERVEURS : " + (r.serveurs_ok ? "Fonctionnement normal ✅" : "Anomalie constatée ⚠️") + "\n";
-    if (r.serveurs_note) t += "  " + r.serveurs_note + "\n";
-    if (r.observations) t += "\nOBSERVATIONS :\n" + r.observations + "\n";
-    return t;
+
+    // Section serveurs
+    line(4);
+    doc.setDrawColor(201, 168, 76); doc.line(mL, y, pageW - mR, y); line(6);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 15, 36);
+    doc.text("État des serveurs de l'hôtel", mL, y); line(7);
+    doc.setFontSize(10);
+    if (r.serveurs_ok) { doc.setTextColor(46, 125, 50); doc.text("Statut global : Fonctionnement normal", mL, y); }
+    else { doc.setTextColor(192, 57, 43); doc.text("Statut global : Anomalie constatée", mL, y); }
+    line(6); doc.setTextColor(30, 30, 30); doc.setFont("helvetica", "normal");
+    if (r.serveurs_note) {
+      const n = doc.splitTextToSize(r.serveurs_note, contentW);
+      doc.text(n, mL, y); line(n.length * 5);
+    }
+    srv.forEach(s => {
+      doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(30, 30, 30);
+      doc.text("• " + s.libelle, mL + 2, y);
+      if (s.ok) doc.setTextColor(46, 125, 50); else doc.setTextColor(192, 57, 43);
+      doc.setFont("helvetica", "bold");
+      doc.text(s.ok ? "OK" : "Anomalie", pageW - mR, y, { align: "right" });
+      line(5.5);
+    });
+
+    if (r.observations) {
+      line(4);
+      doc.setDrawColor(201, 168, 76); doc.line(mL, y, pageW - mR, y); line(6);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(15, 15, 36);
+      doc.text("Observations", mL, y); line(7);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(30, 30, 30);
+      const o = doc.splitTextToSize(r.observations, contentW);
+      doc.text(o, mL, y); line(o.length * 5);
+    }
+    return { doc, hotel };
   };
 
-  const sendRapportEmail = async (r) => {
+  const pdfFileName = (r) => {
     const hotel = hotels.find(h => h.id === r.hotel_id);
-    const to = hotel?.contact_email || hotel?.email;
-    if (!to) { setRapNote("⚠️ Aucun email de contact n'est renseigné pour cet hôtel. Complétez la fiche client d'abord."); return; }
-    setRapNote("Envoi en cours…");
+    const hn = (hotel ? hotel.name : "hotel").replace(/[^a-zA-Z0-9]+/g, "_");
+    return "Rapport_" + hn + "_" + (r.date_intervention || "") + ".pdf";
+  };
+
+  const downloadRapportPdf = (r) => {
     try {
-      const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return d; } };
-      const subject = "Rapport d'activité DSI Hotel — " + (hotel ? hotel.name : "") + " — " + fmtDate(r.date_intervention);
+      const { doc } = buildRapportPdf(r);
+      doc.save(pdfFileName(r));
+    } catch (e) {
+      setRapNote("❌ Impossible de générer le PDF (" + (e.message || e) + ").");
+    }
+  };
+
+  const openSendRapport = (r) => {
+    const hotel = hotels.find(h => h.id === r.hotel_id);
+    setRapSendTo(hotel?.contact_email || hotel?.email || "");
+    setRapNote("");
+    setRapSendModal(r);
+  };
+
+  const confirmSendRapport = async () => {
+    const r = rapSendModal;
+    const to = (rapSendTo || "").trim();
+    if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { setRapNote("⚠️ Adresse email invalide."); return; }
+    setRapSending(true); setRapNote("Envoi en cours…");
+    try {
+      const { doc, hotel } = buildRapportPdf(r);
+      const pdfB64 = doc.output("datauristring").split(",")[1];
+      const subject = "Rapport d'activité DSI Hotel — " + (hotel ? hotel.name : "") + " — " + fmtDateFr(r.date_intervention);
       const bodyText =
         "Bonjour,\n\n" +
-        "Veuillez trouver ci-dessous le compte rendu de notre intervention.\n\n" +
-        rapportToText(r, hotel);
+        "Veuillez trouver ci-joint le compte rendu de notre intervention du " + fmtDateFr(r.date_intervention) +
+        (hotel ? " à l'établissement " + hotel.name : "") + ".\n\n" +
+        "Nous restons à votre disposition pour toute question.";
       const mail = buildSignedEmail(bodyText);
       const res = await fetch(EMAIL_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL })
+        body: JSON.stringify({
+          to, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL,
+          attachments: [{ filename: pdfFileName(r), content: pdfB64 }]
+        })
       });
       if (!res.ok) {
         const d = await res.text().catch(() => "");
         setRapNote("❌ L'email n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
       } else {
         setRapNote("✅ Rapport envoyé à " + to);
+        setRapSendModal(null);
       }
     } catch (e) {
       setRapNote("❌ Échec de l'envoi (" + (e.message || e) + ").");
+    } finally {
+      setRapSending(false);
     }
   };
 
@@ -2731,14 +2865,12 @@ const nav = isAdmin
 
   // ================= PAGE : RAPPORTS D'ACTIVITÉ =================
   if (page === "rapports" && isAdmin) {
-    const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return d; } };
     const hotelName = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "—"; };
     const visibles = rapports.filter(r => rapFilterHotel === "all" || r.hotel_id === rapFilterHotel);
     const inp = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
     const lbl = { display: "block", fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 5 };
 
     return React.createElement('div', { style: { maxWidth: 1000, margin: "0 auto", padding: isMobile ? "0 4px" : 0 } },
-      // En-tête
       React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 18 } },
         React.createElement('div', null,
           React.createElement('h2', { style: { margin: 0, fontSize: 20, color: SB } }, "📝 Rapports d'activité"),
@@ -2762,18 +2894,20 @@ const nav = isAdmin
           : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 12 } },
               visibles.map(r => {
                 const dems = rapDemandes[r.id] || [];
+                const srv = rapServeurs[r.id] || [];
                 const nbAttente = dems.filter(d => d.statut === "attente").length;
+                const svcs = Array.isArray(r.services) ? r.services : [];
                 return React.createElement('div', { key: r.id, style: { background: "#FFF", border: "1px solid #ECECF2", borderRadius: 10, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" } },
                   React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 } },
                     React.createElement('div', null,
                       React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: SB } }, "🏨 " + hotelName(r.hotel_id)),
-                      React.createElement('div', { style: { fontSize: 12.5, color: "#777", marginTop: 3 } }, "📅 " + fmtDate(r.date_intervention) + "  •  👤 " + r.technicien)
+                      React.createElement('div', { style: { fontSize: 12.5, color: "#777", marginTop: 3 } }, "📅 " + fmtDateFr(r.date_intervention) + "  •  👤 " + r.technicien)
                     ),
-                    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 6 } },
-                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️")
-                    )
+                    React.createElement('span', { style: { fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️")
                   ),
-                  r.services && React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8 } }, React.createElement('span', { style: { color: "#999" } }, "Services : "), r.services),
+                  svcs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 9 } },
+                    svcs.map(s => React.createElement('span', { key: s, style: { fontSize: 11, background: "#F0EFF7", color: "#4A4A6A", padding: "2px 8px", borderRadius: 5 } }, s))
+                  ),
                   dems.length > 0 && React.createElement('div', { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 5 } },
                     dems.map(d => React.createElement('div', { key: d.id, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#333" } },
                       React.createElement('span', { style: { flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, marginTop: 1, background: d.statut === "attente" ? "#FFF3E0" : "#E8F5E9", color: d.statut === "attente" ? "#B26A00" : "#2E7D32" } }, d.statut === "attente" ? "EN ATTENTE" : "OK"),
@@ -2784,14 +2918,39 @@ const nav = isAdmin
                       )
                     ))
                   ),
+                  srv.length > 0 && React.createElement('div', { style: { marginTop: 10, paddingTop: 8, borderTop: "1px dashed #EEE" } },
+                    React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 4 } }, "Vérifications serveurs :"),
+                    React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                      srv.map(s => React.createElement('div', { key: s.id, style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#444" } },
+                        React.createElement('span', null, "• " + s.libelle),
+                        React.createElement('span', { style: { fontWeight: 600, color: s.ok ? "#2E7D32" : "#C0392B" } }, s.ok ? "OK" : "Anomalie")
+                      ))
+                    )
+                  ),
                   nbAttente > 0 && React.createElement('div', { style: { fontSize: 11.5, color: "#B26A00", marginTop: 8 } }, "⏳ " + nbAttente + " demande(s) en attente"),
                   React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, paddingTop: 10, borderTop: "1px solid #F2F2F6", flexWrap: "wrap" } },
-                    React.createElement('button', { onClick: () => sendRapportEmail(r), style: { padding: "7px 13px", background: "none", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "✉️ Envoyer au client"),
+                    React.createElement('button', { onClick: () => downloadRapportPdf(r), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "📄 PDF"),
+                    React.createElement('button', { onClick: () => openSendRapport(r), style: { padding: "7px 13px", background: "none", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "✉️ Envoyer"),
                     React.createElement('button', { onClick: () => openEditRapport(r), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
                   )
                 );
               })
             ),
+
+      // ---- MODALE : ENVOI EMAIL (saisie manuelle du destinataire) ----
+      rapSendModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 1100 }, onClick: () => !rapSending && setRapSendModal(null) },
+        React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "#FFF", borderRadius: 12, padding: 24, width: "100%", maxWidth: 460, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
+          React.createElement('h3', { style: { margin: "0 0 6px", fontSize: 17, color: SB } }, "Envoyer le rapport par email"),
+          React.createElement('p', { style: { margin: "0 0 16px", fontSize: 12.5, color: "#777" } }, "Le rapport sera joint au format PDF, avec la signature DSI Hotel."),
+          React.createElement('label', { style: lbl }, "Adresse du destinataire"),
+          React.createElement('input', { type: "email", value: rapSendTo, onChange: e => setRapSendTo(e.target.value), placeholder: "client@exemple.com", style: inp }),
+          rapNote && React.createElement('div', { style: { marginTop: 10, fontSize: 12, color: rapNote.startsWith("✅") ? "#1B7A3D" : rapNote.startsWith("Envoi") ? "#2A4A8A" : "#C0392B" } }, rapNote),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 } },
+            React.createElement('button', { onClick: () => setRapSendModal(null), disabled: rapSending, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: confirmSendRapport, disabled: rapSending, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: rapSending ? "default" : "pointer", opacity: rapSending ? 0.6 : 1 } }, rapSending ? "Envoi…" : "Envoyer")
+          )
+        )
+      ),
 
       // ---- MODALE : création / édition ----
       rapModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: () => setRapModal(null) },
@@ -2817,9 +2976,15 @@ const nav = isAdmin
             )
           ),
 
+          // Services visités : cases à cocher
           React.createElement('div', { style: { marginBottom: 16 } },
             React.createElement('label', { style: lbl }, "Services visités"),
-            React.createElement('input', { value: rapForm.services, onChange: e => setRapForm({ ...rapForm, services: e.target.value }), placeholder: "Ex. : Réception, Restauration, Étages…", style: inp })
+            React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 7 } },
+              SERVICES_LIST.map(svc => {
+                const on = rapForm.services.includes(svc);
+                return React.createElement('button', { key: svc, type: "button", onClick: () => toggleService(svc), style: { padding: "6px 12px", borderRadius: 20, fontSize: 12.5, cursor: "pointer", border: on ? "1px solid " + G : "1px solid #DDD", background: on ? G : "#FFF", color: on ? "#111" : "#666", fontWeight: on ? 600 : 400 } }, (on ? "✓ " : "") + svc);
+              })
+            )
           ),
 
           // Demandes réalisées
@@ -2844,10 +3009,10 @@ const nav = isAdmin
             React.createElement('button', { onClick: addLigne, style: { marginTop: 10, padding: "7px 12px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter une demande")
           ),
 
-          // État serveurs
+          // État serveurs : global + lignes détaillées
           React.createElement('div', { style: { marginBottom: 16, padding: 12, background: "#FAFAFC", borderRadius: 9, border: "1px solid #ECECF2" } },
             React.createElement('label', { style: { ...lbl, marginBottom: 8 } }, "État des serveurs de l'hôtel"),
-            React.createElement('div', { style: { display: "flex", gap: 16, marginBottom: 8 } },
+            React.createElement('div', { style: { display: "flex", gap: 16, marginBottom: 10 } },
               React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" } },
                 React.createElement('input', { type: "radio", name: "serveurs", checked: rapForm.serveurs_ok === true, onChange: () => setRapForm({ ...rapForm, serveurs_ok: true }) }),
                 "✅ Fonctionnement normal"
@@ -2857,7 +3022,19 @@ const nav = isAdmin
                 "⚠️ Anomalie"
               )
             ),
-            React.createElement('input', { value: rapForm.serveurs_note, onChange: e => setRapForm({ ...rapForm, serveurs_note: e.target.value }), placeholder: "Commentaire (optionnel)", style: { ...inp, fontSize: 12 } })
+            React.createElement('div', { style: { fontSize: 11.5, color: "#999", marginBottom: 6 } }, "Détail des vérifications (ex. Serveur AD, Interface Agilysis…) :"),
+            React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 7 } },
+              rapSrvLignes.map((s, i) => React.createElement('div', { key: i, style: { display: "flex", gap: 7, alignItems: "center" } },
+                React.createElement('input', { value: s.libelle, onChange: e => setSrv(i, "libelle", e.target.value), placeholder: "Nom du serveur / vérification", style: { ...inp, fontSize: 12, flex: 1 } }),
+                React.createElement('select', { value: s.ok ? "ok" : "ko", onChange: e => setSrv(i, "ok", e.target.value === "ok"), style: { ...inp, fontSize: 12, width: 120, flexShrink: 0 } },
+                  React.createElement('option', { value: "ok" }, "✅ OK"),
+                  React.createElement('option', { value: "ko" }, "⚠️ Anomalie")
+                ),
+                rapSrvLignes.length > 1 && React.createElement('button', { onClick: () => removeSrv(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 15, padding: "2px 4px", flexShrink: 0 } }, "✕")
+              ))
+            ),
+            React.createElement('button', { onClick: addSrv, style: { marginTop: 8, padding: "6px 11px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter une vérification"),
+            React.createElement('input', { value: rapForm.serveurs_note, onChange: e => setRapForm({ ...rapForm, serveurs_note: e.target.value }), placeholder: "Commentaire global (optionnel)", style: { ...inp, fontSize: 12, marginTop: 10 } })
           ),
 
           React.createElement('div', { style: { marginBottom: 16 } },
