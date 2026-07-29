@@ -2566,7 +2566,8 @@ const nav = isAdmin
       React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
         React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
         React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
+        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : "")),
+        profile?.email && React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 9.5, marginTop: 2, wordBreak: "break-all" } }, profile.email)
       )
     ),
     React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
@@ -2677,7 +2678,8 @@ const nav = isAdmin
         ),
         React.createElement('div', { style: { textAlign: "right", lineHeight: 1.35 } },
           React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-          React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
+          React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : "")),
+          profile?.email && React.createElement('div', { style: { fontSize: 10, color: "#999", marginTop: 1 } }, profile.email)
         ),
         React.createElement('button', {
           onClick: doLogout,
