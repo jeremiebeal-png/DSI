@@ -38,9 +38,6 @@ const SIGNATURE_TEXT =
 // Signature au format HTML (styles inline : obligatoire pour les clients mail)
 const SIGNATURE_HTML =
   '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;border-top:1px solid #E2E2E8;padding-top:16px;font-family:Arial,Helvetica,sans-serif;">' +
-    '<tr><td style="padding-bottom:8px;">' +
-      '<img src="' + SIGN_LOGO_URL + '" alt="DSI Hotel" width="130" style="display:block;border:0;outline:none;max-width:130px;height:auto;">' +
-    '</td></tr>' +
     '<tr><td style="font-size:15px;font-weight:bold;color:#1a1a3e;padding-bottom:5px;">DSI Hotel</td></tr>' +
     '<tr><td style="font-size:13px;color:#555555;padding-bottom:4px;">' + SIGN_ADDRESS + '</td></tr>' +
     '<tr><td style="font-size:13px;color:#555555;padding-bottom:4px;">' +
@@ -2566,8 +2563,7 @@ const nav = isAdmin
       React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
         React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
         React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : "")),
-        profile?.email && React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 9.5, marginTop: 2, wordBreak: "break-all" } }, profile.email)
+        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
       )
     ),
     React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
@@ -2678,8 +2674,7 @@ const nav = isAdmin
         ),
         React.createElement('div', { style: { textAlign: "right", lineHeight: 1.35 } },
           React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-          React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : "")),
-          profile?.email && React.createElement('div', { style: { fontSize: 10, color: "#999", marginTop: 1 } }, profile.email)
+          React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
         ),
         React.createElement('button', {
           onClick: doLogout,
