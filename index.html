@@ -324,6 +324,7 @@ function App() {
     { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Doc. technique" },
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
+    { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport" },
   ];
   useEffect(() => {
     if (!isAdmin) return;
@@ -1207,7 +1208,195 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     if (page === "projets" && isAdmin) loadProjets();
   }, [page, profile]);
 
+  // ================= RAPPORTS D'ACTIVITÉ =================
+  const [rapports, setRapports] = useState([]);
+  const [rapDemandes, setRapDemandes] = useState({});   // { rapportId: [demandes] }
+  const [rapLoading, setRapLoading] = useState(false);
+  const [rapModal, setRapModal] = useState(null);       // null | "new" | rapport object
+  const [rapForm, setRapForm] = useState(null);
+  const [rapLignes, setRapLignes] = useState([]);       // demandes en cours d'édition
+  const [savingRap, setSavingRap] = useState(false);
+  const [rapErr, setRapErr] = useState("");
+  const [rapNote, setRapNote] = useState("");           // info envoi email
+  const [rapFilterHotel, setRapFilterHotel] = useState("all");
+
+  const emptyRapForm = () => ({
+    date_intervention: new Date().toISOString().slice(0, 10),
+    technicien: "", hotel_id: "", services: "",
+    serveurs_ok: true, serveurs_note: "", observations: ""
+  });
+  const emptyLigne = () => ({ description: "", demandeur: "", statut: "ok", motif: "" });
+
+  const loadRapports = async () => {
+    if (!isAdmin) return;
+    setRapLoading(true);
+    const { data, error } = await sb.from("rapports").select("*")
+      .order("date_intervention", { ascending: false }).order("created_at", { ascending: false });
+    if (!error && data) {
+      setRapports(data);
+      const ids = data.map(r => r.id);
+      if (ids.length) {
+        const { data: dm } = await sb.from("rapport_demandes").select("*")
+          .in("rapport_id", ids).order("position");
+        const map = {};
+        (dm || []).forEach(d => { (map[d.rapport_id] = map[d.rapport_id] || []).push(d); });
+        setRapDemandes(map);
+      } else {
+        setRapDemandes({});
+      }
+    }
+    setRapLoading(false);
+  };
+
+  useEffect(() => {
+    if (page === "rapports" && isAdmin) loadRapports();
+  }, [page, profile]);
+
+  const openNewRapport = () => {
+    setRapForm(emptyRapForm());
+    setRapLignes([emptyLigne()]);
+    setRapErr(""); setRapNote("");
+    setRapModal("new");
+  };
+
+  const openEditRapport = (r) => {
+    setRapForm({
+      date_intervention: r.date_intervention || new Date().toISOString().slice(0, 10),
+      technicien: r.technicien || "", hotel_id: r.hotel_id || "",
+      services: r.services || "", serveurs_ok: r.serveurs_ok !== false,
+      serveurs_note: r.serveurs_note || "", observations: r.observations || ""
+    });
+    const lignes = (rapDemandes[r.id] || []).map(d => ({
+      description: d.description || "", demandeur: d.demandeur || "",
+      statut: d.statut || "ok", motif: d.motif || ""
+    }));
+    setRapLignes(lignes.length ? lignes : [emptyLigne()]);
+    setRapErr(""); setRapNote("");
+    setRapModal(r);
+  };
+
+  const setLigne = (i, field, val) =>
+    setRapLignes(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l));
+  const addLigne = () => setRapLignes(prev => [...prev, emptyLigne()]);
+  const removeLigne = (i) => setRapLignes(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev);
+
+  const submitRapForm = async () => {
+    if (!rapForm.technicien.trim()) { setRapErr("Le nom du technicien est obligatoire."); return; }
+    if (!rapForm.hotel_id) { setRapErr("Veuillez sélectionner l'hôtel concerné."); return; }
+    setSavingRap(true); setRapErr("");
+    try {
+      const payload = {
+        hotel_id: rapForm.hotel_id,
+        date_intervention: rapForm.date_intervention,
+        technicien: rapForm.technicien.trim(),
+        services: rapForm.services.trim() || null,
+        serveurs_ok: !!rapForm.serveurs_ok,
+        serveurs_note: rapForm.serveurs_note.trim() || null,
+        observations: rapForm.observations.trim() || null,
+      };
+      let rapId;
+      if (rapModal === "new") {
+        payload.created_by = profile?.id || null;
+        const { data, error } = await sb.from("rapports").insert(payload).select().single();
+        if (error) throw error;
+        rapId = data.id;
+      } else {
+        rapId = rapModal.id;
+        const { error } = await sb.from("rapports").update(payload).eq("id", rapId);
+        if (error) throw error;
+        await sb.from("rapport_demandes").delete().eq("rapport_id", rapId);
+      }
+      // (Ré)insère les lignes de demandes non vides
+      const lignes = rapLignes
+        .filter(l => l.description.trim())
+        .map((l, i) => ({
+          rapport_id: rapId,
+          description: l.description.trim(),
+          demandeur: l.demandeur.trim() || null,
+          statut: l.statut === "attente" ? "attente" : "ok",
+          motif: l.statut === "attente" ? (l.motif.trim() || null) : null,
+          position: i,
+        }));
+      if (lignes.length) {
+        const { error } = await sb.from("rapport_demandes").insert(lignes);
+        if (error) throw error;
+      }
+      await loadRapports();
+      setRapModal(null);
+    } catch (e) {
+      setRapErr("Erreur : " + (e.message || e));
+    } finally {
+      setSavingRap(false);
+    }
+  };
+
+  const deleteRapport = async (r) => {
+    if (!window.confirm("Supprimer définitivement ce rapport ?")) return;
+    await sb.from("rapports").delete().eq("id", r.id);   // cascade sur les demandes
+    setRapModal(null);
+    await loadRapports();
+  };
+
+  // Construit le corps texte du rapport pour l'email client
+  const rapportToText = (r, hotel) => {
+    const dems = rapDemandes[r.id] || [];
+    const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return d; } };
+    let t = "";
+    t += "RAPPORT D'ACTIVITÉ — DSI HOTEL\n";
+    t += "──────────────────────────────\n\n";
+    t += "Établissement : " + (hotel ? hotel.name : "—") + "\n";
+    t += "Date d'intervention : " + fmtDate(r.date_intervention) + "\n";
+    t += "Technicien : " + r.technicien + "\n";
+    if (r.services) t += "Services visités : " + r.services + "\n";
+    t += "\nDEMANDES TRAITÉES :\n";
+    if (dems.length === 0) {
+      t += "  (aucune)\n";
+    } else {
+      dems.forEach((d, i) => {
+        const st = d.statut === "attente" ? "EN ATTENTE" : "OK";
+        t += "  " + (i + 1) + ". " + d.description + "\n";
+        if (d.demandeur) t += "     Demandé par : " + d.demandeur + "\n";
+        t += "     Statut : " + st + "\n";
+        if (d.statut === "attente" && d.motif) t += "     Motif : " + d.motif + "\n";
+      });
+    }
+    t += "\nÉTAT DES SERVEURS : " + (r.serveurs_ok ? "Fonctionnement normal ✅" : "Anomalie constatée ⚠️") + "\n";
+    if (r.serveurs_note) t += "  " + r.serveurs_note + "\n";
+    if (r.observations) t += "\nOBSERVATIONS :\n" + r.observations + "\n";
+    return t;
+  };
+
+  const sendRapportEmail = async (r) => {
+    const hotel = hotels.find(h => h.id === r.hotel_id);
+    const to = hotel?.contact_email || hotel?.email;
+    if (!to) { setRapNote("⚠️ Aucun email de contact n'est renseigné pour cet hôtel. Complétez la fiche client d'abord."); return; }
+    setRapNote("Envoi en cours…");
+    try {
+      const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return d; } };
+      const subject = "Rapport d'activité DSI Hotel — " + (hotel ? hotel.name : "") + " — " + fmtDate(r.date_intervention);
+      const bodyText =
+        "Bonjour,\n\n" +
+        "Veuillez trouver ci-dessous le compte rendu de notre intervention.\n\n" +
+        rapportToText(r, hotel);
+      const mail = buildSignedEmail(bodyText);
+      const res = await fetch(EMAIL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL })
+      });
+      if (!res.ok) {
+        const d = await res.text().catch(() => "");
+        setRapNote("❌ L'email n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
+      } else {
+        setRapNote("✅ Rapport envoyé à " + to);
+      }
+    } catch (e) {
+      setRapNote("❌ Échec de l'envoi (" + (e.message || e) + ").");
+    }
+  };
+
   const openNewProjet = () => {
+    setProjForm(emptyProjForm());
     setProjForm(emptyProjForm());
     setProjTacheList([]);
     setProjNewFiles([]);
@@ -2539,7 +2728,155 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
+
+  // ================= PAGE : RAPPORTS D'ACTIVITÉ =================
+  if (page === "rapports" && isAdmin) {
+    const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("fr-FR"); } catch { return d; } };
+    const hotelName = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "—"; };
+    const visibles = rapports.filter(r => rapFilterHotel === "all" || r.hotel_id === rapFilterHotel);
+    const inp = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
+    const lbl = { display: "block", fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 5 };
+
+    return React.createElement('div', { style: { maxWidth: 1000, margin: "0 auto", padding: isMobile ? "0 4px" : 0 } },
+      // En-tête
+      React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 18 } },
+        React.createElement('div', null,
+          React.createElement('h2', { style: { margin: 0, fontSize: 20, color: SB } }, "📝 Rapports d'activité"),
+          React.createElement('p', { style: { margin: "4px 0 0", fontSize: 13, color: "#777" } }, "Comptes rendus d'intervention chez les clients")
+        ),
+        React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+          React.createElement('select', { value: rapFilterHotel, onChange: e => setRapFilterHotel(e.target.value), style: { padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 } },
+            React.createElement('option', { value: "all" }, "Tous les hôtels"),
+            hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+          ),
+          React.createElement('button', { onClick: openNewRapport, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "+ Nouveau rapport")
+        )
+      ),
+
+      rapNote && React.createElement('div', { style: { background: "#F0F5FF", border: "1px solid #C3D4F7", borderRadius: 7, padding: "9px 12px", fontSize: 12.5, color: "#2A4A8A", marginBottom: 14 } }, rapNote),
+
+      rapLoading
+        ? React.createElement('div', { style: { textAlign: "center", padding: 40, color: "#999" } }, "Chargement…")
+        : visibles.length === 0
+          ? React.createElement('div', { style: { textAlign: "center", padding: 48, background: "#FAFAFC", border: "1px dashed #DDD", borderRadius: 10, color: "#999" } }, "Aucun rapport pour le moment.")
+          : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 12 } },
+              visibles.map(r => {
+                const dems = rapDemandes[r.id] || [];
+                const nbAttente = dems.filter(d => d.statut === "attente").length;
+                return React.createElement('div', { key: r.id, style: { background: "#FFF", border: "1px solid #ECECF2", borderRadius: 10, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" } },
+                  React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 } },
+                    React.createElement('div', null,
+                      React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: SB } }, "🏨 " + hotelName(r.hotel_id)),
+                      React.createElement('div', { style: { fontSize: 12.5, color: "#777", marginTop: 3 } }, "📅 " + fmtDate(r.date_intervention) + "  •  👤 " + r.technicien)
+                    ),
+                    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 6 } },
+                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️")
+                    )
+                  ),
+                  r.services && React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8 } }, React.createElement('span', { style: { color: "#999" } }, "Services : "), r.services),
+                  dems.length > 0 && React.createElement('div', { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 5 } },
+                    dems.map(d => React.createElement('div', { key: d.id, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#333" } },
+                      React.createElement('span', { style: { flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, marginTop: 1, background: d.statut === "attente" ? "#FFF3E0" : "#E8F5E9", color: d.statut === "attente" ? "#B26A00" : "#2E7D32" } }, d.statut === "attente" ? "EN ATTENTE" : "OK"),
+                      React.createElement('div', null,
+                        React.createElement('span', null, d.description),
+                        d.demandeur && React.createElement('span', { style: { color: "#999" } }, "  — " + d.demandeur),
+                        d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif)
+                      )
+                    ))
+                  ),
+                  nbAttente > 0 && React.createElement('div', { style: { fontSize: 11.5, color: "#B26A00", marginTop: 8 } }, "⏳ " + nbAttente + " demande(s) en attente"),
+                  React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, paddingTop: 10, borderTop: "1px solid #F2F2F6", flexWrap: "wrap" } },
+                    React.createElement('button', { onClick: () => sendRapportEmail(r), style: { padding: "7px 13px", background: "none", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "✉️ Envoyer au client"),
+                    React.createElement('button', { onClick: () => openEditRapport(r), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
+                  )
+                );
+              })
+            ),
+
+      // ---- MODALE : création / édition ----
+      rapModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: () => setRapModal(null) },
+        React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "#FFF", borderRadius: 12, padding: isMobile ? 18 : 26, width: "100%", maxWidth: 620, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
+          React.createElement('h3', { style: { margin: "0 0 18px", fontSize: 18, color: SB } }, rapModal === "new" ? "Nouveau rapport d'activité" : "Modifier le rapport"),
+
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 } },
+            React.createElement('div', null,
+              React.createElement('label', { style: lbl }, "Date d'intervention"),
+              React.createElement('input', { type: "date", value: rapForm.date_intervention, onChange: e => setRapForm({ ...rapForm, date_intervention: e.target.value }), style: inp })
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { style: lbl }, "Technicien présent"),
+              React.createElement('input', { value: rapForm.technicien, onChange: e => setRapForm({ ...rapForm, technicien: e.target.value }), placeholder: "Nom du technicien", style: inp })
+            )
+          ),
+
+          React.createElement('div', { style: { marginBottom: 12 } },
+            React.createElement('label', { style: lbl }, "Établissement"),
+            React.createElement('select', { value: rapForm.hotel_id, onChange: e => setRapForm({ ...rapForm, hotel_id: e.target.value }), style: inp },
+              React.createElement('option', { value: "" }, "— Sélectionner un hôtel —"),
+              hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+            )
+          ),
+
+          React.createElement('div', { style: { marginBottom: 16 } },
+            React.createElement('label', { style: lbl }, "Services visités"),
+            React.createElement('input', { value: rapForm.services, onChange: e => setRapForm({ ...rapForm, services: e.target.value }), placeholder: "Ex. : Réception, Restauration, Étages…", style: inp })
+          ),
+
+          // Demandes réalisées
+          React.createElement('div', { style: { marginBottom: 16 } },
+            React.createElement('label', { style: { ...lbl, marginBottom: 8, fontSize: 13 } }, "Demandes réalisées"),
+            React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
+              rapLignes.map((l, i) => React.createElement('div', { key: i, style: { border: "1px solid #ECECF2", borderRadius: 9, padding: 12, background: "#FAFAFC" } },
+                React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "flex-start" } },
+                  React.createElement('textarea', { value: l.description, onChange: e => setLigne(i, "description", e.target.value), placeholder: "Description de la demande", rows: 2, style: { ...inp, resize: "vertical", flex: 1 } }),
+                  rapLignes.length > 1 && React.createElement('button', { onClick: () => removeLigne(i), title: "Retirer", style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 16, padding: "4px 2px" } }, "✕")
+                ),
+                React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8, marginTop: 8 } },
+                  React.createElement('input', { value: l.demandeur, onChange: e => setLigne(i, "demandeur", e.target.value), placeholder: "Demandé par…", style: { ...inp, fontSize: 12 } }),
+                  React.createElement('select', { value: l.statut, onChange: e => setLigne(i, "statut", e.target.value), style: { ...inp, fontSize: 12 } },
+                    React.createElement('option', { value: "ok" }, "✅ OK / Réalisé"),
+                    React.createElement('option', { value: "attente" }, "⏳ En attente")
+                  )
+                ),
+                l.statut === "attente" && React.createElement('input', { value: l.motif, onChange: e => setLigne(i, "motif", e.target.value), placeholder: "Pourquoi en attente ?", style: { ...inp, fontSize: 12, marginTop: 8, borderColor: "#F0C98A", background: "#FFFDF8" } })
+              ))
+            ),
+            React.createElement('button', { onClick: addLigne, style: { marginTop: 10, padding: "7px 12px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter une demande")
+          ),
+
+          // État serveurs
+          React.createElement('div', { style: { marginBottom: 16, padding: 12, background: "#FAFAFC", borderRadius: 9, border: "1px solid #ECECF2" } },
+            React.createElement('label', { style: { ...lbl, marginBottom: 8 } }, "État des serveurs de l'hôtel"),
+            React.createElement('div', { style: { display: "flex", gap: 16, marginBottom: 8 } },
+              React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" } },
+                React.createElement('input', { type: "radio", name: "serveurs", checked: rapForm.serveurs_ok === true, onChange: () => setRapForm({ ...rapForm, serveurs_ok: true }) }),
+                "✅ Fonctionnement normal"
+              ),
+              React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" } },
+                React.createElement('input', { type: "radio", name: "serveurs", checked: rapForm.serveurs_ok === false, onChange: () => setRapForm({ ...rapForm, serveurs_ok: false }) }),
+                "⚠️ Anomalie"
+              )
+            ),
+            React.createElement('input', { value: rapForm.serveurs_note, onChange: e => setRapForm({ ...rapForm, serveurs_note: e.target.value }), placeholder: "Commentaire (optionnel)", style: { ...inp, fontSize: 12 } })
+          ),
+
+          React.createElement('div', { style: { marginBottom: 16 } },
+            React.createElement('label', { style: lbl }, "Observations générales (optionnel)"),
+            React.createElement('textarea', { value: rapForm.observations, onChange: e => setRapForm({ ...rapForm, observations: e.target.value }), rows: 3, placeholder: "Remarques, recommandations…", style: { ...inp, resize: "vertical" } })
+          ),
+
+          rapErr && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 7, padding: "9px 12px", fontSize: 12, color: "#C53030", marginBottom: 12 } }, rapErr),
+
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
+            rapModal !== "new" && React.createElement('button', { onClick: () => deleteRapport(rapModal), style: { marginRight: "auto", padding: "8px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🗑 Supprimer"),
+            React.createElement('button', { onClick: () => setRapModal(null), style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: submitRapForm, disabled: savingRap, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: savingRap ? "default" : "pointer", opacity: savingRap ? 0.6 : 1 } }, savingRap ? "Enregistrement…" : (rapModal === "new" ? "Créer le rapport" : "Enregistrer"))
+          )
+        )
+      )
+    );
+  }
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
