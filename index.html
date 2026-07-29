@@ -64,6 +64,19 @@ const buildSignedEmail = (bodyText) => ({
   html: '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.6;">' +
         textToHtml(bodyText) + SIGNATURE_HTML + '</div>'
 });
+
+// Retire une éventuelle signature DSI Hotel déjà présente dans un texte tapé,
+// pour éviter une signature en double quand buildSignedEmail ajoute la sienne.
+const stripSignature = (s) => {
+  let out = String(s || "");
+  // Coupe à partir du séparateur "--" placé par SIGNATURE_TEXT
+  out = out.replace(/\n?\s*--\s*\n[\s\S]*$/, "");
+  // Repli : coupe à partir d'une ligne "DSI Hotel" suivie de l'adresse
+  out = out.replace(/\n?\s*DSI Hotel\s*\n\s*60 Rue Fran[cç]ois 1er[\s\S]*$/i, "");
+  // Nettoie d'éventuelles lignes de signature résiduelles collées seules
+  out = out.replace(/\n?\s*(60 Rue Fran[cç]ois 1er[^\n]*|Vous pouvez maintenant nous joindre[^\n]*|support@dsihotel\.com[^\n]*|www\.dsihotel\.com[^\n]*)\s*$/gi, "");
+  return out.replace(/\s+$/, "");
+};
 const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
 
 // ====== CONFIGURATION SUPABASE ======
@@ -942,7 +955,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     if (!replyText.trim()) return;
     setReplyBusy(true);
     setReplyNote("");
-    const body = replyText.trim();
+    const body = stripSignature(replyText).trim();
+    if (!body) { setReplyBusy(false); return; }
     const senderName = isAdmin ? "Support DSI Hotel" : (client ? client.name : "Client");
     const senderRole = isAdmin ? "admin" : "client";
 
