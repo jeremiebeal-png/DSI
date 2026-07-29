@@ -58,12 +58,43 @@ const escapeHtml = (s) => String(s || "")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 const textToHtml = (s) => escapeHtml(s).replace(/\n/g, "<br>");
 
-// Assemble un email complet : corps + signature, en texte et en HTML
-const buildSignedEmail = (bodyText) => ({
-  text: bodyText + SIGNATURE_TEXT,
-  html: '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.6;">' +
-        textToHtml(bodyText) + SIGNATURE_HTML + '</div>'
-});
+// Assemble un email complet : corps + signature (+ historique optionnel sous la signature)
+const buildSignedEmail = (bodyText, history) => {
+  const histText = history && history.text ? history.text : "";
+  const histHtml = history && history.html ? history.html : "";
+  return {
+    text: bodyText + SIGNATURE_TEXT + histText,
+    html: '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.6;">' +
+          textToHtml(bodyText) + SIGNATURE_HTML + histHtml + '</div>'
+  };
+};
+
+// Construit le bloc "historique de la conversation" (messages antérieurs)
+// placé SOUS la signature, façon citation d'email.
+const buildHistory = (messages) => {
+  const msgs = (messages || []).filter(m => m && m.body);
+  if (msgs.length === 0) return { text: "", html: "" };
+  const fmt = (m) => {
+    const who = m.sender_role === "admin" ? "Support DSI Hotel" : (m.sender_name || "Client");
+    let when = "";
+    try { when = new Date(m.created_at).toLocaleString("fr-FR"); } catch (e) { when = ""; }
+    return { who, when, body: m.body };
+  };
+  const items = msgs.map(fmt);
+  const text = "\n\n----- Historique de la conversation -----\n\n" +
+    items.map(i => "Le " + i.when + ", " + i.who + " a écrit :\n" + i.body).join("\n\n---\n\n");
+  const html =
+    '<div style="margin-top:24px;border-top:2px solid #E2E2E8;padding-top:14px;">' +
+    '<div style="font-size:12px;color:#999999;font-weight:bold;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">Historique de la conversation</div>' +
+    items.map(i =>
+      '<div style="border-left:3px solid #E2E2E8;padding:2px 0 2px 12px;margin-bottom:14px;">' +
+        '<div style="font-size:12px;color:#888888;margin-bottom:4px;">Le ' + escapeHtml(i.when) + ', <strong>' + escapeHtml(i.who) + '</strong> a écrit :</div>' +
+        '<div style="font-size:13px;color:#555555;line-height:1.5;">' + textToHtml(i.body) + '</div>' +
+      '</div>'
+    ).join("") +
+    '</div>';
+  return { text, html };
+};
 
 // Retire une éventuelle signature DSI Hotel déjà présente dans un texte tapé,
 // pour éviter une signature en double quand buildSignedEmail ajoute la sienne.
@@ -974,6 +1005,14 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     const senderName = isAdmin ? "Support DSI Hotel" : (client ? client.name : "Client");
     const senderRole = isAdmin ? "admin" : "client";
 
+    // Historique = demande initiale + tous les messages déjà présents (avant cette réponse),
+    // dans l'ordre chronologique, placé sous la signature dans l'email.
+    const priorMsgs = [...(ticketMsgs[ticket.id] || [])];
+    const initialMsg = ticket.message
+      ? [{ sender_role: "client", sender_name: ticket.contact_name || "Client", body: ticket.message, created_at: ticket.created_at }]
+      : [];
+    const historyForEmail = buildHistory([...initialMsg, ...priorMsgs]);
+
     // 1) Enregistrer le message dans le fil (toujours)
     const { data: inserted, error: insErr } = await sb.from("ticket_messages")
       .insert({ ticket_id: ticket.id, sender_role: senderRole, sender_name: senderName, body })
@@ -1001,9 +1040,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"}`;
         const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
-          `${body}\n\n` +
-          `(En réponse à votre demande : ${ticket.message ? ticket.message.slice(0, 120) : ""})`;
-        const mail = buildSignedEmail(bodyText);
+          `${body}`;
+        const mail = buildSignedEmail(bodyText, historyForEmail);
         // Les fichiers joints partent aussi en pièces jointes de l'email
         const attachments = await Promise.all(filesToSend.map(f => new Promise((resolve) => {
           const reader = new FileReader();
