@@ -186,6 +186,13 @@ function App() {
   const [profile, setProfile] = useState(null); // { role, hotel_id }
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("knowledge");
+  // Lien direct vers un ticket : ?ticket=DSI-2026-0082 dans l'URL
+  const [pendingTicketRef, setPendingTicketRef] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get("ticket");
+      return p ? p.toUpperCase() : null;
+    } catch (e) { return null; }
+  });
 
   // ---------- RESPONSIVE / MOBILE ----------
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
@@ -402,6 +409,29 @@ function App() {
     }
   }, [page, profile]);
   const myHotelId = profile?.hotel_id;
+
+  // Lien direct vers un ticket (?ticket=DSI-XXXX) : on va sur la page Tickets…
+  useEffect(() => {
+    if (pendingTicketRef && isAdmin && page !== "tickets-admin") {
+      setPage("tickets-admin");
+    }
+  }, [pendingTicketRef, profile]);
+
+  // …puis, une fois les tickets chargés, on ouvre celui qui correspond à la référence.
+  useEffect(() => {
+    if (!pendingTicketRef || !isAdmin || tickets.length === 0) return;
+    const cible = tickets.find(t => (t.reference || "").toUpperCase() === pendingTicketRef);
+    if (cible) {
+      setTicketFilter("all"); // s'assure qu'il est visible même s'il est fermé
+      setOpenTicketId(cible.id);
+      loadTicketMsgs(cible.id);
+      loadTicketFiles(cible.id);
+      setPendingTicketRef(null); // ne s'ouvre qu'une fois
+      // Nettoie l'URL pour ne pas rouvrir au prochain rechargement
+      try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
+    }
+  }, [pendingTicketRef, tickets, profile]);
+
   const client = isAdmin ? hotels.find(h => h.id === editCid) : hotels.find(h => h.id === myHotelId);
   const selP = procedures.find(p => p.id === selId);
 
@@ -423,7 +453,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       .then(({ data, error }) => {
         if (!error && data) {
           setProfile({ ...data, email: session.user.email });
-          setPage(data.role === "admin" ? "client-admin" : "knowledge");
+          const refDirect = data.role === "admin" && pendingTicketRef;
+          setPage(refDirect ? "tickets-admin" : (data.role === "admin" ? "client-admin" : "knowledge"));
         }
       });
   }, [session]);
