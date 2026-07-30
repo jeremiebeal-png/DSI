@@ -348,6 +348,7 @@ function App() {
   const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all
   const [openTicketId, setOpenTicketId] = useState(null);
   const [ticketMsgs, setTicketMsgs] = useState({}); // { ticketId: [messages] }
+  const [ticketState, setTicketState] = useState({}); // { ticketId: "new" | "reply" | null }
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSel, setMergeSel] = useState([]); // ids de tickets sélectionnés
   const [mergeBusy, setMergeBusy] = useState(false)
@@ -951,10 +952,40 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     setTicketsLoading(true);
     let query = sb.from("tickets").select("*").order("created_at", { ascending: false });
     if (!isAdmin && myHotelId) query = query.eq("hotel_id", myHotelId);
-    query.then(({ data, error }) => {
-      if (!error && data) setTickets(data);
+    query.then(async ({ data, error }) => {
+      if (!error && data) {
+        setTickets(data);
+        // Calcule l'état de chaque ticket (Nouveau / Nouvelle réponse) d'après le dernier message
+        computeTicketStates(data);
+      }
       setTicketsLoading(false);
     });
+  };
+
+  // Détermine, pour chaque ticket, s'il a du "nouveau" à traiter :
+  //  - "new"   : aucun message du support (que la demande initiale du client)
+  //  - "reply" : le dernier message vient du client (il attend une réponse)
+  //  - null    : rien de neuf (on a déjà répondu en dernier)
+  const computeTicketStates = async (ticketList) => {
+    const ids = (ticketList || []).map(t => t.id);
+    if (ids.length === 0) { setTicketState({}); return; }
+    const { data, error } = await sb.from("ticket_messages")
+      .select("ticket_id,sender_role,created_at")
+      .in("ticket_id", ids)
+      .order("created_at", { ascending: true });
+    if (error || !data) return;
+    const byTicket = {};
+    data.forEach(m => { (byTicket[m.ticket_id] = byTicket[m.ticket_id] || []).push(m); });
+    const map = {};
+    ids.forEach(id => {
+      const msgs = byTicket[id] || [];
+      const hasAdmin = msgs.some(m => m.sender_role === "admin");
+      const last = msgs.length ? msgs[msgs.length - 1] : null;
+      if (!hasAdmin) map[id] = "new";
+      else if (last && last.sender_role === "client") map[id] = "reply";
+      else map[id] = null;
+    });
+    setTicketState(map);
   };
 
   useEffect(() => {
@@ -1025,6 +1056,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     }
     setTicketMsgs(prev => ({ ...prev, [ticket.id]: [...(prev[ticket.id] || []), inserted] }));
     setReplyText("");
+    // Le support vient de répondre : l'état "nouveau/réponse" est levé pour ce ticket
+    if (isAdmin) setTicketState(prev => ({ ...prev, [ticket.id]: null }));
 
     // 2) Archiver les pièces jointes de la réponse dans le portail
     const filesToSend = replyFiles;
@@ -2373,7 +2406,12 @@ const nav = isAdmin
     const statusColor = (s) => s === "closed" ? "#999" : "#2F855A";
     const statusLabel = (s) => s === "closed" ? "Fermé" : "Ouvert";
     const prioColor = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
-    let list = tickets;
+    // Badge d'état : "Nouveau" (jamais répondu) / "Nouvelle réponse" (le client a répondu en dernier)
+    const ticketStateBadge = (st) => {
+      if (st === "new") return React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, color: "#fff", background: "#3182CE", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, "● Nouveau");
+      if (st === "reply") return React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, color: "#fff", background: "#DD6B20", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, "● Réponse");
+      return null;
+    };
     if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed");
     if (ticketFilter === "closed") list = tickets.filter(t => t.status === "closed");
 
@@ -2398,8 +2436,10 @@ const nav = isAdmin
       !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun ticket dans cette catégorie."),
       ticketView === "table" && !ticketsLoading && list.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.03em" } },
         React.createElement('span', { style: { width: 4, flexShrink: 0 } }),
-        React.createElement('span', { style: { width: "22%" } }, "Hôtel"),
+        React.createElement('span', { style: { width: "19%" } }, "Hôtel"),
+        React.createElement('span', { style: { width: "16%" } }, "Contact"),
         React.createElement('span', { style: { flex: 1 } }, "Objet"),
+        React.createElement('span', { style: { width: 90, textAlign: "center", flexShrink: 0 } }, "État"),
         React.createElement('span', { style: { width: 25, flexShrink: 0 } }, ""),
         React.createElement('span', { style: { width: 70, textAlign: "center", flexShrink: 0 } }, "Priorité"),
         React.createElement('span', { style: { width: 60, textAlign: "center", flexShrink: 0 } }, "Statut"),
@@ -2417,8 +2457,10 @@ const nav = isAdmin
               ticketView === "table"
                 ? React.createElement(React.Fragment, null,
                     React.createElement('span', { style: { width: 4, height: 28, borderRadius: 3, background: prioColor(t.priority), flexShrink: 0 } }),
-                    React.createElement('span', { style: { width: "22%", minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel),
+                    React.createElement('span', { style: { width: "19%", minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel),
+                    React.createElement('span', { style: { width: "16%", minWidth: 0, fontSize: 12.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.contact_name || "—"),
                     React.createElement('span', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.subject || t.message || "(sans objet)"),
+                    React.createElement('span', { style: { width: 90, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id])),
                     React.createElement('span', { style: { fontSize: 15, flexShrink: 0 }, title: t.source === "email" ? "Email" : "Formulaire" }, t.source === "email" ? "📧" : "📝"),
                     React.createElement('span', { style: { width: 70, textAlign: "center", fontSize: 10, fontWeight: 600, color: prioColor(t.priority), flexShrink: 0 } }, t.priority),
                     React.createElement('span', { style: { width: 60, textAlign: "center", fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20, flexShrink: 0 } }, statusLabel(t.status)),
@@ -2430,7 +2472,8 @@ const nav = isAdmin
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: t.source === "email" ? "#3182CE" : "#718096", background: (t.source === "email" ? "#3182CE" : "#718096") + "18", padding: "2px 8px", borderRadius: 20 } }, t.source === "email" ? "📧 Email" : "📝 Formulaire"),
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prioColor(t.priority), background: prioColor(t.priority) + "18", padding: "2px 8px", borderRadius: 20 } }, t.priority),
                       React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
-                      React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status))
+                      React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status)),
+                      ticketStateBadge(ticketState[t.id])
                     ),
                     t.subject && React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "Objet : " + t.subject),
                     React.createElement('div', { style: { fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.contact_name || "?") + " — " + (t.message || "")),
