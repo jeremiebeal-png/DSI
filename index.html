@@ -392,6 +392,7 @@ function App() {
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport" },
+    { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types" },
   ];
   useEffect(() => {
     if (!isAdmin) return;
@@ -1667,6 +1668,83 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     } finally {
       setRapSending(false);
     }
+  };
+
+  // ================= RÉPONSES TYPES (macros) =================
+  const [reponsesTypes, setReponsesTypes] = useState([]);
+  const [rtLoading, setRtLoading] = useState(false);
+  const [rtModal, setRtModal] = useState(null);      // null | "new" | reponse object
+  const [rtForm, setRtForm] = useState(null);        // { titre, contenu, images: [url] }
+  const [rtUploading, setRtUploading] = useState(false);
+  const [rtSaving, setRtSaving] = useState(false);
+  const [rtErr, setRtErr] = useState("");
+
+  const emptyRtForm = () => ({ titre: "", contenu: "", images: [] });
+
+  const loadReponsesTypes = async () => {
+    if (!isAdmin) return;
+    setRtLoading(true);
+    const { data, error } = await sb.from("reponses_types").select("*")
+      .order("position").order("created_at");
+    if (!error && data) setReponsesTypes(data);
+    setRtLoading(false);
+  };
+
+  useEffect(() => {
+    if (page === "reponses-types" && isAdmin) loadReponsesTypes();
+  }, [page, profile]);
+
+  const openNewReponse = () => { setRtForm(emptyRtForm()); setRtErr(""); setRtModal("new"); };
+  const openEditReponse = (r) => {
+    setRtForm({ titre: r.titre || "", contenu: r.contenu || "", images: Array.isArray(r.images) ? [...r.images] : [] });
+    setRtErr(""); setRtModal(r);
+  };
+
+  const rtAddImages = async (files) => {
+    if (!files || files.length === 0) return;
+    setRtUploading(true);
+    try {
+      const urls = [];
+      for (const f of files) {
+        try { urls.push(await uploadToStorage(f, "reponses")); } catch (e) {}
+      }
+      setRtForm(prev => ({ ...prev, images: [...prev.images, ...urls] }));
+    } finally { setRtUploading(false); }
+  };
+  const rtRemoveImage = (url) =>
+    setRtForm(prev => ({ ...prev, images: prev.images.filter(u => u !== url) }));
+
+  const submitRtForm = async () => {
+    if (!rtForm.titre.trim()) { setRtErr("Le titre est obligatoire."); return; }
+    setRtSaving(true); setRtErr("");
+    try {
+      const payload = {
+        titre: rtForm.titre.trim(),
+        contenu: rtForm.contenu,
+        images: rtForm.images,
+        updated_at: new Date().toISOString(),
+      };
+      if (rtModal === "new") {
+        payload.created_by = profile?.id || null;
+        payload.position = reponsesTypes.length;
+        const { error } = await sb.from("reponses_types").insert(payload);
+        if (error) throw error;
+      } else {
+        const { error } = await sb.from("reponses_types").update(payload).eq("id", rtModal.id);
+        if (error) throw error;
+      }
+      await loadReponsesTypes();
+      setRtModal(null);
+    } catch (e) {
+      setRtErr("Erreur : " + (e.message || e));
+    } finally { setRtSaving(false); }
+  };
+
+  const deleteReponse = async (r) => {
+    if (!window.confirm("Supprimer cette réponse type ?")) return;
+    await sb.from("reponses_types").delete().eq("id", r.id);
+    setRtModal(null);
+    await loadReponsesTypes();
   };
 
   const openNewProjet = () => {
@@ -3221,7 +3299,71 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
+
+  // ================= PAGE : RÉPONSES TYPES =================
+  if (page === "reponses-types" && isAdmin) {
+    const inp = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
+    const lbl = { display: "block", fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 5 };
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 18 } },
+        React.createElement('p', { style: { margin: 0, fontSize: 13, color: "#777" } }, "Réponses pré-rédigées à insérer rapidement dans un ticket"),
+        React.createElement('button', { onClick: openNewReponse, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "+ Nouvelle réponse")
+      ),
+      rtLoading
+        ? React.createElement('div', { style: { textAlign: "center", padding: 40, color: "#999" } }, "Chargement…")
+        : reponsesTypes.length === 0
+          ? React.createElement('div', { style: { textAlign: "center", padding: 48, background: "#FAFAFC", border: "1px dashed #DDD", borderRadius: 10, color: "#999" } }, "Aucune réponse type. Créez-en une pour gagner du temps.")
+          : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
+              reponsesTypes.map(r => React.createElement('div', { key: r.id, style: { background: "#FFF", border: "1px solid #ECECF2", borderRadius: 10, padding: 16 } },
+                React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" } },
+                  React.createElement('div', { style: { fontSize: 14, fontWeight: 700, color: SB } }, "💬 " + r.titre),
+                  React.createElement('div', { style: { display: "flex", gap: 8 } },
+                    React.createElement('button', { onClick: () => openEditReponse(r), style: { padding: "6px 12px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
+                  )
+                ),
+                r.contenu && React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8, whiteSpace: "pre-wrap", maxHeight: 80, overflow: "hidden" } }, r.contenu),
+                Array.isArray(r.images) && r.images.length > 0 && React.createElement('div', { style: { display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" } },
+                  r.images.map((u, k) => React.createElement('img', { key: k, src: u, style: { width: 46, height: 46, objectFit: "cover", borderRadius: 6, border: "1px solid #EEE" } }))
+                )
+              ))
+            ),
+
+      // ---- MODALE création / édition ----
+      rtModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: () => setRtModal(null) },
+        React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "#FFF", borderRadius: 12, padding: isMobile ? 18 : 26, width: "100%", maxWidth: 580, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
+          React.createElement('h3', { style: { margin: "0 0 18px", fontSize: 18, color: SB } }, rtModal === "new" ? "Nouvelle réponse type" : "Modifier la réponse type"),
+          React.createElement('div', { style: { marginBottom: 14 } },
+            React.createElement('label', { style: lbl }, "Titre"),
+            React.createElement('input', { value: rtForm.titre, onChange: e => setRtForm({ ...rtForm, titre: e.target.value }), placeholder: "Ex. : Procédure réinitialisation mot de passe", style: inp })
+          ),
+          React.createElement('div', { style: { marginBottom: 14 } },
+            React.createElement('label', { style: lbl }, "Contenu de la réponse"),
+            React.createElement('textarea', { value: rtForm.contenu, onChange: e => setRtForm({ ...rtForm, contenu: e.target.value }), rows: 7, placeholder: "Texte de la réponse…", style: { ...inp, resize: "vertical" } })
+          ),
+          React.createElement('div', { style: { marginBottom: 16 } },
+            React.createElement('label', { style: lbl }, "Images associées (optionnel)"),
+            React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 } },
+              (rtForm.images || []).map((u, k) => React.createElement('div', { key: k, style: { position: "relative" } },
+                React.createElement('img', { src: u, style: { width: 64, height: 64, objectFit: "cover", borderRadius: 6, border: "1px solid #EEE" } }),
+                React.createElement('button', { onClick: () => rtRemoveImage(u), style: { position: "absolute", top: -6, right: -6, background: "#E53E3E", color: "#fff", border: "none", borderRadius: "50%", width: 20, height: 20, fontSize: 12, cursor: "pointer", lineHeight: 1 } }, "✕")
+              ))
+            ),
+            React.createElement('label', { style: { display: "inline-block", padding: "7px 12px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } },
+              rtUploading ? "Envoi…" : "+ Ajouter des images",
+              React.createElement('input', { type: "file", accept: "image/*", multiple: true, onChange: e => rtAddImages(Array.from(e.target.files || [])), style: { display: "none" } })
+            )
+          ),
+          rtErr && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 7, padding: "9px 12px", fontSize: 12, color: "#C53030", marginBottom: 12 } }, rtErr),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
+            rtModal !== "new" && React.createElement('button', { onClick: () => deleteReponse(rtModal), style: { marginRight: "auto", padding: "8px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🗑 Supprimer"),
+            React.createElement('button', { onClick: () => setRtModal(null), style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: submitRtForm, disabled: rtSaving, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: rtSaving ? "default" : "pointer", opacity: rtSaving ? 0.6 : 1 } }, rtSaving ? "Enregistrement…" : (rtModal === "new" ? "Créer" : "Enregistrer"))
+          )
+        )
+      )
+    );
+  }
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
