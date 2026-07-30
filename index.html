@@ -365,6 +365,7 @@ function App() {
   const [replyNote, setReplyNote] = useState(""); // info/erreur d'envoi email
   const [ticketFiles, setTicketFiles] = useState({}); // { ticketId: [fichiers] }
   const [replyFiles, setReplyFiles] = useState([]);   // fichiers à joindre à la réponse en cours
+  const [replyImageUrls, setReplyImageUrls] = useState([]); // images (URLs) issues d'une réponse type
 
   // ---------- DOCUMENTATION TECHNIQUE (admin uniquement) ----------
   const [docs, setDocs] = useState([]);
@@ -1056,6 +1057,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     setReplyText("");
     setReplyNote("");
     setReplyFiles([]);
+    setReplyImageUrls([]);
     loadTicketMsgs(id);
     loadTicketFiles(id);
   };
@@ -1101,10 +1103,25 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
 
     // 2) Archiver les pièces jointes de la réponse dans le portail
     const filesToSend = replyFiles;
+    const imageUrlsToSend = replyImageUrls;
     if (filesToSend.length > 0) {
       await uploadTicketFiles(filesToSend, ticket.id, inserted.id, senderRole);
       loadTicketFiles(ticket.id);
       setReplyFiles([]);
+    }
+    // Images issues d'une réponse type (déjà uploadées) : on crée les lignes ticket_fichiers
+    if (imageUrlsToSend.length > 0) {
+      for (const url of imageUrlsToSend) {
+        try {
+          const nom = decodeURIComponent((url.split("/").pop() || "image").split("?")[0]);
+          await sb.from("ticket_fichiers").insert({
+            ticket_id: ticket.id, message_id: inserted.id,
+            file_name: nom, file_url: url, uploaded_by: senderRole
+          });
+        } catch (e) {}
+      }
+      loadTicketFiles(ticket.id);
+      setReplyImageUrls([]);
     }
 
     // 3) Envoyer par email — uniquement l'admin notifie le client
@@ -1121,6 +1138,20 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
           reader.onload = () => resolve({ filename: f.name, content: reader.result.split(",")[1] });
           reader.readAsDataURL(f);
         })));
+        // Images de réponse type (déjà en ligne) : on les récupère et on les joint aussi
+        for (const url of imageUrlsToSend) {
+          try {
+            const resp = await fetch(url);
+            const blob = await resp.blob();
+            const b64 = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result.split(",")[1]);
+              reader.readAsDataURL(blob);
+            });
+            const nom = decodeURIComponent((url.split("/").pop() || "image").split("?")[0]);
+            attachments.push({ filename: nom, content: b64 });
+          } catch (e) {}
+        }
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1691,7 +1722,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   };
 
   useEffect(() => {
-    if (page === "reponses-types" && isAdmin) loadReponsesTypes();
+    if ((page === "reponses-types" || page === "tickets-admin") && isAdmin) loadReponsesTypes();
   }, [page, profile]);
 
   const openNewReponse = () => { setRtForm(emptyRtForm()); setRtErr(""); setRtModal("new"); };
@@ -1745,6 +1776,26 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     await sb.from("reponses_types").delete().eq("id", r.id);
     setRtModal(null);
     await loadReponsesTypes();
+  };
+
+  // Insère une réponse type dans la zone de réponse d'un ticket.
+  // Texte : remplace si vide, sinon ajoute à la suite. Images : jointes au mail.
+  const applyReponseType = (rid) => {
+    const r = reponsesTypes.find(x => x.id === rid);
+    if (!r) return;
+    const contenu = r.contenu || "";
+    setReplyText(prev => {
+      const p = (prev || "").trim();
+      if (!p) return contenu;
+      return p + "\n\n" + contenu;
+    });
+    if (Array.isArray(r.images) && r.images.length > 0) {
+      setReplyImageUrls(prev => {
+        const set = new Set(prev);
+        r.images.forEach(u => set.add(u));
+        return Array.from(set);
+      });
+    }
   };
 
   const openNewProjet = () => {
@@ -2650,7 +2701,24 @@ const nav = isAdmin
                   )
                 ),
                 replyNote && React.createElement('div', { style: { fontSize: 11, color: replyNote.startsWith("Erreur") ? "#C53030" : "#2F855A", marginBottom: 8 } }, replyNote),
-                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
+                replyImageUrls.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" } },
+                  React.createElement('span', { style: { fontSize: 11, color: "#888" } }, "🖼 Images jointes depuis une réponse type :"),
+                  replyImageUrls.map((u, k) => React.createElement('span', { key: k, style: { display: "inline-flex", alignItems: "center", gap: 4, background: "#F0EFF7", borderRadius: 5, padding: "2px 6px", fontSize: 10.5, color: "#4A4A6A" } },
+                    "image " + (k + 1),
+                    React.createElement('button', { onClick: () => setReplyImageUrls(prev => prev.filter(x => x !== u)), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 11, padding: 0, lineHeight: 1 } }, "✕")
+                  ))
+                ),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center" } },
+                  React.createElement('select', {
+                    value: "",
+                    onChange: e => { if (e.target.value) { applyReponseType(e.target.value); e.target.value = ""; } },
+                    disabled: reponsesTypes.length === 0,
+                    title: reponsesTypes.length === 0 ? "Aucune réponse type — créez-en dans l'onglet Réponses types" : "Insérer une réponse type",
+                    style: { marginRight: "auto", padding: "8px 10px", border: "1px solid " + G + "88", borderRadius: 7, fontSize: 12, color: "#555", background: "#FFFDF5", cursor: reponsesTypes.length === 0 ? "default" : "pointer", maxWidth: 220 }
+                  },
+                    React.createElement('option', { value: "" }, reponsesTypes.length === 0 ? "Réponses types (vide)" : "💬 Insérer une réponse type…"),
+                    reponsesTypes.map(r => React.createElement('option', { key: r.id, value: r.id }, r.titre))
+                  ),
                   React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                   React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
                   React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
