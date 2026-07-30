@@ -962,13 +962,16 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     });
   };
 
-  // Détermine, pour chaque ticket, s'il a du "nouveau" à traiter :
-  //  - "new"   : aucun message du support (que la demande initiale du client)
-  //  - "reply" : le dernier message vient du client (il attend une réponse)
-  //  - null    : rien de neuf (on a déjà répondu en dernier)
+  // Détermine, pour chaque ticket, s'il a du "nouveau" à traiter, et depuis quand :
+  //  - kind "new"   : aucun message du support (que la demande initiale du client)
+  //  - kind "reply" : le dernier message vient du client (il attend une réponse)
+  //  - kind null    : rien de neuf (on a déjà répondu en dernier)
+  //  - since        : date du dernier message client resté sans réponse (sert au calcul du retard 4h)
   const computeTicketStates = async (ticketList) => {
     const ids = (ticketList || []).map(t => t.id);
     if (ids.length === 0) { setTicketState({}); return; }
+    const createdMap = {};
+    (ticketList || []).forEach(t => { createdMap[t.id] = t.created_at; });
     const { data, error } = await sb.from("ticket_messages")
       .select("ticket_id,sender_role,created_at")
       .in("ticket_id", ids)
@@ -981,9 +984,14 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       const msgs = byTicket[id] || [];
       const hasAdmin = msgs.some(m => m.sender_role === "admin");
       const last = msgs.length ? msgs[msgs.length - 1] : null;
-      if (!hasAdmin) map[id] = "new";
-      else if (last && last.sender_role === "client") map[id] = "reply";
-      else map[id] = null;
+      let kind = null;
+      if (!hasAdmin) kind = "new";
+      else if (last && last.sender_role === "client") kind = "reply";
+      // "since" = date du dernier message client (celui qui attend une réponse),
+      // sinon la création du ticket.
+      let since = createdMap[id] || null;
+      if (last && last.sender_role === "client") since = last.created_at;
+      map[id] = { kind, since };
     });
     setTicketState(map);
   };
@@ -1057,7 +1065,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     setTicketMsgs(prev => ({ ...prev, [ticket.id]: [...(prev[ticket.id] || []), inserted] }));
     setReplyText("");
     // Le support vient de répondre : l'état "nouveau/réponse" est levé pour ce ticket
-    if (isAdmin) setTicketState(prev => ({ ...prev, [ticket.id]: null }));
+    if (isAdmin) setTicketState(prev => ({ ...prev, [ticket.id]: { kind: null, since: null } }));
 
     // 2) Archiver les pièces jointes de la réponse dans le portail
     const filesToSend = replyFiles;
@@ -2406,11 +2414,20 @@ const nav = isAdmin
     const statusColor = (s) => s === "closed" ? "#999" : "#2F855A";
     const statusLabel = (s) => s === "closed" ? "Fermé" : "Ouvert";
     const prioColor = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
-    // Badge d'état : "Nouveau" (jamais répondu) / "Nouvelle réponse" (le client a répondu en dernier)
-    const ticketStateBadge = (st) => {
-      if (st === "new") return React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, color: "#fff", background: "#3182CE", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, "● Nouveau");
-      if (st === "reply") return React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, color: "#fff", background: "#DD6B20", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, "● Réponse");
-      return null;
+    // Badge d'état : "Nouveau" / "Réponse", et "En retard" si > 4h sans réponse de notre part.
+    const SLA_MS = 4 * 60 * 60 * 1000; // 4 heures
+    const ticketStateBadge = (st, ticketStatus) => {
+      if (ticketStatus === "closed" || !st || !st.kind) return null;
+      const enRetard = st.since && (Date.now() - new Date(st.since).getTime() > SLA_MS);
+      const base = { fontSize: 9.5, fontWeight: 700, color: "#fff", padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" };
+      const label = st.kind === "new" ? "Nouveau" : "Réponse";
+      const badge = React.createElement('span', { key: "k", style: { ...base, background: st.kind === "new" ? "#3182CE" : "#DD6B20" } }, "● " + label);
+      if (!enRetard) return badge;
+      // En retard : on affiche le badge + une pastille rouge "En retard"
+      return React.createElement('span', { style: { display: "inline-flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "center" } },
+        badge,
+        React.createElement('span', { key: "r", style: { ...base, background: "#E53E3E" }, title: "Sans réponse depuis plus de 4h" }, "⏱ En retard")
+      );
     };
     if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed");
     if (ticketFilter === "closed") list = tickets.filter(t => t.status === "closed");
@@ -2439,7 +2456,7 @@ const nav = isAdmin
         React.createElement('span', { style: { width: "19%" } }, "Hôtel"),
         React.createElement('span', { style: { width: "16%" } }, "Contact"),
         React.createElement('span', { style: { flex: 1 } }, "Objet"),
-        React.createElement('span', { style: { width: 90, textAlign: "center", flexShrink: 0 } }, "État"),
+        React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, "État"),
         React.createElement('span', { style: { width: 25, flexShrink: 0 } }, ""),
         React.createElement('span', { style: { width: 70, textAlign: "center", flexShrink: 0 } }, "Priorité"),
         React.createElement('span', { style: { width: 60, textAlign: "center", flexShrink: 0 } }, "Statut"),
@@ -2460,7 +2477,7 @@ const nav = isAdmin
                     React.createElement('span', { style: { width: "19%", minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel),
                     React.createElement('span', { style: { width: "16%", minWidth: 0, fontSize: 12.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.contact_name || "—"),
                     React.createElement('span', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.subject || t.message || "(sans objet)"),
-                    React.createElement('span', { style: { width: 90, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id])),
+                    React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id], t.status)),
                     React.createElement('span', { style: { fontSize: 15, flexShrink: 0 }, title: t.source === "email" ? "Email" : "Formulaire" }, t.source === "email" ? "📧" : "📝"),
                     React.createElement('span', { style: { width: 70, textAlign: "center", fontSize: 10, fontWeight: 600, color: prioColor(t.priority), flexShrink: 0 } }, t.priority),
                     React.createElement('span', { style: { width: 60, textAlign: "center", fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20, flexShrink: 0 } }, statusLabel(t.status)),
@@ -2473,7 +2490,7 @@ const nav = isAdmin
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prioColor(t.priority), background: prioColor(t.priority) + "18", padding: "2px 8px", borderRadius: 20 } }, t.priority),
                       React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status)),
-                      ticketStateBadge(ticketState[t.id])
+                      ticketStateBadge(ticketState[t.id], t.status)
                     ),
                     t.subject && React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "Objet : " + t.subject),
                     React.createElement('div', { style: { fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.contact_name || "?") + " — " + (t.message || "")),
