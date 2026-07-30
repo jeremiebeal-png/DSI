@@ -3003,12 +3003,9 @@ const nav = isAdmin
     const inp = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
     const lbl = { display: "block", fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 5 };
 
-    return React.createElement('div', { style: { maxWidth: 1000, margin: "0 auto", padding: isMobile ? "0 4px" : 0 } },
+    content = React.createElement('div', null,
       React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 18 } },
-        React.createElement('div', null,
-          React.createElement('h2', { style: { margin: 0, fontSize: 20, color: SB } }, "📝 Rapports d'activité"),
-          React.createElement('p', { style: { margin: "4px 0 0", fontSize: 13, color: "#777" } }, "Comptes rendus d'intervention chez les clients")
-        ),
+        React.createElement('p', { style: { margin: 0, fontSize: 13, color: "#777" } }, "Comptes rendus d'intervention chez les clients"),
         React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
           React.createElement('select', { value: rapFilterHotel, onChange: e => setRapFilterHotel(e.target.value), style: { padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 } },
             React.createElement('option', { value: "all" }, "Tous les hôtels"),
