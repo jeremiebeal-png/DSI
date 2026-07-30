@@ -1971,8 +1971,13 @@ const nav = isAdmin
 
   // ---------- SUPER-ADMIN : GESTION DES ADMINS ----------
   if (page === "admins" && isSuperAdmin) {
-    const permLabels = { clients: "\ud83c\udfe8 Clients", procedures: "\ud83d\udcda Proc\u00e9dures", docs: "\ud83d\uddc2\ufe0f Doc. technique", tickets: "\ud83c\udfab Tickets", projets: "\ud83d\udcca Projets" };
-    const permKeys = ["clients", "procedures", "docs", "tickets", "projets"];
+    // Dérivé de ADMIN_SECTIONS : tout nouvel onglet ajouté au menu apparaît
+    // automatiquement dans la grille de permissions (pas de liste à maintenir en double).
+    const permKeys = ADMIN_SECTIONS.map(s => s.key);
+    const permLabels = ADMIN_SECTIONS.reduce((acc, s) => {
+      acc[s.key] = s.icon + " " + (s.label.replace(/^Gérer les /i, "").replace(/^./, c => c.toUpperCase()));
+      return acc;
+    }, {});
 
     content = React.createElement('div', null,
       React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 14, lineHeight: 1.6 } },
