@@ -16,7 +16,7 @@
 <body>
 <div id="root"></div>
 <script>
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
@@ -59,13 +59,15 @@ const escapeHtml = (s) => String(s || "")
 const textToHtml = (s) => escapeHtml(s).replace(/\n/g, "<br>");
 
 // Assemble un email complet : corps + signature (+ historique optionnel sous la signature)
-const buildSignedEmail = (bodyText, history) => {
+const buildSignedEmail = (bodyText, history, bodyHtmlOverride) => {
   const histText = history && history.text ? history.text : "";
   const histHtml = history && history.html ? history.html : "";
+  // Si un HTML riche est fourni (réponse type avec images), on l'utilise pour le corps
+  const corpsHtml = bodyHtmlOverride ? bodyHtmlOverride : textToHtml(bodyText);
   return {
     text: bodyText + SIGNATURE_TEXT + histText,
     html: '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333333;line-height:1.6;">' +
-          textToHtml(bodyText) + SIGNATURE_HTML + histHtml + '</div>'
+          corpsHtml + SIGNATURE_HTML + histHtml + '</div>'
   };
 };
 
@@ -123,6 +125,61 @@ const SignatureBlock = () => React.createElement('div', {
   )
 );
 const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
+
+// Nettoyage minimal du HTML des réponses types avant affichage/envoi :
+// on ne garde que des balises sûres (mise en forme + images + liens).
+function sanitizeRichHtml(html) {
+  if (!html) return "";
+  let h = String(html);
+  h = h.replace(/<!--[\s\S]*?-->/g, "");
+  h = h.replace(/<(script|style|iframe|object|embed|form|input|textarea|link|meta)[\s\S]*?<\/\1>/gi, "");
+  h = h.replace(/<(script|style|iframe|object|embed|form|input|textarea|link|meta)\b[^>]*>/gi, "");
+  // Retire les gestionnaires d'événements et les URLs javascript:
+  h = h.replace(/\son\w+\s*=\s*"[^"]*"/gi, "");
+  h = h.replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+  h = h.replace(/(href|src)\s*=\s*"(\s*javascript:[^"]*)"/gi, '$1="#"');
+  h = h.replace(/(href|src)\s*=\s*'(\s*javascript:[^']*)'/gi, "$1='#'");
+  return h;
+}
+
+// Éditeur de texte riche (WYSIWYG) basé sur contentEditable, sans dépendance externe.
+// props : value (html), onChange(html), onInsertImage() -> déclenche l'upload,
+//         placeholder. La ref interne évite de réécrire le HTML à chaque frappe.
+function RichEditor(props) {
+  const ref = useRef(null);
+  const lastValue = useRef("");
+  useEffect(() => {
+    // Ne réécrit le contenu que si la valeur externe diffère vraiment
+    if (ref.current && props.value !== lastValue.current && props.value !== ref.current.innerHTML) {
+      ref.current.innerHTML = props.value || "";
+      lastValue.current = props.value || "";
+    }
+  }, [props.value]);
+  const emit = () => {
+    if (!ref.current) return;
+    const html = ref.current.innerHTML;
+    lastValue.current = html;
+    props.onChange && props.onChange(html);
+  };
+  const cmd = (command) => { document.execCommand(command, false, null); emit(); if (ref.current) ref.current.focus(); };
+  const btn = (label, command, title) => React.createElement('button', {
+    type: "button", title: title, onMouseDown: e => { e.preventDefault(); cmd(command); },
+    style: { padding: "4px 9px", border: "1px solid #DDD", background: "#FFF", borderRadius: 5, fontSize: 12, cursor: "pointer", fontWeight: command === "bold" ? 700 : 400, fontStyle: command === "italic" ? "italic" : "normal" }
+  }, label);
+  return React.createElement('div', { style: { border: "1px solid #DDD", borderRadius: 7, overflow: "hidden" } },
+    React.createElement('div', { style: { display: "flex", gap: 5, padding: 7, background: "#FAFAFC", borderBottom: "1px solid #EEE", flexWrap: "wrap", alignItems: "center" } },
+      btn("G", "bold", "Gras"),
+      btn("I", "italic", "Italique"),
+      btn("• Liste", "insertUnorderedList", "Liste à puces"),
+      React.createElement('button', { type: "button", onMouseDown: e => { e.preventDefault(); props.onInsertImage && props.onInsertImage(); }, style: { padding: "4px 9px", border: "1px solid #C9A84C", background: "#FFFDF5", color: "#8A6D1F", borderRadius: 5, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "🖼 Insérer une image"),
+      props.busy && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Envoi de l'image…")
+    ),
+    React.createElement('div', {
+      ref: ref, contentEditable: true, onInput: emit, "data-ph": props.placeholder || "",
+      style: { minHeight: 160, maxHeight: 340, overflowY: "auto", padding: "10px 12px", fontSize: 13, lineHeight: 1.6, outline: "none", background: "#FFF" }
+    })
+  );
+}
 
 // ====== CONFIGURATION SUPABASE ======
 const SUPABASE_URL = "https://vkamubvlbezhpbunvdai.supabase.co";
@@ -1058,6 +1115,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     setReplyNote("");
     setReplyFiles([]);
     setReplyImageUrls([]);
+    setReplyHtmlOverride(null);
     loadTicketMsgs(id);
     loadTicketFiles(id);
   };
@@ -1098,6 +1156,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     }
     setTicketMsgs(prev => ({ ...prev, [ticket.id]: [...(prev[ticket.id] || []), inserted] }));
     setReplyText("");
+    setReplyHtmlOverride(null);
     // Le support vient de répondre : l'état "nouveau/réponse" est levé pour ce ticket
     if (isAdmin) setTicketState(prev => ({ ...prev, [ticket.id]: { kind: null, since: null } }));
 
@@ -1131,7 +1190,11 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
           `${body}`;
-        const mail = buildSignedEmail(bodyText, historyForEmail);
+        // Si la réponse vient d'une réponse type riche (HTML + images), on envoie ce HTML
+        const htmlOverride = (replyHtmlOverride && stripSignature(replyText).trim() === (replyHtmlOverride.plain || "").trim())
+          ? ('<p>Bonjour ' + (ticket.contact_name || "") + ',</p>' + replyHtmlOverride.html)
+          : null;
+        const mail = buildSignedEmail(bodyText, historyForEmail, htmlOverride);
         // Les fichiers joints partent aussi en pièces jointes de l'email
         const attachments = await Promise.all(filesToSend.map(f => new Promise((resolve) => {
           const reader = new FileReader();
@@ -1710,7 +1773,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   const [rtSaving, setRtSaving] = useState(false);
   const [rtErr, setRtErr] = useState("");
 
-  const emptyRtForm = () => ({ titre: "", contenu: "", images: [] });
+  const emptyRtForm = () => ({ titre: "", contenu: "", contenu_html: "", images: [] });
 
   const loadReponsesTypes = async () => {
     if (!isAdmin) return;
@@ -1727,31 +1790,48 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
 
   const openNewReponse = () => { setRtForm(emptyRtForm()); setRtErr(""); setRtModal("new"); };
   const openEditReponse = (r) => {
-    setRtForm({ titre: r.titre || "", contenu: r.contenu || "", images: Array.isArray(r.images) ? [...r.images] : [] });
+    // Repli : si pas de HTML enregistré, on convertit le texte simple existant
+    const html = r.contenu_html && r.contenu_html.trim()
+      ? r.contenu_html
+      : (r.contenu ? "<p>" + String(r.contenu).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>" : "");
+    setRtForm({ titre: r.titre || "", contenu: r.contenu || "", contenu_html: html, images: Array.isArray(r.images) ? [...r.images] : [] });
     setRtErr(""); setRtModal(r);
   };
 
-  const rtAddImages = async (files) => {
-    if (!files || files.length === 0) return;
+  // Insertion d'une image DANS l'éditeur riche, à la position du curseur.
+  const rtEditorImgInput = useRef(null);
+  const triggerRtEditorImage = () => { if (rtEditorImgInput.current) rtEditorImgInput.current.click(); };
+  const rtInsertImageInEditor = async (file) => {
+    if (!file) return;
     setRtUploading(true);
     try {
-      const urls = [];
-      for (const f of files) {
-        try { urls.push(await uploadToStorage(f, "reponses")); } catch (e) {}
-      }
-      setRtForm(prev => ({ ...prev, images: [...prev.images, ...urls] }));
+      const url = await uploadToStorage(file, "reponses");
+      // Insère l'image à la position courante du curseur dans l'éditeur
+      const img = '<img src="' + url + '" style="max-width:100%;height:auto;border-radius:4px;margin:6px 0;" />';
+      document.execCommand("insertHTML", false, img);
+      // Mémorise aussi l'URL (utile pour l'affichage liste / nettoyage)
+      setRtForm(prev => ({ ...prev, images: [...(prev.images || []), url] }));
+    } catch (e) {
+      setRtErr("L'image n'a pas pu être ajoutée (" + (e.message || e) + ").");
     } finally { setRtUploading(false); }
   };
-  const rtRemoveImage = (url) =>
-    setRtForm(prev => ({ ...prev, images: prev.images.filter(u => u !== url) }));
 
   const submitRtForm = async () => {
     if (!rtForm.titre.trim()) { setRtErr("Le titre est obligatoire."); return; }
     setRtSaving(true); setRtErr("");
     try {
+      const html = sanitizeRichHtml(rtForm.contenu_html || "");
+      // Version texte simple dérivée du HTML (pour repli et recherche)
+      const texte = html
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+        .replace(/\n{3,}/g, "\n\n").trim();
       const payload = {
         titre: rtForm.titre.trim(),
-        contenu: rtForm.contenu,
+        contenu: texte,
+        contenu_html: html,
         images: rtForm.images,
         updated_at: new Date().toISOString(),
       };
@@ -1780,22 +1860,20 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
 
   // Insère une réponse type dans la zone de réponse d'un ticket.
   // Texte : remplace si vide, sinon ajoute à la suite. Images : jointes au mail.
+  const [replyHtmlOverride, setReplyHtmlOverride] = useState(null); // { html, plain } d'une réponse type
   const applyReponseType = (rid) => {
     const r = reponsesTypes.find(x => x.id === rid);
     if (!r) return;
-    const contenu = r.contenu || "";
+    const plain = r.contenu || "";
+    const html = (r.contenu_html && r.contenu_html.trim()) ? sanitizeRichHtml(r.contenu_html) : null;
     setReplyText(prev => {
       const p = (prev || "").trim();
-      if (!p) return contenu;
-      return p + "\n\n" + contenu;
+      const nouveau = p ? (p + "\n\n" + plain) : plain;
+      // Si on part d'une zone vide, on peut envoyer le HTML riche ; sinon on garde le texte
+      if (html && !p) setReplyHtmlOverride({ html, plain });
+      else setReplyHtmlOverride(null);
+      return nouveau;
     });
-    if (Array.isArray(r.images) && r.images.length > 0) {
-      setReplyImageUrls(prev => {
-        const set = new Set(prev);
-        r.images.forEach(u => set.add(u));
-        return Array.from(set);
-      });
-    }
   };
 
   const openNewProjet = () => {
@@ -2687,7 +2765,7 @@ const nav = isAdmin
                 ))
               ),
               t.status !== "closed" && React.createElement('div', null,
-                React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => setReplyText(e.target.value), placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 70, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
+                React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => { const v = e.target.value; setReplyText(v); if (replyHtmlOverride && v.trim() !== (replyHtmlOverride.plain || "").trim()) setReplyHtmlOverride(null); }, placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 70, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 React.createElement('div', { style: { marginBottom: 8 } },
                   React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Joindre des fichiers à la réponse"),
                   React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => setReplyFiles(prev => [...prev, ...Array.from(e.target.files)]), style: { fontSize: 12 } }),
@@ -3389,10 +3467,7 @@ const nav = isAdmin
                     React.createElement('button', { onClick: () => openEditReponse(r), style: { padding: "6px 12px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
                   )
                 ),
-                r.contenu && React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8, whiteSpace: "pre-wrap", maxHeight: 80, overflow: "hidden" } }, r.contenu),
-                Array.isArray(r.images) && r.images.length > 0 && React.createElement('div', { style: { display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" } },
-                  r.images.map((u, k) => React.createElement('img', { key: k, src: u, style: { width: 46, height: 46, objectFit: "cover", borderRadius: 6, border: "1px solid #EEE" } }))
-                )
+                (r.contenu_html || r.contenu) && React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8, maxHeight: 120, overflow: "hidden" }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(r.contenu_html || ("<p>" + String(r.contenu).replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>")) } })
               ))
             ),
 
@@ -3404,22 +3479,21 @@ const nav = isAdmin
             React.createElement('label', { style: lbl }, "Titre"),
             React.createElement('input', { value: rtForm.titre, onChange: e => setRtForm({ ...rtForm, titre: e.target.value }), placeholder: "Ex. : Procédure réinitialisation mot de passe", style: inp })
           ),
-          React.createElement('div', { style: { marginBottom: 14 } },
-            React.createElement('label', { style: lbl }, "Contenu de la réponse"),
-            React.createElement('textarea', { value: rtForm.contenu, onChange: e => setRtForm({ ...rtForm, contenu: e.target.value }), rows: 7, placeholder: "Texte de la réponse…", style: { ...inp, resize: "vertical" } })
-          ),
           React.createElement('div', { style: { marginBottom: 16 } },
-            React.createElement('label', { style: lbl }, "Images associées (optionnel)"),
-            React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 } },
-              (rtForm.images || []).map((u, k) => React.createElement('div', { key: k, style: { position: "relative" } },
-                React.createElement('img', { src: u, style: { width: 64, height: 64, objectFit: "cover", borderRadius: 6, border: "1px solid #EEE" } }),
-                React.createElement('button', { onClick: () => rtRemoveImage(u), style: { position: "absolute", top: -6, right: -6, background: "#E53E3E", color: "#fff", border: "none", borderRadius: "50%", width: 20, height: 20, fontSize: 12, cursor: "pointer", lineHeight: 1 } }, "✕")
-              ))
-            ),
-            React.createElement('label', { style: { display: "inline-block", padding: "7px 12px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } },
-              rtUploading ? "Envoi…" : "+ Ajouter des images",
-              React.createElement('input', { type: "file", accept: "image/*", multiple: true, onChange: e => rtAddImages(Array.from(e.target.files || [])), style: { display: "none" } })
-            )
+            React.createElement('label', { style: lbl }, "Contenu de la réponse (texte et images)"),
+            React.createElement(RichEditor, {
+              value: rtForm.contenu_html,
+              onChange: html => setRtForm(prev => ({ ...prev, contenu_html: html })),
+              onInsertImage: triggerRtEditorImage,
+              busy: rtUploading,
+              placeholder: "Rédigez la réponse, insérez des images où vous voulez…"
+            }),
+            React.createElement('input', {
+              ref: rtEditorImgInput, type: "file", accept: "image/*",
+              onChange: e => { const f = (e.target.files || [])[0]; if (f) rtInsertImageInEditor(f); e.target.value = ""; },
+              style: { display: "none" }
+            }),
+            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 6 } }, "Astuce : placez le curseur à l'endroit voulu, puis cliquez « 🖼 Insérer une image ».")
           ),
           rtErr && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 7, padding: "9px 12px", fontSize: 12, color: "#C53030", marginBottom: 12 } }, rtErr),
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
