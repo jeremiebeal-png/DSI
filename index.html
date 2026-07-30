@@ -1370,7 +1370,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     technicien: "", hotel_id: "", services: [],
     serveurs_ok: true, serveurs_note: "", observations: ""
   });
-  const emptyLigne = () => ({ description: "", demandeur: "", statut: "ok", motif: "" });
+  const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "" });
   const emptySrv = () => ({ libelle: "", ok: true });
 
   const loadRapports = async () => {
@@ -1420,7 +1420,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     });
     const lignes = (rapDemandes[r.id] || []).map(d => ({
       description: d.description || "", demandeur: d.demandeur || "",
-      statut: d.statut || "ok", motif: d.motif || ""
+      service: d.service || "", statut: d.statut || "ok", motif: d.motif || ""
     }));
     setRapLignes(lignes.length ? lignes : [emptyLigne()]);
     const srv = (rapServeurs[r.id] || []).map(s => ({ libelle: s.libelle || "", ok: s.ok !== false }));
@@ -1472,6 +1472,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       const lignes = rapLignes.filter(l => l.description.trim()).map((l, i) => ({
         rapport_id: rapId, description: l.description.trim(),
         demandeur: l.demandeur.trim() || null,
+        service: l.service || null,
         statut: l.statut === "attente" ? "attente" : "ok",
         motif: l.statut === "attente" ? (l.motif.trim() || null) : null,
         position: i,
@@ -1562,7 +1563,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         if (d.statut === "attente") doc.setTextColor(178, 106, 0); else doc.setTextColor(46, 125, 50);
         doc.text("[" + st + "]", mL, y);
         doc.setTextColor(30, 30, 30); doc.setFont("helvetica", "normal");
-        const txt = doc.splitTextToSize((i + 1) + ". " + d.description + (d.demandeur ? "  (demandé par " + d.demandeur + ")" : ""), contentW - 28);
+        const meta = [d.demandeur ? "demandé par " + d.demandeur : "", d.service ? "service " + d.service : ""].filter(Boolean).join(", ");
+        const txt = doc.splitTextToSize((i + 1) + ". " + d.description + (meta ? "  (" + meta + ")" : ""), contentW - 28);
         doc.text(txt, mL + 28, y);
         line(Math.max(6, txt.length * 5));
         if (d.statut === "attente" && d.motif) {
@@ -3075,6 +3077,7 @@ const nav = isAdmin
                       React.createElement('div', null,
                         React.createElement('span', null, d.description),
                         d.demandeur && React.createElement('span', { style: { color: "#999" } }, "  — " + d.demandeur),
+                        d.service && React.createElement('span', { style: { marginLeft: 6, fontSize: 10.5, background: "#F0EFF7", color: "#4A4A6A", padding: "1px 7px", borderRadius: 4 } }, d.service),
                         d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif)
                       )
                     ))
@@ -3157,8 +3160,12 @@ const nav = isAdmin
                   React.createElement('textarea', { value: l.description, onChange: e => setLigne(i, "description", e.target.value), placeholder: "Description de la demande", rows: 2, style: { ...inp, resize: "vertical", flex: 1 } }),
                   rapLignes.length > 1 && React.createElement('button', { onClick: () => removeLigne(i), title: "Retirer", style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 16, padding: "4px 2px" } }, "✕")
                 ),
-                React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8, marginTop: 8 } },
+                React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8, marginTop: 8 } },
                   React.createElement('input', { value: l.demandeur, onChange: e => setLigne(i, "demandeur", e.target.value), placeholder: "Demandé par…", style: { ...inp, fontSize: 12 } }),
+                  React.createElement('select', { value: l.service, onChange: e => setLigne(i, "service", e.target.value), style: { ...inp, fontSize: 12 } },
+                    React.createElement('option', { value: "" }, "Service…"),
+                    SERVICES_LIST.map(svc => React.createElement('option', { key: svc, value: svc }, svc))
+                  ),
                   React.createElement('select', { value: l.statut, onChange: e => setLigne(i, "statut", e.target.value), style: { ...inp, fontSize: 12 } },
                     React.createElement('option', { value: "ok" }, "✅ OK / Réalisé"),
                     React.createElement('option', { value: "attente" }, "⏳ En attente")
