@@ -533,13 +533,23 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!session) { setProfile(null); setMfaState("checking"); return; }
+    if (!session) {
+      setProfile(null); setMfaState("checking");
+      window.__dsiPageInit = false; // réinitialise pour la prochaine connexion
+      return;
+    }
 sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", session.user.id).single()
       .then(({ data, error }) => {
         if (!error && data) {
           setProfile({ ...data, email: session.user.email });
-          const refDirect = data.role === "admin" && pendingTicketRef;
-          setPage(refDirect ? "tickets-admin" : (data.role === "admin" ? "client-admin" : "knowledge"));
+          // On ne fixe la page de départ QU'UNE FOIS (première connexion).
+          // Sinon, au retour d'onglet, le rafraîchissement de session
+          // (TOKEN_REFRESHED) ramènerait l'utilisateur sur la page par défaut.
+          if (!window.__dsiPageInit) {
+            window.__dsiPageInit = true;
+            const refDirect = data.role === "admin" && pendingTicketRef;
+            setPage(refDirect ? "tickets-admin" : (data.role === "admin" ? "client-admin" : "knowledge"));
+          }
         }
       });
   }, [session]);
@@ -713,6 +723,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
   const doLogout = async () => {
     window.__dsiLoggedToken = null;
+    window.__dsiPageInit = false;
     await sb.auth.signOut();
     setEmail(""); setPw(""); setHotels([]); setProcedures([]); setEditCid(null);
     setMfaState("checking"); setMfaFactorId(null); setMfaQr(null); setMfaSecret(""); setMfaCode(""); setMfaErr("");
