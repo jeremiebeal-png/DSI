@@ -1983,6 +1983,30 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         await sb.from("projet_fichiers").insert({ projet_id: projetId, file_name: file.name, file_url: url });
       }
 
+      // Notification automatique à team@dsihotel.fr — uniquement à la création.
+      // Non-bloquant : un échec d'envoi ne doit pas casser la création du projet.
+      if (projModal === "new") {
+        const hotelNom = payload.hotel_id
+          ? (hotels.find(h => h.id === payload.hotel_id)?.name || null)
+          : null;
+        const sessionInfo = await sb.auth.getSession();
+        const createurEmail = sessionInfo?.data?.session?.user?.email || null;
+        callAdminApi("/notify-projet", {
+          titre: payload.titre,
+          description: payload.description,
+          statut: payload.statut,
+          priorite: payload.priorite,
+          hotelName: hotelNom,
+          responsable: payload.responsable,
+          technicien: payload.technicien,
+          budget: payload.budget,
+          dateDebut: payload.date_debut,
+          dateEcheance: payload.date_echeance,
+          taches: projTacheList.map(t => ({ libelle: t.libelle, done: !!t.done })),
+          createurEmail: createurEmail,
+        }).catch(() => { /* email non-bloquant */ });
+      }
+
       setProjModal(null);
       await loadProjets();
     } catch (e) {
