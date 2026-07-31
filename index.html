@@ -444,6 +444,11 @@ function App() {
   const [ticketView, setTicketView] = useState("cards"); // "cards" | "table"
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
+  const [fwdTicket, setFwdTicket] = useState(null);   // ticket en cours de transfert
+  const [fwdEmail, setFwdEmail] = useState("");        // destinataire du transfert
+  const [fwdNote, setFwdNote] = useState("");          // message optionnel ajouté
+  const [fwdBusy, setFwdBusy] = useState(false);
+  const [fwdMsg, setFwdMsg] = useState("");            // retour d'état (succès/erreur)
   const [replyNote, setReplyNote] = useState(""); // info/erreur d'envoi email
   const [ticketFiles, setTicketFiles] = useState({}); // { ticketId: [fichiers] }
   const [replyFiles, setReplyFiles] = useState([]);   // fichiers à joindre à la réponse en cours
@@ -1272,6 +1277,61 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   // ---------- TICKETS : RÉPONDRE (enregistré + envoyé par email) ----------
+  // Transfert ("Faire suivre") : envoie le fil complet du ticket à une adresse
+  // externe, via le Worker /send. N'écrit rien dans le ticket (simple envoi).
+  const transfererTicket = async (ticket) => {
+    const dest = (fwdEmail || "").trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest)) {
+      setFwdMsg("Adresse email invalide.");
+      return;
+    }
+    setFwdBusy(true);
+    setFwdMsg("");
+    try {
+      const priorMsgs = [...(ticketMsgs[ticket.id] || [])];
+      const initialMsg = ticket.message
+        ? [{ sender_role: "client", sender_name: ticket.contact_name || "Client", body: ticket.message, created_at: ticket.created_at }]
+        : [];
+      const fil = buildHistory([...initialMsg, ...priorMsgs]);
+      const note = (fwdNote || "").trim();
+      const ref = ticket.reference ? ("[" + ticket.reference + "] ") : "";
+      const sujet = "TR: " + ref + (ticket.subject || "Demande de support");
+
+      const introTxt = note ? (note + "\n\n") : "";
+      const enTete = "Bonjour,\n\nVeuillez trouver ci-dessous le suivi de la demande "
+        + (ticket.reference ? (ticket.reference + " ") : "")
+        + "concernant " + (ticket.contact_name || "un client") + " (" + (ticket.contact_email || "-") + ").\n";
+      const text = introTxt + enTete + fil.text + "\n\n— Transféré depuis le portail DSI Hotel";
+      const introHtml = note ? ("<p style=\"font-size:14px;color:#333;\">" + textToHtml(note) + "</p>") : "";
+      const html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#333;line-height:1.6;">'
+        + introHtml
+        + '<p style="font-size:14px;color:#333;">Bonjour,<br>Veuillez trouver ci-dessous le suivi de la demande '
+        + (ticket.reference ? (escapeHtml(ticket.reference) + " ") : "")
+        + "concernant <strong>" + escapeHtml(ticket.contact_name || "un client") + "</strong> (" + escapeHtml(ticket.contact_email || "-") + ").</p>"
+        + fil.html
+        + '<p style="font-size:12px;color:#999;margin-top:18px;">Transféré depuis le portail DSI Hotel.</p>'
+        + "</div>";
+
+      const res = await fetch(EMAIL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: dest, subject: sujet, text, html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() }),
+      });
+      if (!res.ok) {
+        const d = await res.text().catch(() => "");
+        setFwdMsg("Échec de l'envoi. " + (d ? d.slice(0, 150) : ""));
+        setFwdBusy(false);
+        return;
+      }
+      setFwdMsg("✓ Transfert envoyé à " + dest);
+      setTimeout(() => { setFwdTicket(null); setFwdEmail(""); setFwdNote(""); setFwdMsg(""); }, 1400);
+    } catch (e) {
+      setFwdMsg("Erreur : " + (e && e.message ? e.message : "envoi impossible"));
+    } finally {
+      setFwdBusy(false);
+    }
+  };
+
   const sendReply = async (ticket) => {
     if (!replyText.trim()) return;
     setReplyBusy(true);
@@ -3021,6 +3081,7 @@ const nav = isAdmin
                       React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                       React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
                       React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
+                      React.createElement('button', { onClick: () => { setFwdTicket(t); setFwdEmail(""); setFwdNote(""); setFwdMsg(""); }, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "↪ Faire suivre"),
                       React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "7px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
                     )
               ),
@@ -3838,6 +3899,22 @@ const nav = isAdmin
 
   return React.createElement('div', { style: { display: "flex", alignItems: "flex-start", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
     // Visionneuse d'images plein écran
+    fwdTicket && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 } },
+      React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 460, maxWidth: "100%" } },
+        React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, "↪ Faire suivre le ticket"),
+        React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 16 } }, (fwdTicket.reference ? fwdTicket.reference + " · " : "") + (fwdTicket.subject || "Demande de support")),
+        React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Destinataire *"),
+        React.createElement('input', { value: fwdEmail, onChange: e => setFwdEmail(e.target.value), placeholder: "adresse@exemple.com", type: "email", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 12, boxSizing: "border-box" } }),
+        React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Message d'accompagnement (optionnel)"),
+        React.createElement('textarea', { value: fwdNote, onChange: e => setFwdNote(e.target.value), placeholder: "Ex : Bonjour, peux-tu prendre en charge cette demande ? Merci.", rows: 3, style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 8, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" } }),
+        React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 14, lineHeight: 1.5 } }, "L'intégralité du fil (demande initiale + réponses) sera incluse dans l'email."),
+        fwdMsg && React.createElement('div', { style: { fontSize: 12, color: fwdMsg.startsWith("✓") ? "#2F855A" : "#C53030", marginBottom: 12 } }, fwdMsg),
+        React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => setFwdTicket(null), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 16px" } }, "Annuler"),
+          React.createElement('button', { onClick: () => transfererTicket(fwdTicket), disabled: fwdBusy, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 16px", opacity: fwdBusy ? 0.6 : 1 } }, fwdBusy ? "Envoi..." : "Envoyer le transfert")
+        )
+      )
+    ),
     viewer && React.createElement('div', {
       onClick: (e) => { if (e.target === e.currentTarget) closeViewer(); },
       style: { position: "fixed", inset: 0, background: "rgba(10,10,20,.92)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: isMobile ? 12 : 30 }
