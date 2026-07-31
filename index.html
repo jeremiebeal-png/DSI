@@ -527,6 +527,8 @@ function App() {
       setAuthLoading(false);
     });
     const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => {
+      // SIGNED_IN = vraie connexion (pas un refresh de token) : on arme le log.
+      if (_event === "SIGNED_IN") window.__dsiPendingLog = true;
       setSession(sess);
     });
     return () => listener.subscription.unsubscribe();
@@ -551,24 +553,28 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // Garde anti-doublon : id utilisateur + jour.
   useEffect(() => {
     if (!session || mfaState !== "ok") return;
-    const jour = new Date().toISOString().slice(0, 10);
-    const cle = session.user.id + "|" + jour;
-    if (window.__dsiLoggedKey === cle) return;
-    window.__dsiLoggedKey = cle;
+    // On attend que le profil soit chargé pour enregistrer le bon rôle
+    // (admin / supervisor / client). Le useEffect se redéclenche quand `profile`
+    // arrive. Ce log couvre TOUS les comptes : admins ET clients d'hôtel.
+    if (!profile) return;
+    // Une entrée par CONNEXION réelle : on ne logge que si une connexion
+    // (événement SIGNED_IN) vient d'avoir lieu. Les refreshs de token ne
+    // lèvent pas ce drapeau, donc pas de doublon.
+    if (!window.__dsiPendingLog) return;
+    window.__dsiPendingLog = false;
     (async () => {
       try {
         const { error } = await sb.from("login_logs").insert({
           user_id: session.user.id,
           email: session.user.email,
-          role: (profile && profile.role) ? profile.role : null,
+          role: profile.role || null,
         });
         if (error) {
-          // On réarme le garde pour retenter si une prochaine dépendance change.
-          window.__dsiLoggedKey = null;
+          window.__dsiPendingLog = true;
           console.warn("login_logs insert refusé :", error.message || error);
         }
       } catch (e) {
-        window.__dsiLoggedKey = null;
+        window.__dsiPendingLog = true;
         console.warn("login_logs insert exception :", e && (e.message || e));
       }
     })();
@@ -706,7 +712,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setLoggingIn(false);
   };
   const doLogout = async () => {
-    window.__dsiLoggedKey = null;
+    window.__dsiPendingLog = false;
     await sb.auth.signOut();
     setEmail(""); setPw(""); setHotels([]); setProcedures([]); setEditCid(null);
     setMfaState("checking"); setMfaFactorId(null); setMfaQr(null); setMfaSecret(""); setMfaCode(""); setMfaErr("");
