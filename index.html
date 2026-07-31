@@ -1211,6 +1211,23 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return mail || "Support DSI Hotel";
   };
 
+  // Nettoie l'affichage des messages/signatures reçus par email :
+  // - retire les "<mailto:xxx>" collés après une adresse déjà visible
+  // - retire les "<https://…>" / "<http://…>" en doublon après un libellé
+  // - dégrade proprement une URL isolée entre chevrons en URL simple
+  // N'altère pas les données : nettoyage uniquement à l'affichage.
+  const nettoyerSignature = (texte) => {
+    if (!texte) return texte;
+    let t = String(texte);
+    // email<mailto:email>  ->  email   (garde l'adresse déjà affichée)
+    t = t.replace(/\s*<mailto:[^>]+>/gi, "");
+    // "Libellé<https://url>" collé  ->  "Libellé"  (le libellé suffit)
+    t = t.replace(/(\S)<https?:\/\/[^>]+>/gi, "$1");
+    // "<https://url>" isolé entre chevrons  ->  "https://url"
+    t = t.replace(/<(https?:\/\/[^>]+)>/gi, "$1");
+    return t;
+  };
+
   // Le message initial du client est affiché via le bloc "DEMANDE INITIALE"
   // (colonne ticket.message). La première ligne de ticket_messages est ce même
   // message : on la retire du fil pour éviter le doublon.
@@ -3010,14 +3027,14 @@ const nav = isAdmin
               ),
               React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
-                t.message
+                nettoyerSignature(t.message)
               ),
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               msgsSansDoublon(msgs, t).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
                 msgsSansDoublon(msgs, t).map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
-                  m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
+                  m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                   React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
@@ -3108,7 +3125,7 @@ const nav = isAdmin
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
               React.createElement('div', { style: { background: "white", border: "1px solid #EEE", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
-                t.message
+                nettoyerSignature(t.message)
               ),
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
               msgsSansDoublon(msgs, t).length > 0
@@ -3116,7 +3133,7 @@ const nav = isAdmin
                     msgsSansDoublon(msgs, t).map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
-                      m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
+                      m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                       React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
                       m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                     ))
