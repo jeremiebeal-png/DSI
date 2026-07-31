@@ -1491,6 +1491,45 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "" });
   const emptySrv = () => ({ libelle: "", ok: true });
 
+  // Convertit les tickets non fermés d'un hôtel en lignes de demande pré-remplies.
+  // Statut : ticket fermé -> "ok", sinon -> "attente" (intervention encore à traiter).
+  const ticketsVersLignes = (hotelId) => {
+    if (!hotelId) return [];
+    return tickets
+      .filter(t => t.hotel_id === hotelId && t.status !== "closed")
+      .map(t => ({
+        description: (t.subject || t.category || "Demande").trim(),
+        demandeur: (t.contact_name || "").trim(),
+        service: "",
+        statut: t.status === "closed" ? "ok" : "attente",
+        motif: "",
+      }));
+  };
+
+  // Appelé quand l'admin choisit un hôtel dans le formulaire de rapport.
+  // Pré-remplit les demandes à partir des tickets ouverts de cet hôtel.
+  const onSelectHotelRapport = (hotelId) => {
+    setRapForm({ ...rapForm, hotel_id: hotelId });
+    if (!hotelId) return;
+    const lignesTickets = ticketsVersLignes(hotelId);
+    if (lignesTickets.length === 0) return;
+
+    // Y a-t-il déjà des demandes non vides saisies ?
+    const dejaSaisi = rapLignes.some(l => (l.description || "").trim());
+    if (dejaSaisi) {
+      const ok = confirm(
+        `${lignesTickets.length} ticket(s) ouvert(s) pour cet hôtel.\n\n` +
+        "Des demandes sont déjà saisies. Ajouter les tickets à la suite ?\n" +
+        "(Annuler = garder uniquement ce qui est déjà saisi.)"
+      );
+      if (!ok) return;
+      const existantes = rapLignes.filter(l => (l.description || "").trim());
+      setRapLignes([...existantes, ...lignesTickets]);
+    } else {
+      setRapLignes(lignesTickets);
+    }
+  };
+
   const loadRapports = async () => {
     if (!isAdmin) return;
     setRapLoading(true);
@@ -1981,30 +2020,6 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       for (const file of projNewFiles) {
         const url = await uploadToStorage(file, "projets");
         await sb.from("projet_fichiers").insert({ projet_id: projetId, file_name: file.name, file_url: url });
-      }
-
-      // Notification automatique à team@dsihotel.fr — uniquement à la création.
-      // Non-bloquant : un échec d'envoi ne doit pas casser la création du projet.
-      if (projModal === "new") {
-        const hotelNom = payload.hotel_id
-          ? (hotels.find(h => h.id === payload.hotel_id)?.name || null)
-          : null;
-        const sessionInfo = await sb.auth.getSession();
-        const createurEmail = sessionInfo?.data?.session?.user?.email || null;
-        callAdminApi("/notify-projet", {
-          titre: payload.titre,
-          description: payload.description,
-          statut: payload.statut,
-          priorite: payload.priorite,
-          hotelName: hotelNom,
-          responsable: payload.responsable,
-          technicien: payload.technicien,
-          budget: payload.budget,
-          dateDebut: payload.date_debut,
-          dateEcheance: payload.date_echeance,
-          taches: projTacheList.map(t => ({ libelle: t.libelle, done: !!t.done })),
-          createurEmail: createurEmail,
-        }).catch(() => { /* email non-bloquant */ });
       }
 
       setProjModal(null);
@@ -3438,7 +3453,7 @@ const nav = isAdmin
 
           React.createElement('div', { style: { marginBottom: 12 } },
             React.createElement('label', { style: lbl }, "Établissement"),
-            React.createElement('select', { value: rapForm.hotel_id, onChange: e => setRapForm({ ...rapForm, hotel_id: e.target.value }), style: inp },
+            React.createElement('select', { value: rapForm.hotel_id, onChange: e => onSelectHotelRapport(e.target.value), style: inp },
               React.createElement('option', { value: "" }, "— Sélectionner un hôtel —"),
               hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
             )
