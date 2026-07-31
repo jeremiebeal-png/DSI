@@ -376,7 +376,7 @@ function App() {
 
   const [showProcForm, setShowProcForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false });
+  const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false, mots_cles: "" });
   const [procFormFiles, setProcFormFiles] = useState([]); // pending File objects to upload on submit
   const [procFormExistingFiles, setProcFormExistingFiles] = useState([]); // already-saved files when editing
   const [savingProc, setSavingProc] = useState(false);
@@ -402,6 +402,28 @@ function App() {
   const [savingClient, setSavingClient] = useState(false);
 
   const [supportForm, setSupportForm] = useState({ name: "", role: "Front Office", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
+  const [procSearch, setProcSearch] = useState("");
+  // Procédures suggérées en temps réel selon les mots-clés (formulaire de contact)
+  const suggestedProcs = (() => {
+    const q = procSearch.trim().toLowerCase();
+    if (q.length < 2) return [];
+    // Ignore les petits mots vides qui créent du bruit
+    const STOP = new Set(["pas", "les", "des", "une", "mon", "ma", "mes", "sur", "avec", "que", "qui", "est", "the", "de", "du", "au", "aux", "et", "ou"]);
+    const mots = q.split(/[\s,'.]+/).filter(w => w.length >= 3 && !STOP.has(w));
+    if (mots.length === 0) return [];
+    const scored = (procedures || []).map(p => {
+      const clesList = (p.mots_cles || "").toLowerCase().split(/[\s,]+/).filter(Boolean);
+      const titre = (p.title || "").toLowerCase();
+      let score = 0;
+      mots.forEach(w => {
+        // Correspondance sur un mot-clé dédié (mot entier ou inclusion nette)
+        if (clesList.some(c => c === w || (w.length >= 4 && c.includes(w)) || (c.length >= 4 && w.includes(c)))) score += 3;
+        if (titre.includes(w)) score += 1;
+      });
+      return { p, score };
+    }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
+    return scored.slice(0, 4).map(x => x.p);
+  })();
   const [supportSent, setSupportSent] = useState(false);
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
@@ -891,14 +913,14 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   // ---------- PROCEDURE CRUD ----------
   const openNewProcForm = () => {
     setEditingId(null);
-    setProcForm({ title: "", cat: CATS[0], content: "", pinned: false });
+    setProcForm({ title: "", cat: CATS[0], content: "", pinned: false, mots_cles: "" });
     setProcFormFiles([]);
     setProcFormExistingFiles([]);
     setShowProcForm(true);
   };
   const openEditProcForm = (p) => {
     setEditingId(p.id);
-    setProcForm({ title: p.title, cat: p.category, content: p.content, pinned: !!p.pinned });
+    setProcForm({ title: p.title, cat: p.category, content: p.content, pinned: !!p.pinned, mots_cles: p.mots_cles || "" });
     setProcFormFiles([]);
     setProcFormExistingFiles(procFiles[p.id] || []);
     loadFilesFor(p.id);
@@ -916,12 +938,12 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       let procId = editingId;
       if (editingId) {
         const { error } = await sb.from("procedures").update({
-          title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned, updated_at: new Date().toISOString()
+          title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned, mots_cles: procForm.mots_cles || "", updated_at: new Date().toISOString()
         }).eq("id", editingId);
         if (error) throw error;
       } else {
         const { data, error } = await sb.from("procedures").insert({
-          hotel_id: activeHotelId, title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned
+          hotel_id: activeHotelId, title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned, mots_cles: procForm.mots_cles || ""
         }).select().single();
         if (error) throw error;
         procId = data.id;
@@ -2365,6 +2387,11 @@ const nav = isAdmin
           React.createElement('textarea', { value: procForm.content, onChange: e => setProcForm({ ...procForm, content: e.target.value }), placeholder: "Rédigez les étapes...", style: { width: "100%", minHeight: 100, padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, resize: "vertical", fontFamily: "inherit" } })
         ),
         React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mots-clés (séparés par des virgules)"),
+          React.createElement('input', { value: procForm.mots_cles, onChange: e => setProcForm({ ...procForm, mots_cles: e.target.value }), placeholder: "Ex. : imprimante, impression, bourrage, hors ligne", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } }),
+          React.createElement('div', { style: { fontSize: 10.5, color: "#999", marginTop: 3 } }, "Ces mots aident les clients à trouver cette procédure depuis le formulaire de contact.")
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
           React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#444", cursor: "pointer" } },
             React.createElement('input', { type: "checkbox", checked: procForm.pinned, onChange: e => setProcForm({ ...procForm, pinned: e.target.checked }) }),
             "⭐ Mettre en avant (procédure épinglée)"
@@ -2517,6 +2544,21 @@ const nav = isAdmin
         React.createElement('div', { style: { fontSize: 11, color: G2, fontWeight: 600, letterSpacing: "0.5px", marginBottom: 6 } }, "PARLONS DE VOTRE PROBLÈME"),
         React.createElement('h3', { style: { margin: "0 0 8px", fontSize: 20, fontWeight: 600, color: "#1a1a3e" } }, "Contactez notre support technique"),
         React.createElement('div', { style: { fontSize: 13, color: "#777", marginBottom: 20, lineHeight: 1.6 } }, "Décrivez votre problème ci-dessous, un technicien DSI Hotel vous répond rapidement. Tous les champs marqués d'un * sont obligatoires."),
+
+        React.createElement('div', { style: { marginBottom: 20, background: "#FBFAF5", border: "1px solid #EDE6CF", borderRadius: 10, padding: 14 } },
+          React.createElement('label', { style: { display: "block", fontSize: 12.5, fontWeight: 600, color: "#8A6D1F", marginBottom: 6 } }, "🔎 Décrivez votre problème en quelques mots"),
+          React.createElement('input', { value: procSearch, onChange: e => setProcSearch(e.target.value), placeholder: "Ex. : imprimante, mot de passe, wifi, écran noir…", style: { ...inputStyle, marginBottom: 0 } }),
+          suggestedProcs.length > 0 && React.createElement('div', { style: { marginTop: 10 } },
+            React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 6 } }, "Ces procédures peuvent peut-être vous aider tout de suite :"),
+            React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
+              suggestedProcs.map(p => React.createElement('details', { key: p.id, style: { background: "#FFF", border: "1px solid #E8E8F0", borderRadius: 8, padding: "8px 12px" } },
+                React.createElement('summary', { style: { cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#1a1a3e", listStyle: "none" } }, "📄 " + p.title),
+                React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, p.content)
+              ))
+            )
+          ),
+          procSearch.trim().length >= 2 && suggestedProcs.length === 0 && React.createElement('div', { style: { fontSize: 12, color: "#999", marginTop: 8 } }, "Aucune procédure trouvée — décrivez votre problème ci-dessous, on s'en occupe.")
+        ),
 
         supportSent
           ? React.createElement('div', { style: { background: "#F0FFF4", border: "1px solid #C6F6D5", borderRadius: 10, padding: "20px", textAlign: "center" } },
@@ -2740,6 +2782,17 @@ const nav = isAdmin
               ticketView !== "table" && React.createElement('span', { style: { fontSize: 12, color: "#AAA" } }, isOpen ? "▲" : "▼")
             ),
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
+              React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center", marginBottom: 14, paddingBottom: 12, borderBottom: "1px dashed #E2E2EA" } },
+                React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
+                t.status === "closed"
+                  ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
+                  : React.createElement(React.Fragment, null,
+                      React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
+                      React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
+                      React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
+                      React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "7px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
+                    )
+              ),
               !t.hotel_id && React.createElement('div', { style: { background: "#FFFAF0", border: "1px solid #FBD38D", borderRadius: 8, padding: "10px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
                 React.createElement('span', { style: { fontSize: 12, color: "#C05621", fontWeight: 500 } }, "⚠️ Ticket non assigné à un hôtel."),
                 React.createElement('select', { defaultValue: "", onChange: async (e) => { const hid = e.target.value; if (!hid) return; const { error } = await sb.from("tickets").update({ hotel_id: hid }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, hotel_id: hid } : x)); }, style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
