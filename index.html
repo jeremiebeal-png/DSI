@@ -564,11 +564,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     window.__dsiPendingLog = false;
     (async () => {
       try {
-        const { error } = await sb.from("login_logs").insert({
+        // Upsert sur user_id : 1 seule ligne par compte, dont la date/heure
+        // (logged_at) est mise à jour à chaque nouvelle connexion.
+        const { error } = await sb.from("login_logs").upsert({
           user_id: session.user.id,
           email: session.user.email,
           role: profile.role || null,
-        });
+          logged_at: new Date().toISOString(),
+        }, { onConflict: "user_id" });
         if (error) {
           window.__dsiPendingLog = true;
           console.warn("login_logs insert refusé :", error.message || error);
