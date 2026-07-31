@@ -563,19 +563,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     window.__dsiLoggedToken = marqueur;
     (async () => {
       try {
-        const { error } = await sb.from("login_logs").upsert({
-          user_id: session.user.id,
-          email: session.user.email,
-          role: profile.role || null,
-          logged_at: new Date().toISOString(),
-        }, { onConflict: "user_id" });
+        // On passe par une fonction SQL SECURITY DEFINER (record_login) qui écrit
+        // la ligne en forçant user_id = auth.uid() : évite le refus RLS de l'upsert.
+        const { error } = await sb.rpc("record_login", {
+          p_email: session.user.email,
+          p_role: profile.role || null,
+        });
         if (error) {
           window.__dsiLoggedToken = null;
-          console.warn("login_logs upsert refusé :", error.message || error);
+          console.warn("record_login refusé :", error.message || error);
         }
       } catch (e) {
         window.__dsiLoggedToken = null;
-        console.warn("login_logs upsert exception :", e && (e.message || e));
+        console.warn("record_login exception :", e && (e.message || e));
       }
     })();
   }, [session, profile, mfaState]);
