@@ -388,6 +388,9 @@ function App() {
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [showAdminForm, setShowAdminForm] = useState(false);
   const [adminForm, setAdminForm] = useState({ email: "", pw: "", fullName: "", permissions: [] });
+  const [loginLogs, setLoginLogs] = useState([]);
+  const [loginLogsLoading, setLoginLogsLoading] = useState(false);
+  const [loginLogFilter, setLoginLogFilter] = useState("");
   const [adminErr, setAdminErr] = useState("");
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [editingAdminPerms, setEditingAdminPerms] = useState(null);
@@ -478,7 +481,8 @@ function App() {
     if (!isAdmin) return;
     const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key)).map(s => s.page);
     if (isSuperAdmin) allowedPages.push("admins");
-    const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins"];
+    if (isSuperAdmin) allowedPages.push("login-logs");
+    const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs"];
     if (adminPages.includes(page) && !allowedPages.includes(page) && page !== "proc-detail") {
       if (allowedPages.length > 0) setPage(allowedPages[0]);
     }
@@ -536,6 +540,18 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           setProfile({ ...data, email: session.user.email });
           const refDirect = data.role === "admin" && pendingTicketRef;
           setPage(refDirect ? "tickets-admin" : (data.role === "admin" ? "client-admin" : "knowledge"));
+          // Journal de connexions : on enregistre une entrée une fois par session.
+          try {
+            const sid = session.access_token ? session.access_token.slice(-24) : session.user.id;
+            if (window.__dsiLoggedSession !== sid) {
+              window.__dsiLoggedSession = sid;
+              sb.from("login_logs").insert({
+                user_id: session.user.id,
+                email: session.user.email,
+                role: data.role,
+              }).then(() => {}, () => {});
+            }
+          } catch (e) { /* le log ne doit jamais bloquer la connexion */ }
         }
       });
   }, [session]);
@@ -1115,7 +1131,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
+    if (page === "login-logs" && isSuperAdmin) loadLoginLogs();
   }, [page, profile]);
+
+  const loadLoginLogs = async (filtre) => {
+    if (!isSuperAdmin) return;
+    setLoginLogsLoading(true);
+    try {
+      const data = await callAdminApi("/admin/login-logs", { limit: 300, email: (filtre !== undefined ? filtre : loginLogFilter) || "" });
+      setLoginLogs((data && data.logs) ? data.logs : []);
+    } catch (e) {
+      setLoginLogs([]);
+    } finally {
+      setLoginLogsLoading(false);
+    }
+  };
 
   const loadTicketMsgs = (ticketId) => {
     sb.from("ticket_messages").select("*").eq("ticket_id", ticketId).order("created_at")
@@ -1149,8 +1179,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!error) setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: newStatus } : t));
   };
 
-  // Libellé d'expéditeur pour les emails envoyés par un admin :
-  // "Prénom Nom" (full_name du profil), repli sur l'email, puis générique.
   const adminFromName = () => {
     const n = (profile && profile.full_name ? String(profile.full_name).trim() : "");
     if (n) return n;
@@ -1501,8 +1529,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "" });
   const emptySrv = () => ({ libelle: "", ok: true });
 
-  // Mappe un ticket vers une ligne de demande de rapport.
-  // Statut : ticket fermé -> "ok", sinon -> "attente".
   const ticketVersLigne = (t) => ({
     description: (t.subject || t.category || "Demande").trim(),
     demandeur: (t.contact_name || "").trim(),
@@ -1511,8 +1537,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     motif: "",
   });
 
-  // Choix d'un hôtel dans le formulaire de rapport : charge les tickets NON FERMÉS
-  // directement depuis Supabase (indépendant de la page Tickets).
   const onSelectHotelRapport = async (hotelId) => {
     setRapForm({ ...rapForm, hotel_id: hotelId });
     if (!hotelId) return;
@@ -2036,7 +2060,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       }
 
       // Notification automatique à team@dsihotel.fr — uniquement à la création.
-      // Non-bloquant : un échec d'envoi ne doit pas casser la création du projet.
       if (projModal === "new") {
         const hotelNom = payload.hotel_id
           ? (hotels.find(h => h.id === payload.hotel_id)?.name || null)
@@ -2186,9 +2209,10 @@ const nav = isAdmin
         // Insère "Gérer les admins" juste après "Gérer les clients"
         if (isSuperAdmin) {
           const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins" };
+          const logItem = { p: "login-logs", icon: "🕓", label: "Connexions" };
           const idxClients = items.findIndex(i => i.p === "client-admin");
-          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem);
-          else items.unshift(adminItem);
+          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem, logItem);
+          else { items.unshift(logItem); items.unshift(adminItem); }
         }
         return items;
       })()
@@ -2435,6 +2459,47 @@ const nav = isAdmin
             )
         )),
         !adminsLoading && admins.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun administrateur.")
+      )
+    );
+  }
+
+  // ---------- SUPER-ADMIN : JOURNAL DE CONNEXIONS ----------
+  if (page === "login-logs" && isSuperAdmin) {
+    const fmtLog = (iso) => {
+      if (!iso) return "—";
+      try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+      catch (e) { return String(iso); }
+    };
+    const roleLabel = (r) => r === "admin" ? "Administrateur" : (r === "supervisor" ? "Superviseur" : (r === "client" ? "Standard" : (r || "—")));
+    const roleColor = (r) => r === "admin" ? { bg: "#FBF3DA", fg: "#8A6D1B" } : (r === "supervisor" ? { bg: "#E6F0FB", fg: "#2B6CB0" } : { bg: "#EDEDF2", fg: "#555" });
+
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 14, lineHeight: 1.6 } },
+        "Journal des connexions au portail (tous comptes). Chaque connexion r\u00e9ussie est enregistr\u00e9e avec l'email, le r\u00f4le et l'horodatage."
+      ),
+      React.createElement('div', { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } },
+        React.createElement('input', { value: loginLogFilter, onChange: e => setLoginLogFilter(e.target.value), onKeyDown: e => e.key === "Enter" && loadLoginLogs(loginLogFilter), placeholder: "Filtrer par email\u2026", style: { flex: 1, minWidth: 200, padding: "8px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } }),
+        React.createElement('button', { onClick: () => loadLoginLogs(loginLogFilter), style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 500, cursor: "pointer", padding: "8px 16px" } }, "Rechercher"),
+        loginLogFilter && React.createElement('button', { onClick: () => { setLoginLogFilter(""); loadLoginLogs(""); }, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 13, cursor: "pointer", padding: "8px 14px" } }, "R\u00e9initialiser")
+      ),
+      loginLogsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement du journal\u2026"),
+      !loginLogsLoading && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 150px 170px", gap: 0, padding: "10px 14px", background: "#F7F7FB", borderBottom: "1px solid #E8E8F0", fontSize: 11, fontWeight: 600, color: "#777", textTransform: "uppercase", letterSpacing: ".4px" } },
+          React.createElement('div', null, "Compte"),
+          React.createElement('div', null, "R\u00f4le"),
+          React.createElement('div', { style: { textAlign: "right" } }, "Date / heure")
+        ),
+        loginLogs.map((l, i) => {
+          const rc = roleColor(l.role);
+          return React.createElement('div', { key: l.id || i, style: { display: "grid", gridTemplateColumns: "1fr 150px 170px", gap: 0, padding: "11px 14px", borderBottom: i < loginLogs.length - 1 ? "1px solid #F0F0F4" : "none", fontSize: 13, alignItems: "center" } },
+            React.createElement('div', { style: { color: "#1a1a3e", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, l.email || "\u2014"),
+            React.createElement('div', null,
+              React.createElement('span', { style: { display: "inline-block", background: rc.bg, color: rc.fg, fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20 } }, roleLabel(l.role))
+            ),
+            React.createElement('div', { style: { textAlign: "right", color: "#666", fontSize: 12 } }, fmtLog(l.logged_at))
+          );
+        }),
+        !loginLogsLoading && loginLogs.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune connexion enregistr\u00e9e.")
       )
     );
   }
