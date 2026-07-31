@@ -1491,27 +1491,36 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "" });
   const emptySrv = () => ({ libelle: "", ok: true });
 
-  // Convertit les tickets non fermés d'un hôtel en lignes de demande pré-remplies.
+  // Mappe un ticket vers une ligne de demande de rapport.
   // Statut : ticket fermé -> "ok", sinon -> "attente" (intervention encore à traiter).
-  const ticketsVersLignes = (hotelId) => {
-    if (!hotelId) return [];
-    return tickets
-      .filter(t => t.hotel_id === hotelId && t.status !== "closed")
-      .map(t => ({
-        description: (t.subject || t.category || "Demande").trim(),
-        demandeur: (t.contact_name || "").trim(),
-        service: "",
-        statut: t.status === "closed" ? "ok" : "attente",
-        motif: "",
-      }));
-  };
+  const ticketVersLigne = (t) => ({
+    description: (t.subject || t.category || "Demande").trim(),
+    demandeur: (t.contact_name || "").trim(),
+    service: "",
+    statut: t.status === "closed" ? "ok" : "attente",
+    motif: "",
+  });
 
   // Appelé quand l'admin choisit un hôtel dans le formulaire de rapport.
-  // Pré-remplit les demandes à partir des tickets ouverts de cet hôtel.
-  const onSelectHotelRapport = (hotelId) => {
+  // Charge les tickets NON FERMÉS de cet hôtel DIRECTEMENT depuis Supabase
+  // (indépendant de la page Tickets : fonctionne même si elle n'a pas été ouverte).
+  const onSelectHotelRapport = async (hotelId) => {
     setRapForm({ ...rapForm, hotel_id: hotelId });
     if (!hotelId) return;
-    const lignesTickets = ticketsVersLignes(hotelId);
+
+    let lignesTickets = [];
+    try {
+      const { data, error } = await sb.from("tickets")
+        .select("subject,category,contact_name,status,hotel_id")
+        .eq("hotel_id", hotelId)
+        .neq("status", "closed")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      lignesTickets = (data || []).map(ticketVersLigne);
+    } catch (e) {
+      // En cas d'échec réseau, on ne bloque pas la création du rapport.
+      return;
+    }
     if (lignesTickets.length === 0) return;
 
     // Y a-t-il déjà des demandes non vides saisies ?
