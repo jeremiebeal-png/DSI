@@ -387,7 +387,7 @@ function App() {
   const [admins, setAdmins] = useState([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [showAdminForm, setShowAdminForm] = useState(false);
-  const [adminForm, setAdminForm] = useState({ email: "", pw: "", permissions: [] });
+  const [adminForm, setAdminForm] = useState({ email: "", pw: "", fullName: "", permissions: [] });
   const [adminErr, setAdminErr] = useState("");
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [editingAdminPerms, setEditingAdminPerms] = useState(null);
@@ -530,7 +530,7 @@ function App() {
 
   useEffect(() => {
     if (!session) { setProfile(null); setMfaState("checking"); return; }
-sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.id).single()
+sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", session.user.id).single()
       .then(({ data, error }) => {
         if (!error && data) {
           setProfile({ ...data, email: session.user.email });
@@ -785,6 +785,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       await callAdminApi("/admin/create-admin", {
         email: adminForm.email.trim(),
         password: adminForm.pw,
+        fullName: adminForm.fullName.trim(),
         permissions: adminForm.permissions,
       });
       setShowAdminForm(false);
@@ -1148,6 +1149,15 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     if (!error) setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: newStatus } : t));
   };
 
+  // Libellé d'expéditeur pour les emails envoyés par un admin :
+  // "Prénom Nom" (full_name du profil), repli sur l'email, puis générique.
+  const adminFromName = () => {
+    const n = (profile && profile.full_name ? String(profile.full_name).trim() : "");
+    if (n) return n;
+    const mail = (profile && profile.email ? String(profile.email).trim() : "");
+    return mail || "Support DSI Hotel";
+  };
+
   // ---------- TICKETS : RÉPONDRE (enregistré + envoyé par email) ----------
   const sendReply = async (ticket) => {
     if (!replyText.trim()) return;
@@ -1241,7 +1251,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments })
+          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName() })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -1278,7 +1288,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL })
+          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -1492,7 +1502,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
   const emptySrv = () => ({ libelle: "", ok: true });
 
   // Mappe un ticket vers une ligne de demande de rapport.
-  // Statut : ticket fermé -> "ok", sinon -> "attente" (intervention encore à traiter).
+  // Statut : ticket fermé -> "ok", sinon -> "attente".
   const ticketVersLigne = (t) => ({
     description: (t.subject || t.category || "Demande").trim(),
     demandeur: (t.contact_name || "").trim(),
@@ -1501,13 +1511,11 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
     motif: "",
   });
 
-  // Appelé quand l'admin choisit un hôtel dans le formulaire de rapport.
-  // Charge les tickets NON FERMÉS de cet hôtel DIRECTEMENT depuis Supabase
-  // (indépendant de la page Tickets : fonctionne même si elle n'a pas été ouverte).
+  // Choix d'un hôtel dans le formulaire de rapport : charge les tickets NON FERMÉS
+  // directement depuis Supabase (indépendant de la page Tickets).
   const onSelectHotelRapport = async (hotelId) => {
     setRapForm({ ...rapForm, hotel_id: hotelId });
     if (!hotelId) return;
-
     let lignesTickets = [];
     try {
       const { data, error } = await sb.from("tickets")
@@ -1517,13 +1525,8 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         .order("created_at", { ascending: false });
       if (error) throw error;
       lignesTickets = (data || []).map(ticketVersLigne);
-    } catch (e) {
-      // En cas d'échec réseau, on ne bloque pas la création du rapport.
-      return;
-    }
+    } catch (e) { return; }
     if (lignesTickets.length === 0) return;
-
-    // Y a-t-il déjà des demandes non vides saisies ?
     const dejaSaisi = rapLignes.some(l => (l.description || "").trim());
     if (dejaSaisi) {
       const ok = confirm(
@@ -1818,6 +1821,7 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL,
+          fromName: adminFromName(),
           attachments: [{ filename: pdfFileName(r), content: pdfB64 }]
         })
       });
@@ -2029,6 +2033,31 @@ sb.from("profiles").select("role, hotel_id, permissions").eq("id", session.user.
       for (const file of projNewFiles) {
         const url = await uploadToStorage(file, "projets");
         await sb.from("projet_fichiers").insert({ projet_id: projetId, file_name: file.name, file_url: url });
+      }
+
+      // Notification automatique à team@dsihotel.fr — uniquement à la création.
+      // Non-bloquant : un échec d'envoi ne doit pas casser la création du projet.
+      if (projModal === "new") {
+        const hotelNom = payload.hotel_id
+          ? (hotels.find(h => h.id === payload.hotel_id)?.name || null)
+          : null;
+        const sessionInfo = await sb.auth.getSession();
+        const createurEmail = sessionInfo?.data?.session?.user?.email || null;
+        callAdminApi("/notify-projet", {
+          titre: payload.titre,
+          description: payload.description,
+          statut: payload.statut,
+          priorite: payload.priorite,
+          hotelName: hotelNom,
+          responsable: payload.responsable,
+          technicien: payload.technicien,
+          budget: payload.budget,
+          dateDebut: payload.date_debut,
+          dateEcheance: payload.date_echeance,
+          taches: projTacheList.map(t => ({ libelle: t.libelle, done: !!t.done })),
+          createurEmail: createurEmail,
+          createurNom: adminFromName(),
+        }).catch(() => { /* email non-bloquant */ });
       }
 
       setProjModal(null);
@@ -2342,6 +2371,10 @@ const nav = isAdmin
       showAdminForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
         React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, "Nouvel administrateur"),
         React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 12 } },
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Nom complet"),
+            React.createElement('input', { value: adminForm.fullName, onChange: e => setAdminForm({ ...adminForm, fullName: e.target.value }), placeholder: "Prénom Nom", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+          ),
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email de connexion *"),
             React.createElement('input', { value: adminForm.email, onChange: e => setAdminForm({ ...adminForm, email: e.target.value }), placeholder: "prenom@dsihotel.com", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
