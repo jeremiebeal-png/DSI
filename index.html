@@ -2813,6 +2813,7 @@ const nav = isAdmin
               msgs.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
                 msgs.map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
+                  m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
                   React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
@@ -2911,6 +2912,7 @@ const nav = isAdmin
                 ? React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
                     msgs.map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
+                      m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                       m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, m.body),
                       React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
                       m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
