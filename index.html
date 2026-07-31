@@ -540,21 +540,29 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           setProfile({ ...data, email: session.user.email });
           const refDirect = data.role === "admin" && pendingTicketRef;
           setPage(refDirect ? "tickets-admin" : (data.role === "admin" ? "client-admin" : "knowledge"));
-          // Journal de connexions : on enregistre une entrée une fois par session.
-          try {
-            const sid = session.access_token ? session.access_token.slice(-24) : session.user.id;
-            if (window.__dsiLoggedSession !== sid) {
-              window.__dsiLoggedSession = sid;
-              sb.from("login_logs").insert({
-                user_id: session.user.id,
-                email: session.user.email,
-                role: data.role,
-              }).then(() => {}, () => {});
-            }
-          } catch (e) { /* le log ne doit jamais bloquer la connexion */ }
         }
       });
   }, [session]);
+
+  // ---------- JOURNAL DE CONNEXIONS ----------
+  // On enregistre la connexion UNIQUEMENT une fois la session pleinement
+  // authentifiée (MFA validé pour les admins), sinon l'insertion RLS échoue.
+  // Garde anti-doublon stable : id utilisateur + jour (pas l'access_token, qui
+  // change au refresh et créait des doublons).
+  useEffect(() => {
+    if (!session || !profile || mfaState !== "ok") return;
+    const jour = new Date().toISOString().slice(0, 10);
+    const cle = session.user.id + "|" + jour;
+    if (window.__dsiLoggedKey === cle) return;
+    window.__dsiLoggedKey = cle;
+    try {
+      sb.from("login_logs").insert({
+        user_id: session.user.id,
+        email: session.user.email,
+        role: profile.role,
+      }).then(() => {}, () => {});
+    } catch (e) { /* le log ne doit jamais bloquer la connexion */ }
+  }, [session, profile, mfaState]);
 
   // ---------- MFA : contrôle d'accès obligatoire pour les admins ----------
   // Démarre l'enrôlement TOTP : génère le QR code à scanner
@@ -688,6 +696,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setLoggingIn(false);
   };
   const doLogout = async () => {
+    window.__dsiLoggedKey = null;
     await sb.auth.signOut();
     setEmail(""); setPw(""); setHotels([]); setProcedures([]); setEditCid(null);
     setMfaState("checking"); setMfaFactorId(null); setMfaQr(null); setMfaSecret(""); setMfaCode(""); setMfaErr("");
@@ -3707,7 +3716,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
