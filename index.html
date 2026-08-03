@@ -273,6 +273,15 @@ function App() {
   const [mfaFactorId, setMfaFactorId] = useState(null);
   const [mfaQr, setMfaQr] = useState(null);       // QR code (data URI) lors de l'enrôlement
   const [mfaSecret, setMfaSecret] = useState(""); // clé en clair, saisie manuelle si le QR ne passe pas
+  const [secFactors, setSecFactors] = useState([]);      // liste des appareils MFA (page Sécurité)
+  const [secLoading, setSecLoading] = useState(false);
+  const [secAddQr, setSecAddQr] = useState(null);        // QR d'un nouvel appareil en cours d'ajout
+  const [secAddSecret, setSecAddSecret] = useState("");
+  const [secAddFactorId, setSecAddFactorId] = useState(null);
+  const [secAddName, setSecAddName] = useState("");
+  const [secAddCode, setSecAddCode] = useState("");
+  const [secBusy, setSecBusy] = useState(false);
+  const [secMsg, setSecMsg] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [mfaErr, setMfaErr] = useState("");
   const [mfaBusy, setMfaBusy] = useState(false);
@@ -491,7 +500,8 @@ function App() {
     const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => s.page);
     if (isSuperAdmin) allowedPages.push("admins");
     if (isSuperAdmin) allowedPages.push("login-logs");
-    const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs"];
+    if (isSuperAdmin) allowedPages.push("securite");
+    const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs", "securite"];
     if (adminPages.includes(page) && !allowedPages.includes(page) && page !== "proc-detail") {
       if (allowedPages.length > 0) setPage(allowedPages[0]);
     }
@@ -730,6 +740,79 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (error) setLoginErr("Email ou mot de passe incorrect.");
     setLoggingIn(false);
   };
+  // ---------- PAGE SÉCURITÉ : gestion des appareils MFA (super-admin) ----------
+  const loadSecFactors = async () => {
+    setSecLoading(true);
+    try {
+      const { data, error } = await sb.auth.mfa.listFactors();
+      if (error) throw error;
+      setSecFactors((data?.totp || []).filter(f => f.status === "verified"));
+    } catch (e) {
+      setSecFactors([]);
+    } finally {
+      setSecLoading(false);
+    }
+  };
+
+  // Démarre l'ajout d'un NOUVEL appareil (sans toucher aux facteurs existants)
+  const secStartAdd = async () => {
+    setSecMsg("");
+    setSecAddCode("");
+    try {
+      const nom = (secAddName || "").trim() || ("Appareil " + new Date().toLocaleDateString("fr-FR"));
+      const { data, error } = await sb.auth.mfa.enroll({ factorType: "totp", friendlyName: nom });
+      if (error) throw error;
+      setSecAddFactorId(data.id);
+      setSecAddQr(data.totp.qr_code);
+      setSecAddSecret(data.totp.secret);
+    } catch (e) {
+      setSecMsg("Erreur : " + (e.message || e));
+    }
+  };
+
+  // Valide le nouvel appareil avec le code à 6 chiffres
+  const secConfirmAdd = async () => {
+    const code = (secAddCode || "").replace(/\s/g, "");
+    if (code.length !== 6 || !secAddFactorId) { setSecMsg("Entrez le code à 6 chiffres."); return; }
+    setSecBusy(true); setSecMsg("");
+    try {
+      const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: secAddFactorId });
+      if (chErr) throw chErr;
+      const { error: vErr } = await sb.auth.mfa.verify({ factorId: secAddFactorId, challengeId: ch.id, code });
+      if (vErr) throw vErr;
+      setSecAddQr(null); setSecAddSecret(""); setSecAddFactorId(null); setSecAddName(""); setSecAddCode("");
+      setSecMsg("✓ Appareil ajouté.");
+      await loadSecFactors();
+    } catch (e) {
+      setSecMsg("Code incorrect ou expiré. Vérifiez l'heure du téléphone et réessayez.");
+    } finally {
+      setSecBusy(false);
+    }
+  };
+
+  const secCancelAdd = () => {
+    // Annule : on désenrôle le facteur non vérifié créé pour l'ajout
+    if (secAddFactorId) { sb.auth.mfa.unenroll({ factorId: secAddFactorId }).catch(() => {}); }
+    setSecAddQr(null); setSecAddSecret(""); setSecAddFactorId(null); setSecAddName(""); setSecAddCode(""); setSecMsg("");
+  };
+
+  // Supprime un appareil. Sécurité : on refuse de retirer le DERNIER appareil
+  // (sinon le compte se retrouverait sans MFA alors qu'il est obligatoire).
+  const secRemove = async (factor) => {
+    if (secFactors.length <= 1) {
+      alert("Impossible de retirer le dernier appareil : votre compte doit conserver au moins une méthode MFA. Ajoutez un autre appareil avant de retirer celui-ci.");
+      return;
+    }
+    if (!confirm("Retirer cet appareil (" + (factor.friendly_name || "sans nom") + ") ?\n\nIl ne pourra plus générer de codes pour ce compte.")) return;
+    try {
+      const { error } = await sb.auth.mfa.unenroll({ factorId: factor.id });
+      if (error) throw error;
+      await loadSecFactors();
+    } catch (e) {
+      alert("Erreur lors du retrait : " + (e.message || e));
+    }
+  };
+
   const doLogout = async () => {
     window.__dsiLoggedToken = null;
     window.__dsiPageInit = false;
@@ -1177,6 +1260,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
     if (page === "login-logs" && isSuperAdmin) loadLoginLogs();
+    if (page === "securite" && isSuperAdmin) loadSecFactors();
     if ((page === "ninjaone" || page === "rapport-securite") && profile) loadNjRapports();
     if (page === "rapport-intervention" && isSupervisor) loadRapportsClient();
   }, [page, profile]);
@@ -2420,9 +2504,10 @@ const nav = isAdmin
         if (isSuperAdmin) {
           const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins" };
           const logItem = { p: "login-logs", icon: "🕓", label: "Connexions" };
+          const secItem = { p: "securite", icon: "🔐", label: "Sécurité" };
           const idxClients = items.findIndex(i => i.p === "client-admin");
-          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem, logItem);
-          else { items.unshift(logItem); items.unshift(adminItem); }
+          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem, logItem, secItem);
+          else { items.unshift(secItem); items.unshift(logItem); items.unshift(adminItem); }
         }
         return items;
       })()
@@ -2713,6 +2798,56 @@ const nav = isAdmin
         }),
         !loginLogsLoading && loginLogs.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune connexion enregistr\u00e9e.")
       )
+    );
+  }
+
+  // ---------- SUPER-ADMIN : SÉCURITÉ (appareils MFA) ----------
+  if (page === "securite" && isSuperAdmin) {
+    content = React.createElement('div', { style: { maxWidth: 640 } },
+      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 18, lineHeight: 1.6 } },
+        "Gérez les appareils autorisés à générer vos codes de double authentification (MFA). Vous pouvez ajouter un téléphone de secours ou celui d'un collègue, et retirer un appareil à tout moment."
+      ),
+      // Liste des appareils
+      React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 10 } }, "Appareils enregistrés"),
+      secLoading && React.createElement('div', { style: { padding: 14, color: "#999", fontSize: 13 } }, "Chargement…"),
+      !secLoading && secFactors.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 16px", marginBottom: 8 } },
+        React.createElement('div', { style: { fontSize: 20 } }, "📱"),
+        React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+          React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e" } }, f.friendly_name || "Appareil sans nom"),
+          React.createElement('div', { style: { fontSize: 11.5, color: "#999", marginTop: 2 } }, "Ajouté le " + (f.created_at ? new Date(f.created_at).toLocaleDateString("fr-FR") : "—"))
+        ),
+        React.createElement('button', { onClick: () => secRemove(f), style: { background: "none", border: "1px solid #E8B4B4", color: "#C53030", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Retirer")
+      )),
+      !secLoading && secFactors.length === 0 && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0", marginBottom: 8 } }, "Aucun appareil enregistré."),
+
+      // Zone d'ajout
+      React.createElement('div', { style: { marginTop: 22, paddingTop: 18, borderTop: "1px solid #E8E8F0" } },
+        !secAddQr
+          ? React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 10 } }, "Ajouter un appareil"),
+              React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+                React.createElement('input', { value: secAddName, onChange: e => setSecAddName(e.target.value), placeholder: "Nom (ex : iPhone de Jérémie)", style: { flex: 1, minWidth: 200, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } }),
+                React.createElement('button', { onClick: secStartAdd, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "9px 18px" } }, "Générer le QR code")
+              )
+            )
+          : React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 10 } }, "Scannez ce QR code avec l'application d'authentification du nouvel appareil"),
+              React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 14, display: "flex", justifyContent: "center", marginBottom: 12 } },
+                React.createElement('img', { src: secAddQr, alt: "QR code", style: { width: 190, height: 190, display: "block" } })
+              ),
+              secAddSecret && React.createElement('div', { style: { marginBottom: 14 } },
+                React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 4 } }, "Ou saisissez cette clé manuellement :"),
+                React.createElement('div', { style: { background: "#F4F4F8", borderRadius: 7, padding: "9px 11px", color: "#333", fontSize: 12.5, fontFamily: "monospace", wordBreak: "break-all", userSelect: "all" } }, secAddSecret)
+              ),
+              React.createElement('div', { style: { fontSize: 12, color: "#555", marginBottom: 6, fontWeight: 500 } }, "Entrez le code à 6 chiffres affiché sur le nouvel appareil :"),
+              React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+                React.createElement('input', { value: secAddCode, onChange: e => setSecAddCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6)), onKeyDown: e => e.key === "Enter" && secConfirmAdd(), placeholder: "123456", inputMode: "numeric", style: { width: 130, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 15, letterSpacing: 3, textAlign: "center", fontFamily: "monospace" } }),
+                React.createElement('button', { onClick: secConfirmAdd, disabled: secBusy, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "9px 18px", opacity: secBusy ? 0.6 : 1 } }, secBusy ? "Vérification…" : "Valider l'appareil"),
+                React.createElement('button', { onClick: secCancelAdd, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 13, cursor: "pointer", padding: "9px 14px" } }, "Annuler")
+              )
+            )
+      ),
+      secMsg && React.createElement('div', { style: { marginTop: 14, fontSize: 12.5, color: secMsg.startsWith("✓") ? "#2F855A" : "#C53030" } }, secMsg)
     );
   }
 
@@ -4005,7 +4140,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
