@@ -1177,7 +1177,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
     if (page === "login-logs" && isSuperAdmin) loadLoginLogs();
-    if ((page === "ninjaone" || page === "mon-installation") && profile) loadNjRapports();
+    if ((page === "ninjaone" || page === "rapport-securite") && profile) loadNjRapports();
+    if (page === "rapport-intervention" && isSupervisor) loadRapportsClient();
   }, [page, profile]);
 
   // Rapports NinjaOne : lecture directe (RLS autorise admin=tout, superviseur=son hôtel).
@@ -1774,6 +1775,28 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       } else {
         setRapDemandes({}); setRapServeurs({});
       }
+    }
+    setRapLoading(false);
+  };
+
+  // Chargement des rapports d'intervention pour le SUPERVISEUR (RLS = son hôtel).
+  const loadRapportsClient = async () => {
+    setRapLoading(true);
+    const { data, error } = await sb.from("rapports").select("*")
+      .order("date_intervention", { ascending: false }).order("created_at", { ascending: false });
+    if (!error && data) {
+      setRapports(data);
+      const ids = data.map(r => r.id);
+      if (ids.length) {
+        const [{ data: dm }, { data: sv }] = await Promise.all([
+          sb.from("rapport_demandes").select("*").in("rapport_id", ids).order("position"),
+          sb.from("rapport_serveurs").select("*").in("rapport_id", ids).order("position")
+        ]);
+        const dMap = {}, sMap = {};
+        (dm || []).forEach(d => { (dMap[d.rapport_id] = dMap[d.rapport_id] || []).push(d); });
+        (sv || []).forEach(s => { (sMap[s.rapport_id] = sMap[s.rapport_id] || []).push(s); });
+        setRapDemandes(dMap); setRapServeurs(sMap);
+      } else { setRapDemandes({}); setRapServeurs({}); }
     }
     setRapLoading(false);
   };
@@ -2407,7 +2430,9 @@ const nav = isAdmin
         { p: "knowledge", icon: "📖", label: "Procédures" },
         { p: "mon-installation", icon: "🗂️", label: "Mon installation" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
-        ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : [])
+        ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
+        ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
+        ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapport Intervention" }] : [])
       ];
   let content = null;
 
@@ -3444,17 +3469,6 @@ const nav = isAdmin
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
         "Retrouvez ici la documentation technique de votre établissement : photos des baies informatiques, plans, schémas réseau et fiches matériel préparés par DSI Hotel."
       ),
-      njRapports.length > 0 && React.createElement('div', { style: { marginBottom: 22 } },
-        React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 } }, "🖥️ Rapports de supervision"),
-        njRapports.map(r => React.createElement('a', { key: r.id, href: r.file_url, target: "_blank", rel: "noopener", style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "11px 15px", marginBottom: 7, textDecoration: "none" } },
-          React.createElement('div', { style: { fontSize: 20 } }, "📄"),
-          React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-            React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.titre || r.file_name || "Rapport"),
-            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 2 } }, fmtDateNj(r.received_at))
-          ),
-          React.createElement('span', { style: { color: G2, fontSize: 12, fontWeight: 600 } }, "Ouvrir ↗")
-        ))
-      ),
       usedCats.length > 0 && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => setDocCatFilter(c), style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
       ),
@@ -3480,6 +3494,46 @@ const nav = isAdmin
           );
         })
       )
+    );
+  }
+
+  // ---------- CLIENT : RAPPORT SÉCURITÉ (NinjaOne) ----------
+  if (page === "rapport-securite" && isSupervisor) {
+    const fmtD = (iso) => { try { return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }); } catch (e) { return String(iso || ""); } };
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Rapports de supervision et de sécurité informatique de votre établissement, générés automatiquement par nos outils de surveillance."
+      ),
+      njLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
+      !njLoading && njRapports.map(r => React.createElement('a', { key: r.id, href: r.file_url, target: "_blank", rel: "noopener", style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 16px", marginBottom: 8, textDecoration: "none" } },
+        React.createElement('div', { style: { fontSize: 22 } }, "📄"),
+        React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+          React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.titre || r.file_name || "Rapport"),
+          React.createElement('div', { style: { fontSize: 11.5, color: "#999", marginTop: 2 } }, fmtD(r.received_at))
+        ),
+        React.createElement('span', { style: { color: G2, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" } }, "Ouvrir ↗")
+      )),
+      !njLoading && njRapports.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun rapport de sécurité pour le moment.")
+    );
+  }
+
+  // ---------- CLIENT : RAPPORT INTERVENTION (rapports d'activité) ----------
+  if (page === "rapport-intervention" && isSupervisor) {
+    const fmtDI = (iso) => { try { return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }); } catch (e) { return String(iso || ""); } };
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Comptes rendus des interventions réalisées par les techniciens DSI Hotel dans votre établissement."
+      ),
+      rapLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
+      !rapLoading && rapports.map(r => React.createElement('div', { key: r.id, style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 16px", marginBottom: 8 } },
+        React.createElement('div', { style: { fontSize: 22 } }, "🔧"),
+        React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+          React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e" } }, "Intervention du " + fmtDI(r.date_intervention)),
+          React.createElement('div', { style: { fontSize: 11.5, color: "#999", marginTop: 2 } }, "Technicien : " + (r.technicien || "—") + (r.serveurs_ok ? " · Serveurs OK" : ""))
+        ),
+        React.createElement('button', { onClick: () => downloadRapportPdf(r), style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", whiteSpace: "nowrap" } }, "Télécharger le PDF")
+      )),
+      !rapLoading && rapports.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun rapport d'intervention pour le moment.")
     );
   }
 
@@ -3951,7 +4005,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports NinjaOne" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports NinjaOne" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
