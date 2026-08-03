@@ -1207,6 +1207,16 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  const supprimerRapport = async (rapport) => {
+    if (!confirm("Supprimer définitivement ce rapport ?\n\n" + (rapport.titre || rapport.file_name || "") + "\n\nLe fichier PDF sera aussi supprimé.")) return;
+    try {
+      await callAdminApi("/admin/supprimer-rapport", { rapportId: rapport.id });
+      await loadNjRapports();
+    } catch (e) {
+      alert("Erreur lors de la suppression : " + (e && e.message ? e.message : ""));
+    }
+  };
+
   const loadLoginLogs = async (filtre) => {
     if (!isSuperAdmin) return;
     setLoginLogsLoading(true);
@@ -2697,11 +2707,12 @@ const nav = isAdmin
           (orphelin ? ("⚠ Non rattaché" + (r.hotel_hint ? " · détecté : " + r.hotel_hint : "")) : ("🏨 " + (hotelsById[r.hotel_id] || "Hôtel"))) + " · " + fmtDate(r.received_at)
         )
       ),
-      orphelin && React.createElement('select', { value: "", onChange: e => e.target.value && rattacherRapport(r.id, e.target.value), style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12, maxWidth: 200 } },
-        React.createElement('option', { value: "" }, "Rattacher à…"),
+      React.createElement('select', { value: r.hotel_id || "", onChange: e => e.target.value && rattacherRapport(r.id, e.target.value), title: "Affecter / changer d\u0027hôtel", style: { padding: "6px 10px", border: "1px solid " + (orphelin ? "#F0C36D" : "#DDD"), borderRadius: 7, fontSize: 12, maxWidth: 190 } },
+        React.createElement('option', { value: "" }, orphelin ? "Rattacher à…" : "Changer d\u0027hôtel…"),
         hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
       ),
-      React.createElement('a', { href: r.file_url, target: "_blank", rel: "noopener", style: { color: G2, fontSize: 12, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" } }, "Ouvrir ↗")
+      React.createElement('a', { href: r.file_url, target: "_blank", rel: "noopener", style: { color: G2, fontSize: 12, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" } }, "Ouvrir ↗"),
+      React.createElement('button', { onClick: () => supprimerRapport(r), title: "Supprimer", style: { background: "none", border: "1px solid #E8B4B4", color: "#C53030", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 10px", whiteSpace: "nowrap" } }, "Supprimer")
     );
     content = React.createElement('div', null,
       React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 16, lineHeight: 1.6 } },
