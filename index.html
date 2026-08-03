@@ -482,8 +482,8 @@ function App() {
     { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Doc. technique" },
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
-    { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport" },
-    { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports NinjaOne" },
+    { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention" },
+    { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité" },
     { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types" },
   ];
   useEffect(() => {
@@ -4005,7 +4005,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports NinjaOne" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
