@@ -391,6 +391,9 @@ function App() {
   const [loginLogs, setLoginLogs] = useState([]);
   const [loginLogsLoading, setLoginLogsLoading] = useState(false);
   const [loginLogFilter, setLoginLogFilter] = useState("");
+  const [njRapports, setNjRapports] = useState([]);
+  const [njLoading, setNjLoading] = useState(false);
+  const [njHotelFilter, setNjHotelFilter] = useState("all");
   const [adminErr, setAdminErr] = useState("");
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [editingAdminPerms, setEditingAdminPerms] = useState(null);
@@ -480,11 +483,12 @@ function App() {
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport" },
+    { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports NinjaOne" },
     { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types" },
   ];
   useEffect(() => {
     if (!isAdmin) return;
-    const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key)).map(s => s.page);
+    const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => s.page);
     if (isSuperAdmin) allowedPages.push("admins");
     if (isSuperAdmin) allowedPages.push("login-logs");
     const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs"];
@@ -1173,7 +1177,35 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
     if (page === "login-logs" && isSuperAdmin) loadLoginLogs();
+    if ((page === "ninjaone" || page === "mon-installation") && profile) loadNjRapports();
   }, [page, profile]);
+
+  // Rapports NinjaOne : lecture directe (RLS autorise admin=tout, superviseur=son hôtel).
+  const loadNjRapports = async () => {
+    setNjLoading(true);
+    try {
+      const { data, error } = await sb.from("ninjaone_rapports")
+        .select("*")
+        .order("received_at", { ascending: false });
+      if (error) throw error;
+      setNjRapports(data || []);
+    } catch (e) {
+      setNjRapports([]);
+    } finally {
+      setNjLoading(false);
+    }
+  };
+
+  // Rattachement manuel d'un rapport à un hôtel (via Worker, car RLS bloque
+  // l'UPDATE direct). Recharge la liste après succès.
+  const rattacherRapport = async (rapportId, hotelId) => {
+    try {
+      await callAdminApi("/admin/rattacher-rapport", { rapportId, hotelId });
+      await loadNjRapports();
+    } catch (e) {
+      alert("Erreur lors du rattachement : " + (e && e.message ? e.message : ""));
+    }
+  };
 
   const loadLoginLogs = async (filtre) => {
     if (!isSuperAdmin) return;
@@ -2350,7 +2382,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
 const nav = isAdmin
     ? (() => {
-        const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label }));
+        const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label }));
         // Insère "Gérer les admins" juste après "Gérer les clients"
         if (isSuperAdmin) {
           const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins" };
@@ -2646,6 +2678,49 @@ const nav = isAdmin
         }),
         !loginLogsLoading && loginLogs.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune connexion enregistr\u00e9e.")
       )
+    );
+  }
+
+  // ---------- ADMIN : RAPPORTS NINJAONE ----------
+  if (page === "ninjaone" && isAdmin) {
+    const hotelsById = {};
+    hotels.forEach(h => { hotelsById[h.id] = h.name; });
+    const fmtDate = (iso) => { try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch (e) { return String(iso || ""); } };
+    const aRattacher = njRapports.filter(r => r.a_rattacher || !r.hotel_id);
+    const rattaches = njRapports.filter(r => r.hotel_id && !r.a_rattacher);
+    const filtres = njHotelFilter === "all" ? rattaches : rattaches.filter(r => r.hotel_id === njHotelFilter);
+    const carte = (r, orphelin) => React.createElement('div', { key: r.id, style: { background: "white", border: "1px solid " + (orphelin ? "#F0C36D" : "#E8E8F0"), borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 14, marginBottom: 8 } },
+      React.createElement('div', { style: { fontSize: 22 } }, "📄"),
+      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+        React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.titre || r.file_name || "Rapport"),
+        React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginTop: 2 } },
+          (orphelin ? ("⚠ Non rattaché" + (r.hotel_hint ? " · détecté : " + r.hotel_hint : "")) : ("🏨 " + (hotelsById[r.hotel_id] || "Hôtel"))) + " · " + fmtDate(r.received_at)
+        )
+      ),
+      orphelin && React.createElement('select', { value: "", onChange: e => e.target.value && rattacherRapport(r.id, e.target.value), style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12, maxWidth: 200 } },
+        React.createElement('option', { value: "" }, "Rattacher à…"),
+        hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+      ),
+      React.createElement('a', { href: r.file_url, target: "_blank", rel: "noopener", style: { color: G2, fontSize: 12, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" } }, "Ouvrir ↗")
+    );
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 16, lineHeight: 1.6 } },
+        "Rapports NinjaOne reçus automatiquement par email et rattachés à chaque hôtel. Les rapports non reconnus apparaissent en haut pour rattachement manuel."
+      ),
+      njLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
+      !njLoading && aRattacher.length > 0 && React.createElement('div', { style: { marginBottom: 22 } },
+        React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#B7791F", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 } }, "⚠ À rattacher (" + aRattacher.length + ")"),
+        aRattacher.map(r => carte(r, true))
+      ),
+      !njLoading && React.createElement('div', { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
+        React.createElement('span', { style: { fontSize: 12, color: "#777", fontWeight: 600 } }, "Hôtel :"),
+        React.createElement('select', { value: njHotelFilter, onChange: e => setNjHotelFilter(e.target.value), style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12 } },
+          React.createElement('option', { value: "all" }, "Tous les hôtels"),
+          hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+        )
+      ),
+      !njLoading && filtres.map(r => carte(r, false)),
+      !njLoading && filtres.length === 0 && aRattacher.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun rapport NinjaOne pour le moment.")
     );
   }
 
@@ -3353,9 +3428,21 @@ const nav = isAdmin
     const usedCats = [...new Set(docs.map(d => d.categorie))];
     const visibles = docCatFilter === "all" ? docs : docs.filter(d => d.categorie === docCatFilter);
 
+    const fmtDateNj = (iso) => { try { return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }); } catch (e) { return String(iso || ""); } };
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
         "Retrouvez ici la documentation technique de votre établissement : photos des baies informatiques, plans, schémas réseau et fiches matériel préparés par DSI Hotel."
+      ),
+      njRapports.length > 0 && React.createElement('div', { style: { marginBottom: 22 } },
+        React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 } }, "🖥️ Rapports de supervision"),
+        njRapports.map(r => React.createElement('a', { key: r.id, href: r.file_url, target: "_blank", rel: "noopener", style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "11px 15px", marginBottom: 7, textDecoration: "none" } },
+          React.createElement('div', { style: { fontSize: 20 } }, "📄"),
+          React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+            React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.titre || r.file_name || "Rapport"),
+            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 2 } }, fmtDateNj(r.received_at))
+          ),
+          React.createElement('span', { style: { color: G2, fontSize: 12, fontWeight: 600 } }, "Ouvrir ↗")
+        ))
       ),
       usedCats.length > 0 && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => setDocCatFilter(c), style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
@@ -3853,7 +3940,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports NinjaOne" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
