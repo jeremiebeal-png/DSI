@@ -1821,6 +1821,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [rapFilterHotel, setRapFilterHotel] = useState("all");
   const [rapSendModal, setRapSendModal] = useState(null); // rapport en cours d'envoi (saisie email)
   const [rapSendTo, setRapSendTo] = useState("");
+  const [rapEnvois, setRapEnvois] = useState({}); // { rapport_id: [ {envoye_a, envoye_par, envoye_le}, ... ] }
   const [rapSending, setRapSending] = useState(false);
 
   const emptyRapForm = () => ({
@@ -1916,7 +1917,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   useEffect(() => {
-    if (page === "rapports" && isAdmin) loadRapports();
+    if (page === "rapports" && isAdmin) { loadRapports(); loadRapportEnvois(); }
   }, [page, profile]);
 
   const openNewRapport = () => {
@@ -2177,6 +2178,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const d = await res.text().catch(() => "");
         setRapNote("❌ L'email n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
       } else {
+        // Enregistre l'envoi dans l'historique (cachet)
+        try {
+          await sb.from("rapport_envois").insert({
+            rapport_id: r.id,
+            envoye_a: to,
+            envoye_par: adminFromName(),
+          });
+          await loadRapportEnvois();
+        } catch (e) { /* le cachet ne doit pas bloquer */ }
         setRapNote("✅ Rapport envoyé à " + to);
         setRapSendModal(null);
       }
@@ -2185,6 +2195,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } finally {
       setRapSending(false);
     }
+  };
+
+  // Charge l'historique d'envoi des rapports (pour le cachet "Envoyé le…")
+  const loadRapportEnvois = async () => {
+    try {
+      const { data, error } = await sb.from("rapport_envois").select("*").order("envoye_le", { ascending: false });
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach(e => { (map[e.rapport_id] = map[e.rapport_id] || []).push(e); });
+      setRapEnvois(map);
+    } catch (e) { setRapEnvois({}); }
   };
 
   // ================= RÉPONSES TYPES (macros) =================
@@ -3968,7 +3989,20 @@ const nav = isAdmin
                       React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: SB } }, "🏨 " + hotelName(r.hotel_id)),
                       React.createElement('div', { style: { fontSize: 12.5, color: "#777", marginTop: 3 } }, "📅 " + fmtDateFr(r.date_intervention) + "  •  👤 " + r.technicien)
                     ),
-                    React.createElement('span', { style: { fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️")
+                    React.createElement('div', { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 } },
+                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️"),
+                      (() => {
+                        const envois = rapEnvois[r.id] || [];
+                        if (envois.length === 0) return null;
+                        const dernier = envois[0]; // trié desc
+                        const fmtEnv = (iso) => { try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch (e) { return String(iso || ""); } };
+                        const detail = envois.map(e => "• " + fmtEnv(e.envoye_le) + " → " + e.envoye_a + (e.envoye_par ? " (par " + e.envoye_par + ")" : "")).join("\n");
+                        const titre = envois.length > 1 ? ("Historique des " + envois.length + " envois :\n" + detail) : detail;
+                        return React.createElement('span', { title: titre, style: { fontSize: 10.5, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: "#E6F7EC", color: "#1B7A3D", cursor: "help", whiteSpace: "nowrap" } },
+                          "✓ Envoyé le " + fmtEnv(dernier.envoye_le) + " → " + dernier.envoye_a + (envois.length > 1 ? "  (+" + (envois.length - 1) + ")" : "")
+                        );
+                      })()
+                    )
                   ),
                   svcs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 9 } },
                     svcs.map(s => React.createElement('span', { key: s, style: { fontSize: 11, background: "#F0EFF7", color: "#4A4A6A", padding: "2px 8px", borderRadius: 5 } }, s))
