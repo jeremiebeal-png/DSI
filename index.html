@@ -2152,8 +2152,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const confirmSendRapport = async () => {
     const r = rapSendModal;
-    const to = (rapSendTo || "").trim();
-    if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { setRapNote("⚠️ Adresse email invalide."); return; }
+    // Plusieurs destinataires possibles : séparés par virgule ou point-virgule.
+    const destinataires = (rapSendTo || "").split(/[,;]/).map(a => a.trim()).filter(Boolean);
+    const invalides = destinataires.filter(a => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a));
+    if (destinataires.length === 0 || invalides.length > 0) {
+      setRapNote("⚠️ Adresse(s) invalide(s)" + (invalides.length ? " : " + invalides.join(", ") : "") + ".");
+      return;
+    }
+    const to = destinataires.join(",");
     setRapSending(true); setRapNote("Envoi en cours…");
     try {
       const { doc, hotel } = buildRapportPdf(r);
@@ -2180,14 +2186,16 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       } else {
         // Enregistre l'envoi dans l'historique (cachet)
         try {
-          await sb.from("rapport_envois").insert({
-            rapport_id: r.id,
-            envoye_a: to,
-            envoye_par: adminFromName(),
-          });
+          await sb.from("rapport_envois").insert(
+            destinataires.map(dest => ({
+              rapport_id: r.id,
+              envoye_a: dest,
+              envoye_par: adminFromName(),
+            }))
+          );
           await loadRapportEnvois();
         } catch (e) { /* le cachet ne doit pas bloquer */ }
-        setRapNote("✅ Rapport envoyé à " + to);
+        setRapNote("✅ Rapport envoyé à " + destinataires.join(", "));
         setRapSendModal(null);
       }
     } catch (e) {
@@ -4042,8 +4050,8 @@ const nav = isAdmin
         React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "#FFF", borderRadius: 12, padding: 24, width: "100%", maxWidth: 460, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
           React.createElement('h3', { style: { margin: "0 0 6px", fontSize: 17, color: SB } }, "Envoyer le rapport par email"),
           React.createElement('p', { style: { margin: "0 0 16px", fontSize: 12.5, color: "#777" } }, "Le rapport sera joint au format PDF, avec la signature DSI Hotel."),
-          React.createElement('label', { style: lbl }, "Adresse du destinataire"),
-          React.createElement('input', { type: "email", value: rapSendTo, onChange: e => setRapSendTo(e.target.value), placeholder: "client@exemple.com", style: inp }),
+          React.createElement('label', { style: lbl }, "Adresse(s) du destinataire — séparez par une virgule pour plusieurs"),
+          React.createElement('input', { type: "email", value: rapSendTo, onChange: e => setRapSendTo(e.target.value), placeholder: "client@exemple.com, autre@exemple.com", style: inp }),
           rapNote && React.createElement('div', { style: { marginTop: 10, fontSize: 12, color: rapNote.startsWith("✅") ? "#1B7A3D" : rapNote.startsWith("Envoi") ? "#2A4A8A" : "#C0392B" } }, rapNote),
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 } },
             React.createElement('button', { onClick: () => setRapSendModal(null), disabled: rapSending, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
