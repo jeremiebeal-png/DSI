@@ -1359,6 +1359,23 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // - retire les "<https://…>" / "<http://…>" en doublon après un libellé
   // - dégrade proprement une URL isolée entre chevrons en URL simple
   // N'altère pas les données : nettoyage uniquement à l'affichage.
+  // Nettoie une adresse des préfixes techniques (BATV prvs=, btv1=, SRS, bounces...).
+  // Extrait la vraie adresse email. Purement défensif : si rien à nettoyer, renvoie tel quel.
+  const nettoyerEmail = (adresse) => {
+    if (!adresse) return adresse;
+    let a = String(adresse).trim();
+    const chev = a.match(/<([^>]+)>/);
+    if (chev) a = chev[1].trim();
+    a = a.toLowerCase();
+    if (/^(prvs|btv1?|msprvs1|bv1)=/.test(a) || /=[^@=]+@[^@=]+\.[^@=]+$/.test(a)) {
+      const m = a.match(/([^=\s<>]+@[^=\s<>]+\.[^=\s<>]+)\s*$/);
+      if (m) return m[1];
+    }
+    const bounce = a.match(/^bounce[s]?[+\-][^=]*=([^@\s]+@[^@\s]+\.[^@\s]+)$/);
+    if (bounce) return bounce[1];
+    return a;
+  };
+
   const nettoyerSignature = (texte) => {
     if (!texte) return texte;
     let t = String(texte);
@@ -1564,7 +1581,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName(), cc: ccList })
+          body: JSON.stringify({ to: nettoyerEmail(ticket.contact_email), subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName(), cc: ccList })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -1601,7 +1618,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() })
+          body: JSON.stringify({ to: nettoyerEmail(ticket.contact_email), subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -3358,7 +3375,7 @@ const nav = isAdmin
               ),
               t.subject && React.createElement('div', { style: { fontSize: 12, color: "#444", marginBottom: 10 } }, React.createElement('strong', null, "Objet : "), t.subject),
               React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.7 } },
-                React.createElement('div', null, "📧 " + (t.contact_email || "-") + "   📞 " + (t.contact_phone || "-")),
+                React.createElement('div', null, "📧 " + (t.contact_email ? nettoyerEmail(t.contact_email) : "-") + "   📞 " + (t.contact_phone || "-")),
                 React.createElement('div', null, "Fonction : " + (t.contact_role || "-")),
                 (() => {
                   // Personnes en copie détectées dans le fil du ticket
