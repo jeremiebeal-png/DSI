@@ -407,7 +407,7 @@ function App() {
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [editingAdminPerms, setEditingAdminPerms] = useState(null);
   const [editingClientId, setEditingClientId] = useState(null);
-  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "" });
+  const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "" });
   const [addAccountHotel, setAddAccountHotel] = useState(null);
   const [addAccountForm, setAddAccountForm] = useState({ email: "", pw: "", level: "supervisor" });
   const [addAccountErr, setAddAccountErr] = useState("");
@@ -872,14 +872,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // ---------- HOTEL (CLIENT) CRUD ----------
   const openNewClientForm = () => {
     setEditingClientId(null);
-    setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "" });
+    setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "" });
     setClientLogoFile(null);
     setClientErr("");
     setShowClientForm(true);
   };
   const openEditClientForm = (h) => {
     setEditingClientId(h.id);
-    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "" });
+    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: h.ninjaone_nom || "" });
     setClientLogoFile(null);
     setClientErr("");
     setShowClientForm(true);
@@ -996,7 +996,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         logoUrl = await uploadToStorage(clientLogoFile, "logos");
       }
       if (editingClientId) {
-        const update = { name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone };
+        const update = { name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, ninjaone_nom: (clientForm.ninjaoneNom || "").trim() || null };
         if (logoUrl) update.logo_url = logoUrl;
         const { error } = await sb.from("hotels").update(update).eq("id", editingClientId);
         if (error) throw error;
@@ -2563,6 +2563,11 @@ const nav = isAdmin
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Téléphone"),
             React.createElement('input', { value: clientForm.phone, onChange: e => setClientForm({ ...clientForm, phone: e.target.value }), placeholder: "+33 1 XX XX XX XX", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
           )
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Nom NinjaOne (pour rattachement automatique des rapports)"),
+          React.createElement('input', { value: clientForm.ninjaoneNom, onChange: e => setClientForm({ ...clientForm, ninjaoneNom: e.target.value }), placeholder: "Nom exact de l\u0027organisation dans NinjaOne", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+          React.createElement('div', { style: { fontSize: 10.5, color: "#999", marginTop: 3 } }, "Laissez vide pour utiliser le rapprochement automatique par nom d\u0027hôtel.")
         ),
         !editingClientId && React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
