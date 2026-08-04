@@ -1520,6 +1520,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     // 3) Envoyer par email — uniquement l'admin notifie le client
     if (isAdmin && ticket.contact_email) {
       try {
+        // Récupère toutes les adresses en copie (Cc) présentes dans le fil du ticket,
+        // dédupliquées, en excluant le contact principal et nos propres adresses.
+        const msgsDuTicket = ticketMsgs[ticket.id] || [];
+        const ccSet = new Set();
+        msgsDuTicket.forEach(mm => {
+          if (mm.cc) String(mm.cc).split(/[,;]/).forEach(a => {
+            const adr = a.trim().replace(/^.*<|>.*$/g, "").toLowerCase();
+            if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adr)) ccSet.add(adr);
+          });
+        });
+        // Exclusions : le destinataire principal et nos adresses de support
+        [ticket.contact_email, SUPPORT_EMAIL, "team@dsihotel.fr", "support@dsihotel.com"].forEach(a => a && ccSet.delete(String(a).toLowerCase()));
+        const ccList = Array.from(ccSet);
         const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"}`;
         const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
@@ -1551,7 +1564,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName() })
+          body: JSON.stringify({ to: ticket.contact_email, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName(), cc: ccList })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -3341,7 +3354,15 @@ const nav = isAdmin
               t.subject && React.createElement('div', { style: { fontSize: 12, color: "#444", marginBottom: 10 } }, React.createElement('strong', null, "Objet : "), t.subject),
               React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.7 } },
                 React.createElement('div', null, "📧 " + (t.contact_email || "-") + "   📞 " + (t.contact_phone || "-")),
-                React.createElement('div', null, "Fonction : " + (t.contact_role || "-"))
+                React.createElement('div', null, "Fonction : " + (t.contact_role || "-")),
+                (() => {
+                  // Personnes en copie détectées dans le fil du ticket
+                  const ms = ticketMsgs[t.id] || [];
+                  const set = new Set();
+                  ms.forEach(mm => { if (mm.cc) String(mm.cc).split(/[,;]/).forEach(a => { const adr = a.trim(); if (adr) set.add(adr); }); });
+                  const liste = Array.from(set);
+                  return liste.length > 0 ? React.createElement('div', { style: { marginTop: 2, color: "#7A6" } }, "👥 En copie : " + liste.join(", ")) : null;
+                })()
               ),
               React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
