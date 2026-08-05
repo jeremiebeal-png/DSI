@@ -1413,9 +1413,29 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return a;
   };
 
+  // Convertit les balises de réaction Outlook/Teams en emojis lisibles.
+  // Ex. : "[like] Marco reacted to your message:" -> "👍 Marco reacted…".
+  // Outlook envoie ces réactions sous forme de texte entre crochets.
+  const REACTIONS_EMOJI = {
+    like: "👍", heart: "❤️", love: "❤️", laugh: "😂", smile: "😊",
+    surprised: "😮", surprise: "😮", wow: "😮", sad: "😢", cry: "😢",
+    angry: "😠", mad: "😠", thumbsup: "👍", thumbsdown: "👎",
+    dislike: "👎", checkmark: "✅", check: "✅", question: "❓",
+    fire: "🔥", clap: "👏", "100": "💯", celebrate: "🎉", party: "🎉"
+  };
+  const convertirReactions = (texte) => {
+    if (!texte) return texte;
+    return String(texte).replace(/\[([a-z0-9]+)\]/gi, (m, mot) => {
+      const e = REACTIONS_EMOJI[mot.toLowerCase()];
+      return e ? e : m; // on ne touche qu'aux balises reconnues
+    });
+  };
+
   const nettoyerSignature = (texte) => {
     if (!texte) return texte;
     let t = String(texte);
+    // Réactions Outlook ([like], [heart]…) -> emoji
+    t = convertirReactions(t);
     // email<mailto:email>  ->  email   (garde l'adresse déjà affichée)
     t = t.replace(/\s*<mailto:[^>]+>/gi, "");
     // "Libellé<https://url>" collé  ->  "Libellé"  (le libellé suffit)
