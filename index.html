@@ -3126,18 +3126,20 @@ const nav = isAdmin
       React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
       ),
-      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
-        filtered.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 15, cursor: "pointer" } },
-          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 8 } },
-            React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.category] || "📄"),
-            React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category),
-            p.pinned && React.createElement('span', { style: { marginLeft: "auto", fontSize: 12 } }, "⭐")
+      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
+        filtered.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 } },
+          React.createElement('div', { style: { width: 38, height: 38, background: G + "18", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 } }, CAT_ICONS[p.category] || "📄"),
+          React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" } },
+              React.createElement('span', { style: { fontWeight: 600, fontSize: 13.5, color: "#1a1a3e" } }, p.title),
+              React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category),
+              p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐")
+            ),
+            React.createElement('div', { style: { fontSize: 11.5, color: "#AAA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ((p.content.split("\n").find(l => l)) || "").slice(0, 90) + "...")
           ),
-          React.createElement('div', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e", marginBottom: 5 } }, p.title),
-          React.createElement('div', { style: { fontSize: 11, color: "#AAA", marginBottom: 8 } }, ((p.content.split("\n").find(l => l)) || "").slice(0, 55) + "..."),
-          React.createElement('div', { style: { fontSize: 11, color: G, fontWeight: 500 } }, "Lire la procédure →")
+          React.createElement('div', { style: { fontSize: 12, color: G, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 } }, "Lire la procédure →")
         )),
-        filtered.length === 0 && !procsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
+        filtered.length === 0 && !procsLoading && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
       )
     );
   }
