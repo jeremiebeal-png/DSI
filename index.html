@@ -712,10 +712,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (!profile || !activeHotelId) return;
     setProcsLoading(true);
-    sb.from("procedures").select("*").eq("hotel_id", activeHotelId).order("created_at")
-      .then(({ data, error }) => {
-        if (!error && data) setProcedures(data);
-        setProcsLoading(false);
+    // On passe par la table de liaison : toutes les procédures rattachées à cet hôtel
+    sb.from("procedure_hotels").select("procedure_id").eq("hotel_id", activeHotelId)
+      .then(({ data: liens, error: e1 }) => {
+        if (e1) { setProcsLoading(false); return; }
+        const ids = (liens || []).map(l => l.procedure_id);
+        if (ids.length === 0) { setProcedures([]); setProcsLoading(false); return; }
+        sb.from("procedures").select("*").in("id", ids).order("created_at")
+          .then(({ data, error }) => {
+            if (!error && data) setProcedures(data);
+            setProcsLoading(false);
+          });
       });
   }, [profile, activeHotelId]);
 
@@ -1109,8 +1116,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const url = await uploadToStorage(file, "procedures");
         await sb.from("procedure_files").insert({ procedure_id: procId, file_name: file.name, file_url: url });
       }
-      // Recharge la liste
-      const { data: refreshed } = await sb.from("procedures").select("*").eq("hotel_id", activeHotelId).order("created_at");
+      // Recharge la liste (via la table de liaison)
+      const { data: liens2 } = await sb.from("procedure_hotels").select("procedure_id").eq("hotel_id", activeHotelId);
+      const ids2 = (liens2 || []).map(l => l.procedure_id);
+      const { data: refreshed } = ids2.length > 0
+        ? await sb.from("procedures").select("*").in("id", ids2).order("created_at")
+        : { data: [] };
       if (refreshed) setProcedures(refreshed);
       setProcFiles(prev => { const copy = { ...prev }; delete copy[procId]; return copy; });
       setShowProcForm(false);
