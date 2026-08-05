@@ -465,6 +465,8 @@ function App() {
   const [ticketFiles, setTicketFiles] = useState({}); // { ticketId: [fichiers] }
   const [replyFiles, setReplyFiles] = useState([]);   // fichiers à joindre à la réponse en cours
   const [replyImageUrls, setReplyImageUrls] = useState([]); // images (URLs) issues d'une réponse type
+  const [replyCcList, setReplyCcList] = useState([]);      // adresses CC cochées pour l'envoi
+  const [replyCcManual, setReplyCcManual] = useState("");  // champ d'ajout manuel d'une adresse CC
 
   // ---------- DOCUMENTATION TECHNIQUE (admin uniquement) ----------
   const [docs, setDocs] = useState([]);
@@ -1329,6 +1331,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       });
   };
 
+  // Extrait les CC accumulés d'un fil de messages, dédupliqués,
+  // en excluant le contact principal et nos adresses internes.
+  const extraireCcDuFil = (msgs, ticket) => {
+    const ccSet = new Set();
+    (msgs || []).forEach(mm => {
+      if (mm.cc) String(mm.cc).split(/[,;]/).forEach(a => {
+        const adr = a.trim().replace(/^.*<|>.*$/g, "").toLowerCase();
+        if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adr)) ccSet.add(adr);
+      });
+    });
+    [ticket && ticket.contact_email, SUPPORT_EMAIL, "team@dsihotel.fr", "support@dsihotel.com"]
+      .forEach(a => a && ccSet.delete(String(a).toLowerCase()));
+    return Array.from(ccSet);
+  };
+
   const toggleTicket = (id) => {
     if (openTicketId === id) { setOpenTicketId(null); return; }
     setOpenTicketId(id);
@@ -1337,9 +1354,29 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setReplyFiles([]);
     setReplyImageUrls([]);
     setReplyHtmlOverride(null);
+    setReplyCcManual("");
     loadTicketMsgs(id);
     loadTicketFiles(id);
+    // Préremplit immédiatement depuis le cache (rafraîchi ensuite par l'effet ci-dessous)
+    const t = tickets.find(x => x.id === id);
+    setReplyCcList(extraireCcDuFil(ticketMsgs[id] || [], t));
   };
+
+  // Quand les messages d'un ticket ouvert arrivent (chargement async), on précoche
+  // les CC détectés dans le fil. À la 1re détection on coche tout ; ensuite on
+  // n'ajoute que les nouvelles adresses, sans réécraser un décochage manuel.
+  useEffect(() => {
+    if (!openTicketId) return;
+    const t = tickets.find(x => x.id === openTicketId);
+    const detectees = extraireCcDuFil(ticketMsgs[openTicketId] || [], t);
+    if (detectees.length === 0) return;
+    setReplyCcList(prev => {
+      if (prev.length === 0) return detectees;
+      const s = new Set(prev);
+      detectees.forEach(a => s.add(a));
+      return Array.from(s);
+    });
+  }, [ticketMsgs, openTicketId]);
 
   // ---------- TICKETS : CHANGER LE STATUT ----------
   const setTicketStatus = async (ticket, newStatus) => {
@@ -1537,17 +1574,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     // 3) Envoyer par email — uniquement l'admin notifie le client
     if (isAdmin && ticket.contact_email) {
       try {
-        // Récupère toutes les adresses en copie (Cc) présentes dans le fil du ticket,
-        // dédupliquées, en excluant le contact principal et nos propres adresses.
-        const msgsDuTicket = ticketMsgs[ticket.id] || [];
+        // Adresses en copie = celles cochées dans l'UI (détectées du fil + ajouts
+        // manuels). On revalide et on ré-exclut le contact principal / nos adresses
+        // par sécurité, au cas où l'une aurait été saisie à la main.
         const ccSet = new Set();
-        msgsDuTicket.forEach(mm => {
-          if (mm.cc) String(mm.cc).split(/[,;]/).forEach(a => {
-            const adr = a.trim().replace(/^.*<|>.*$/g, "").toLowerCase();
-            if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adr)) ccSet.add(adr);
-          });
+        (replyCcList || []).forEach(a => {
+          const adr = String(a).trim().replace(/^.*<|>.*$/g, "").toLowerCase();
+          if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adr)) ccSet.add(adr);
         });
-        // Exclusions : le destinataire principal et nos adresses de support
         [ticket.contact_email, SUPPORT_EMAIL, "team@dsihotel.fr", "support@dsihotel.com"].forEach(a => a && ccSet.delete(String(a).toLowerCase()));
         const ccList = Array.from(ccSet);
         const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"}`;
@@ -1812,6 +1846,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [rapServeurs, setRapServeurs] = useState({});   // { rapportId: [verifs serveurs] }
   const [rapLoading, setRapLoading] = useState(false);
   const [rapModal, setRapModal] = useState(null);       // null | "new" | rapport object
+  const [openRapId, setOpenRapId] = useState(null);     // rapport déplié dans la liste
   const [rapForm, setRapForm] = useState(null);
   const [rapLignes, setRapLignes] = useState([]);       // demandes en cours d'édition
   const [rapSrvLignes, setRapSrvLignes] = useState([]); // verifs serveurs en cours d'édition
@@ -3431,6 +3466,39 @@ const nav = isAdmin
               ),
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => { const v = e.target.value; setReplyText(v); if (replyHtmlOverride && v.trim() !== (replyHtmlOverride.plain || "").trim()) setReplyHtmlOverride(null); }, placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 210, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
+                // ---- Personnes en copie (Cc) : cases à cocher + ajout manuel ----
+                (() => {
+                  const contactPrincipal = t.contact_email ? nettoyerEmail(t.contact_email) : "";
+                  // Adresses candidates = celles cochées + celles détectées dans le fil,
+                  // pour toujours afficher une case même si l'utilisateur en a décoché.
+                  const detectees = extraireCcDuFil(ticketMsgs[t.id] || [], t);
+                  const toutes = Array.from(new Set([...(replyCcList || []), ...detectees]));
+                  const toggleCc = (adr) => setReplyCcList(prev => prev.includes(adr) ? prev.filter(x => x !== adr) : [...prev, adr]);
+                  const ajouterManuel = () => {
+                    const adr = (replyCcManual || "").trim().toLowerCase();
+                    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adr)) { setReplyNote("Erreur : adresse Cc invalide."); return; }
+                    if (adr === (contactPrincipal || "").toLowerCase()) { setReplyNote("Erreur : cette adresse est déjà le destinataire principal."); return; }
+                    setReplyCcList(prev => prev.includes(adr) ? prev : [...prev, adr]);
+                    setReplyCcManual("");
+                  };
+                  return React.createElement('div', { style: { marginBottom: 8, background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 7, padding: "9px 11px" } },
+                    React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#555", marginBottom: toutes.length ? 6 : 0 } }, "👥 Personnes en copie (Cc)"),
+                    toutes.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 8 } },
+                      toutes.map(adr => {
+                        const coche = (replyCcList || []).includes(adr);
+                        return React.createElement('label', { key: adr, style: { display: "inline-flex", alignItems: "center", gap: 6, background: coche ? G + "18" : "white", border: "1px solid " + (coche ? G + "66" : "#E2E2E8"), borderRadius: 20, padding: "4px 11px", fontSize: 11.5, color: "#444", cursor: "pointer" } },
+                          React.createElement('input', { type: "checkbox", checked: coche, onChange: () => toggleCc(adr), style: { cursor: "pointer", margin: 0 } }),
+                          adr
+                        );
+                      })
+                    ),
+                    toutes.length === 0 && React.createElement('div', { style: { fontSize: 11, color: "#999", margin: "5px 0 8px" } }, "Aucune adresse en copie détectée. Vous pouvez en ajouter une ci-dessous."),
+                    React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                      React.createElement('input', { value: replyCcManual, onChange: e => setReplyCcManual(e.target.value), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouterManuel(); } }, placeholder: "Ajouter une adresse en copie…", type: "email", style: { flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+                      React.createElement('button', { type: "button", onClick: ajouterManuel, style: { padding: "6px 12px", background: SB, border: "none", color: G, borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" } }, "+ Ajouter")
+                    )
+                  );
+                })(),
                 React.createElement('div', { style: { marginBottom: 8 } },
                   React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Joindre des fichiers à la réponse"),
                   React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => setReplyFiles(prev => [...prev, ...Array.from(e.target.files)]), style: { fontSize: 12 } }),
@@ -3985,61 +4053,63 @@ const nav = isAdmin
         ? React.createElement('div', { style: { textAlign: "center", padding: 40, color: "#999" } }, "Chargement…")
         : visibles.length === 0
           ? React.createElement('div', { style: { textAlign: "center", padding: 48, background: "#FAFAFC", border: "1px dashed #DDD", borderRadius: 10, color: "#999" } }, "Aucun rapport pour le moment.")
-          : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 12 } },
+          : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
               visibles.map(r => {
                 const dems = rapDemandes[r.id] || [];
                 const srv = rapServeurs[r.id] || [];
                 const nbAttente = dems.filter(d => d.statut === "attente").length;
                 const svcs = Array.isArray(r.services) ? r.services : [];
-                return React.createElement('div', { key: r.id, style: { background: "#FFF", border: "1px solid #ECECF2", borderRadius: 10, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,.04)" } },
-                  React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 } },
-                    React.createElement('div', null,
-                      React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: SB } }, "🏨 " + hotelName(r.hotel_id)),
-                      React.createElement('div', { style: { fontSize: 12.5, color: "#777", marginTop: 3 } }, "📅 " + fmtDateFr(r.date_intervention) + "  •  👤 " + r.technicien)
+                const isOpenRap = openRapId === r.id;
+                const envois = rapEnvois[r.id] || [];
+                const fmtEnv = (iso) => { try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch (e) { return String(iso || ""); } };
+                return React.createElement('div', { key: r.id, style: { background: "#FFF", border: "1px solid #ECECF2", borderRadius: 10, boxShadow: "0 1px 3px rgba(0,0,0,.04)", overflow: "hidden" } },
+                  // ---- LIGNE COMPACTE CLIQUABLE ----
+                  React.createElement('div', { onClick: () => setOpenRapId(isOpenRap ? null : r.id), style: { display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", cursor: "pointer" } },
+                    React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, "🏨"),
+                    React.createElement('div', { style: { minWidth: 0, flex: "1 1 auto" } },
+                      React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: SB, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelName(r.hotel_id)),
+                      React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "📅 " + fmtDateFr(r.date_intervention) + "  •  👤 " + (r.technicien || "—"))
                     ),
-                    React.createElement('div', { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 } },
-                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️"),
-                      (() => {
-                        const envois = rapEnvois[r.id] || [];
-                        if (envois.length === 0) return null;
-                        const dernier = envois[0]; // trié desc
-                        const fmtEnv = (iso) => { try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch (e) { return String(iso || ""); } };
-                        const detail = envois.map(e => "• " + fmtEnv(e.envoye_le) + " → " + e.envoye_a + (e.envoye_par ? " (par " + e.envoye_par + ")" : "")).join("\n");
-                        const titre = envois.length > 1 ? ("Historique des " + envois.length + " envois :\n" + detail) : detail;
-                        return React.createElement('span', { title: titre, style: { fontSize: 10.5, fontWeight: 600, padding: "3px 9px", borderRadius: 20, background: "#E6F7EC", color: "#1B7A3D", cursor: "help", whiteSpace: "nowrap" } },
-                          "✓ Envoyé le " + fmtEnv(dernier.envoye_le) + " → " + dernier.envoye_a + (envois.length > 1 ? "  (+" + (envois.length - 1) + ")" : "")
-                        );
-                      })()
-                    )
+                    nbAttente > 0 && React.createElement('span', { style: { flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#FFF3E0", color: "#B26A00", whiteSpace: "nowrap" } }, "⏳ " + nbAttente),
+                    React.createElement('span', { style: { flexShrink: 0, fontSize: 10.5, fontWeight: 600, padding: "2px 9px", borderRadius: 20, background: r.serveurs_ok ? "#E6F7EC" : "#FDECEC", color: r.serveurs_ok ? "#1B7A3D" : "#C0392B", whiteSpace: "nowrap" } }, r.serveurs_ok ? "Serveurs OK" : "Serveurs ⚠️"),
+                    envois.length > 0 && React.createElement('span', { title: envois.map(e => "• " + fmtEnv(e.envoye_le) + " → " + e.envoye_a + (e.envoye_par ? " (par " + e.envoye_par + ")" : "")).join("\n"), style: { flexShrink: 0, fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: "#E6F7EC", color: "#1B7A3D", whiteSpace: "nowrap", cursor: "help" } }, "✓ Envoyé" + (envois.length > 1 ? " (" + envois.length + ")" : "")),
+                    React.createElement('span', { style: { flexShrink: 0, fontSize: 12, color: "#AAA", marginLeft: 2 } }, isOpenRap ? "▲" : "▼")
                   ),
-                  svcs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 5, marginTop: 9 } },
-                    svcs.map(s => React.createElement('span', { key: s, style: { fontSize: 11, background: "#F0EFF7", color: "#4A4A6A", padding: "2px 8px", borderRadius: 5 } }, s))
-                  ),
-                  dems.length > 0 && React.createElement('div', { style: { marginTop: 10, display: "flex", flexDirection: "column", gap: 5 } },
-                    dems.map(d => React.createElement('div', { key: d.id, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#333" } },
-                      React.createElement('span', { style: { flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, marginTop: 1, background: d.statut === "attente" ? "#FFF3E0" : "#E8F5E9", color: d.statut === "attente" ? "#B26A00" : "#2E7D32" } }, d.statut === "attente" ? "EN ATTENTE" : "OK"),
-                      React.createElement('div', null,
-                        React.createElement('span', null, d.description),
-                        d.demandeur && React.createElement('span', { style: { color: "#999" } }, "  — " + d.demandeur),
-                        d.service && React.createElement('span', { style: { marginLeft: 6, fontSize: 10.5, background: "#F0EFF7", color: "#4A4A6A", padding: "1px 7px", borderRadius: 4 } }, d.service),
-                        d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif)
-                      )
-                    ))
-                  ),
-                  srv.length > 0 && React.createElement('div', { style: { marginTop: 10, paddingTop: 8, borderTop: "1px dashed #EEE" } },
-                    React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 4 } }, "Vérifications serveurs :"),
-                    React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } },
-                      srv.map(s => React.createElement('div', { key: s.id, style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#444" } },
-                        React.createElement('span', null, "• " + s.libelle),
-                        React.createElement('span', { style: { fontWeight: 600, color: s.ok ? "#2E7D32" : "#C0392B" } }, s.ok ? "OK" : "Anomalie")
+                  // ---- DÉTAIL DÉPLIÉ ----
+                  isOpenRap && React.createElement('div', { style: { borderTop: "1px solid #F2F2F6", padding: 16, background: "#FAFAFC" } },
+                    envois.length > 0 && React.createElement('div', { style: { fontSize: 11.5, color: "#1B7A3D", marginBottom: 10 } },
+                      "✓ Dernier envoi le " + fmtEnv(envois[0].envoye_le) + " → " + envois[0].envoye_a + (envois[0].envoye_par ? " (par " + envois[0].envoye_par + ")" : "")
+                    ),
+                    svcs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 } },
+                      svcs.map(s => React.createElement('span', { key: s, style: { fontSize: 11, background: "#F0EFF7", color: "#4A4A6A", padding: "2px 8px", borderRadius: 5 } }, s))
+                    ),
+                    dems.length > 0 && React.createElement('div', { style: { marginBottom: 10, display: "flex", flexDirection: "column", gap: 5 } },
+                      dems.map(d => React.createElement('div', { key: d.id, style: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: "#333" } },
+                        React.createElement('span', { style: { flexShrink: 0, fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 5, marginTop: 1, background: d.statut === "attente" ? "#FFF3E0" : "#E8F5E9", color: d.statut === "attente" ? "#B26A00" : "#2E7D32" } }, d.statut === "attente" ? "EN ATTENTE" : "OK"),
+                        React.createElement('div', null,
+                          React.createElement('span', null, d.description),
+                          d.demandeur && React.createElement('span', { style: { color: "#999" } }, "  — " + d.demandeur),
+                          d.service && React.createElement('span', { style: { marginLeft: 6, fontSize: 10.5, background: "#F0EFF7", color: "#4A4A6A", padding: "1px 7px", borderRadius: 4 } }, d.service),
+                          d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif)
+                        )
                       ))
+                    ),
+                    srv.length > 0 && React.createElement('div', { style: { marginBottom: 10, paddingTop: 8, borderTop: "1px dashed #EEE" } },
+                      React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 4 } }, "Vérifications serveurs :"),
+                      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                        srv.map(s => React.createElement('div', { key: s.id, style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#444" } },
+                          React.createElement('span', null, "• " + s.libelle),
+                          React.createElement('span', { style: { fontWeight: 600, color: s.ok ? "#2E7D32" : "#C0392B" } }, s.ok ? "OK" : "Anomalie")
+                        ))
+                      )
+                    ),
+                    r.serveurs_note && React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 10, fontStyle: "italic" } }, r.serveurs_note),
+                    r.observations && React.createElement('div', { style: { fontSize: 12.5, color: "#444", marginBottom: 10, whiteSpace: "pre-wrap", paddingTop: 8, borderTop: "1px dashed #EEE" } }, React.createElement('span', { style: { fontWeight: 600 } }, "Observations : "), r.observations),
+                    React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, paddingTop: 10, borderTop: "1px solid #F2F2F6", flexWrap: "wrap" } },
+                      React.createElement('button', { onClick: (e) => { e.stopPropagation(); downloadRapportPdf(r); }, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "📄 PDF"),
+                      React.createElement('button', { onClick: (e) => { e.stopPropagation(); openSendRapport(r); }, style: { padding: "7px 13px", background: "none", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "✉️ Envoyer"),
+                      React.createElement('button', { onClick: (e) => { e.stopPropagation(); openEditRapport(r); }, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
                     )
-                  ),
-                  nbAttente > 0 && React.createElement('div', { style: { fontSize: 11.5, color: "#B26A00", marginTop: 8 } }, "⏳ " + nbAttente + " demande(s) en attente"),
-                  React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, paddingTop: 10, borderTop: "1px solid #F2F2F6", flexWrap: "wrap" } },
-                    React.createElement('button', { onClick: () => downloadRapportPdf(r), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "📄 PDF"),
-                    React.createElement('button', { onClick: () => openSendRapport(r), style: { padding: "7px 13px", background: "none", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "✉️ Envoyer"),
-                    React.createElement('button', { onClick: () => openEditRapport(r), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
                   )
                 );
               })
