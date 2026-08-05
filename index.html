@@ -386,6 +386,7 @@ function App() {
   const [showProcForm, setShowProcForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [procForm, setProcForm] = useState({ title: "", cat: CATS[0], content: "", pinned: false, mots_cles: "" });
+  const [procFormHotels, setProcFormHotels] = useState([]); // hotel_id cochés pour la procédure en cours d'édition
   const [procFormFiles, setProcFormFiles] = useState([]); // pending File objects to upload on submit
   const [procFormExistingFiles, setProcFormExistingFiles] = useState([]); // already-saved files when editing
   const [savingProc, setSavingProc] = useState(false);
@@ -1063,14 +1064,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setProcForm({ title: "", cat: CATS[0], content: "", pinned: false, mots_cles: "" });
     setProcFormFiles([]);
     setProcFormExistingFiles([]);
+    setProcFormHotels(activeHotelId ? [activeHotelId] : []); // précoche l'hôtel actif
     setShowProcForm(true);
   };
-  const openEditProcForm = (p) => {
+  const openEditProcForm = async (p) => {
     setEditingId(p.id);
     setProcForm({ title: p.title, cat: p.category, content: p.content, pinned: !!p.pinned, mots_cles: p.mots_cles || "" });
     setProcFormFiles([]);
     setProcFormExistingFiles(procFiles[p.id] || []);
     loadFilesFor(p.id);
+    // Charge les hôtels déjà liés à cette procédure
+    const { data: liens } = await sb.from("procedure_hotels").select("hotel_id").eq("procedure_id", p.id);
+    const ids = (liens || []).map(l => l.hotel_id);
+    setProcFormHotels(ids.length > 0 ? ids : (p.hotel_id ? [p.hotel_id] : []));
     setShowProcForm(true);
   };
   const removeExistingProcFile = async (fileId) => {
@@ -1079,9 +1085,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   const submitProcForm = async () => {
-    if (!procForm.title.trim() || !procForm.content.trim() || !activeHotelId) return;
+    if (!procForm.title.trim() || !procForm.content.trim() || procFormHotels.length === 0) return;
     setSavingProc(true);
     try {
+      const firstHotel = procFormHotels[0]; // hotel_id de compatibilité = 1er hôtel coché
       let procId = editingId;
       if (editingId) {
         const { error } = await sb.from("procedures").update({
@@ -1090,11 +1097,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         if (error) throw error;
       } else {
         const { data, error } = await sb.from("procedures").insert({
-          hotel_id: activeHotelId, title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned, mots_cles: procForm.mots_cles || ""
+          hotel_id: firstHotel, title: procForm.title, category: procForm.cat, content: procForm.content, pinned: procForm.pinned, mots_cles: procForm.mots_cles || ""
         }).select().single();
         if (error) throw error;
         procId = data.id;
       }
+      // Enregistre les hôtels liés via le Worker (remplace toutes les liaisons)
+      await callAdminApi("/admin/set-procedure-hotels", { procedureId: procId, hotelIds: procFormHotels });
       // Upload des nouveaux fichiers
       for (const file of procFormFiles) {
         const url = await uploadToStorage(file, "procedures");
@@ -3046,6 +3055,27 @@ const nav = isAdmin
           React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mots-clés (séparés par des virgules)"),
           React.createElement('input', { value: procForm.mots_cles, onChange: e => setProcForm({ ...procForm, mots_cles: e.target.value }), placeholder: "Ex. : imprimante, impression, bourrage, hors ligne", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } }),
           React.createElement('div', { style: { fontSize: 10.5, color: "#999", marginTop: 3 } }, "Ces mots aident les clients à trouver cette procédure depuis le formulaire de contact.")
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('div', { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
+            React.createElement('label', { style: { fontSize: 11, fontWeight: 500, color: "#555" } }, "Établissements concernés (" + procFormHotels.length + "/" + hotels.length + ")"),
+            React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: G2, cursor: "pointer", fontWeight: 500 } },
+              React.createElement('input', { type: "checkbox", checked: hotels.length > 0 && procFormHotels.length === hotels.length, onChange: e => setProcFormHotels(e.target.checked ? hotels.map(h => h.id) : []) }),
+              "Tous les établissements"
+            )
+          ),
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 6, maxHeight: 190, overflowY: "auto", border: "1px solid #E8E8F0", borderRadius: 8, padding: 10, background: "#FBFBFE" } },
+            hotels.map(h => {
+              const checked = procFormHotels.includes(h.id);
+              return React.createElement('label', { key: h.id, style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#333", cursor: "pointer", padding: "4px 6px", borderRadius: 6, background: checked ? G + "14" : "transparent" } },
+                React.createElement('input', { type: "checkbox", checked: checked, onChange: e => {
+                  setProcFormHotels(prev => e.target.checked ? [...prev, h.id] : prev.filter(x => x !== h.id));
+                } }),
+                React.createElement('span', { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, h.name)
+              );
+            })
+          ),
+          procFormHotels.length === 0 && React.createElement('div', { style: { fontSize: 10.5, color: "#E53E3E", marginTop: 4 } }, "Sélectionnez au moins un établissement.")
         ),
         React.createElement('div', { style: { marginBottom: 10 } },
           React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#444", cursor: "pointer" } },
