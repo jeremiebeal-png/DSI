@@ -485,6 +485,7 @@ function App() {
 
   const isAdmin = profile?.role === "admin";
   const isSupervisor = profile?.role === "supervisor";
+  const mfaRequired = isAdmin || isSupervisor; // MFA obligatoire pour admins et superviseurs
  const isSuperAdmin = isAdmin && (profile?.email || "").toLowerCase() === "support@dsihotel.com";
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
@@ -622,7 +623,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
       const { data, error } = await sb.auth.mfa.enroll({
         factorType: "totp",
-        friendlyName: "DSI Hotel Admin " + Date.now()
+        friendlyName: "Premier appareil " + Date.now()
       });
       if (error) throw error;
       setMfaFactorId(data.id);
@@ -636,9 +637,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   // aal1 = mot de passe seul ; aal2 = mot de passe + code TOTP validé
+  // MFA obligatoire pour les administrateurs ET les superviseurs d'hôtel.
   useEffect(() => {
     if (!session || !profile) return;
-    if (profile.role !== "admin") { setMfaState("ok"); return; }
+    if (profile.role !== "admin" && profile.role !== "supervisor") { setMfaState("ok"); return; }
 
     let cancelled = false;
     (async () => {
@@ -1282,7 +1284,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
     if (page === "login-logs" && isSuperAdmin) loadLoginLogs();
-    if (page === "securite" && isSuperAdmin) loadSecFactors();
+    if (page === "securite" && (isSuperAdmin || isSupervisor)) loadSecFactors();
     if ((page === "ninjaone" || page === "rapport-securite") && profile) loadNjRapports();
     if (page === "rapport-intervention" && isSupervisor) loadRapportsClient();
   }, [page, profile]);
@@ -2583,8 +2585,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     );
   }
 
-  // ---------- ÉCRAN MFA : bloque l'accès admin tant que le code n'est pas validé ----------
-  if (isAdmin && mfaState !== "ok") {
+  // ---------- ÉCRAN MFA : bloque l'accès (admin + superviseur) tant que le code n'est pas validé ----------
+  if (mfaRequired && mfaState !== "ok") {
     const inputMfa = { width: "100%", padding: "12px 14px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 22, letterSpacing: "6px", textAlign: "center", outline: "none", fontFamily: "monospace" };
 
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
@@ -2599,7 +2601,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         mfaState === "enroll" && React.createElement('div', { style: { background: "rgba(255,255,255,.05)", borderRadius: 14, padding: 28, border: `1px solid ${G}30` } },
           React.createElement('div', { style: { color: G, fontSize: 15, fontWeight: 600, marginBottom: 6 } }, "🔐 Activation obligatoire"),
           React.createElement('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 12.5, lineHeight: 1.6, marginBottom: 18 } },
-            "Le compte administrateur nécessite une double authentification. Scannez ce QR code avec une application d'authentification (Google Authenticator, Microsoft Authenticator, Authy…)."
+            "Votre compte nécessite une double authentification. Scannez ce QR code avec une application d'authentification (Google Authenticator, Microsoft Authenticator, Authy…)."
           ),
           mfaQr && React.createElement('div', { style: { background: "white", borderRadius: 10, padding: 14, display: "flex", justifyContent: "center", marginBottom: 14 } },
             React.createElement('img', { src: mfaQr, alt: "QR code MFA", style: { width: 190, height: 190, display: "block" } })
@@ -2613,7 +2615,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           mfaErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 12.5, marginTop: 12 } }, mfaErr),
           React.createElement('button', { onClick: submitMfaCode, disabled: mfaBusy || mfaCode.length !== 6, style: { width: "100%", marginTop: 16, padding: 12, background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: (mfaBusy || mfaCode.length !== 6) ? "default" : "pointer", opacity: (mfaBusy || mfaCode.length !== 6) ? 0.5 : 1 } }, mfaBusy ? "Vérification..." : "Activer et continuer"),
           React.createElement('div', { style: { background: "rgba(221,107,32,.12)", border: "1px solid rgba(221,107,32,.35)", borderRadius: 8, padding: "10px 12px", marginTop: 16, fontSize: 11.5, color: "#F6AD55", lineHeight: 1.6 } },
-            "⚠️ Conservez précieusement l'accès à cette application. Sans elle, la connexion administrateur sera impossible."
+            "⚠️ Conservez précieusement l'accès à cette application. Sans elle, la connexion sera impossible."
           ),
           React.createElement('button', { onClick: doLogout, style: { width: "100%", marginTop: 12, padding: 9, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler et se déconnecter")
         ),
@@ -2652,7 +2654,8 @@ const nav = isAdmin
         { p: "contact", icon: "📧", label: "Contacter le support" },
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
-        ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapport Intervention" }] : [])
+        ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapport Intervention" }] : []),
+        ...(isSupervisor ? [{ p: "securite", icon: "🔐", label: "Sécurité" }] : [])
       ];
   let content = null;
 
@@ -2942,10 +2945,12 @@ const nav = isAdmin
   }
 
   // ---------- SUPER-ADMIN : SÉCURITÉ (appareils MFA) ----------
-  if (page === "securite" && isSuperAdmin) {
+  if (page === "securite" && (isSuperAdmin || isSupervisor)) {
     content = React.createElement('div', { style: { maxWidth: 640 } },
       React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 18, lineHeight: 1.6 } },
-        "Gérez les appareils autorisés à générer vos codes de double authentification (MFA). Vous pouvez ajouter un téléphone de secours ou celui d'un collègue, et retirer un appareil à tout moment."
+        isSupervisor
+          ? "Ce compte superviseur est partagé par votre établissement. Chaque personne peut enregistrer son propre téléphone : ajoutez un appareil, donnez-lui un nom (ex : « iPhone Réception »), et chacun pourra se connecter avec ses propres codes. Vous pouvez retirer un téléphone à tout moment sans affecter les autres."
+          : "Gérez les appareils autorisés à générer vos codes de double authentification (MFA). Vous pouvez ajouter un téléphone de secours ou celui d'un collègue, et retirer un appareil à tout moment."
       ),
       // Liste des appareils
       React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 10 } }, "Appareils enregistrés"),
@@ -4366,7 +4371,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
