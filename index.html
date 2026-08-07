@@ -3331,9 +3331,9 @@ const nav = isAdmin
               ),
               React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 14 } },
                 React.createElement('div', null,
-                  React.createElement('label', { style: labelStyle }, "Fonction"),
+                  React.createElement('label', { style: labelStyle }, "Services"),
                   React.createElement('select', { value: supportForm.role, onChange: e => setSupportForm({ ...supportForm, role: e.target.value }), style: inputStyle },
-                    ["Front Office", "Directeur Général", "Directeur des opérations", "Finance", "Technique", "Sales", "Revenue", "HK", "Autre"].map(r => React.createElement('option', { key: r, value: r }, r))
+                    ["Front Office", "Réservation", "Room Service", "Économat", "Directeur Général", "Directeur des opérations", "Finance", "Technique", "Sales", "Revenue", "HK", "Autre"].map(r => React.createElement('option', { key: r, value: r }, r))
                   )
                 ),
                 React.createElement('div', null,
