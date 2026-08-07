@@ -1240,6 +1240,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const detail = await res.text().catch(() => "");
         throw new Error("Statut " + res.status + (detail ? " — " + detail.slice(0, 300) : ""));
       }
+
+      // Accusé de réception au client (même format que le circuit email direct).
+      // Envoyé uniquement si le ticket a bien été créé (référence disponible) et
+      // si l'email client est valide. Un échec ici ne bloque pas la demande.
+      if (reference && emailClean) {
+        try {
+          const accuseText =
+            "Bonjour,\n\n" +
+            "Nous avons bien reçu votre demande, enregistrée sous la référence " + reference + ".\n\n" +
+            "Notre équipe la traitera dans les meilleurs délais. Pour toute information complémentaire, répondez directement à cet email en conservant la référence dans l'objet.\n\n" +
+            "Cordialement,\n" +
+            "Le support DSI Hotel\n" +
+            "support@dsihotel.com — www.dsihotel.com";
+          await fetch(EMAIL_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to: emailClean, subject: `[${reference}] ${subject}`, text: accuseText, replyTo: SUPPORT_EMAIL })
+          });
+        } catch (e) { /* l'accusé est secondaire : ne bloque pas la confirmation */ }
+      }
+
       setSupportSent(true);
     } catch (e) {
       setSupportError("L'envoi automatique a échoué : " + (e.message || e) + ". Vérifiez que le Worker (route /send) est déployé et configuré (RESEND_API_KEY, CORS).");
