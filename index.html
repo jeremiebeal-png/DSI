@@ -451,9 +451,6 @@ function App() {
 
   // ---------- TICKETS ----------
   const [tickets, setTickets] = useState([]);
-  const [rtPeriode, setRtPeriode] = useState("mois"); // mois | annee | perso | tout
-  const [rtDebut, setRtDebut] = useState("");
-  const [rtFin, setRtFin] = useState("");
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all
   const [openTicketId, setOpenTicketId] = useState(null);
@@ -500,9 +497,8 @@ function App() {
   const ADMIN_SECTIONS = [
     { key: "clients",    page: "client-admin",    icon: "🏨", label: "Gérer les clients" },
     { key: "procedures", page: "proc-admin",      icon: "📚", label: "Gérer les procédures" },
-    { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Doc. technique" },
+    { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Baie Informatique" },
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
-    { key: "tickets",    page: "rapport-tickets", icon: "📈", label: "Rapport Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention" },
     { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité" },
@@ -1360,7 +1356,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   useEffect(() => {
-    if (page === "tickets-admin" || page === "tickets-client" || page === "rapport-tickets") loadTickets();
+    if (page === "tickets-admin" || page === "tickets-client") loadTickets();
   }, [page, profile]);
 
   useEffect(() => {
@@ -2793,7 +2789,7 @@ const nav = isAdmin
       })()
     : [
         { p: "knowledge", icon: "📖", label: "Procédures" },
-        { p: "mon-installation", icon: "🗂️", label: "Mon installation" },
+        { p: "mon-installation", icon: "🗂️", label: "Baie Informatique" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
@@ -3541,193 +3537,6 @@ const nav = isAdmin
     }
   };
 
-  // ---------- ADMIN : RAPPORT TICKETS (récapitulatif par hôtel) ----------
-  if (page === "rapport-tickets" && isAdmin) {
-    const rtInp = { padding: "8px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, fontFamily: "inherit", background: "white" };
-    const prioColor = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
-
-    // Bornes de la période sélectionnée (incluses).
-    const now = new Date();
-    let borneDebut = null, borneFin = null;
-    if (rtPeriode === "mois") {
-      borneDebut = new Date(now.getFullYear(), now.getMonth(), 1);
-      borneFin = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-    } else if (rtPeriode === "annee") {
-      borneDebut = new Date(now.getFullYear(), 0, 1);
-      borneFin = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
-    } else if (rtPeriode === "perso") {
-      if (rtDebut) borneDebut = new Date(rtDebut + "T00:00:00");
-      if (rtFin) borneFin = new Date(rtFin + "T23:59:59.999");
-    }
-    // "tout" : pas de bornes.
-
-    const dansPeriode = (t) => {
-      if (!t.created_at) return rtPeriode === "tout";
-      const d = new Date(t.created_at);
-      if (borneDebut && d < borneDebut) return false;
-      if (borneFin && d > borneFin) return false;
-      return true;
-    };
-
-    const ticketsPeriode = tickets.filter(dansPeriode);
-
-    // Agrégation par hôtel. On part de la liste des hôtels pour que même
-    // les établissements sans ticket apparaissent avec des zéros.
-    const statVide = () => ({ total: 0, ouverts: 0, fermes: 0, Urgent: 0, Haute: 0, Moyenne: 0, Basse: 0 });
-    const parHotel = {};
-    hotels.forEach(h => { parHotel[h.id] = { hotel: h, ...statVide() }; });
-    let sansHotel = null; // tickets non rattachés à un hôtel connu
-
-    ticketsPeriode.forEach(t => {
-      let bucket = parHotel[t.hotel_id];
-      if (!bucket) {
-        if (!sansHotel) sansHotel = { hotel: { id: "__none__", name: "Non rattaché" }, ...statVide() };
-        bucket = sansHotel;
-      }
-      bucket.total += 1;
-      if (t.status === "closed") bucket.fermes += 1; else bucket.ouverts += 1;
-      const p = ["Urgent", "Haute", "Moyenne", "Basse"].includes(t.priority) ? t.priority : "Moyenne";
-      bucket[p] += 1;
-    });
-
-    let lignes = Object.values(parHotel);
-    if (sansHotel) lignes.push(sansHotel);
-    // Tri : plus de tickets ouverts d'abord, puis total.
-    lignes.sort((a, b) => (b.ouverts - a.ouverts) || (b.total - a.total));
-
-    const totaux = lignes.reduce((acc, l) => {
-      ["total", "ouverts", "fermes", "Urgent", "Haute", "Moyenne", "Basse"].forEach(k => { acc[k] += l[k]; });
-      return acc;
-    }, statVide());
-
-    const libellePeriode = rtPeriode === "mois" ? "Ce mois-ci"
-      : rtPeriode === "annee" ? "Cette année"
-      : rtPeriode === "tout" ? "Tout l'historique"
-      : (rtDebut || rtFin) ? ("Du " + (rtDebut || "…") + " au " + (rtFin || "…")) : "Plage personnalisée";
-
-    // Export CSV
-    const exportCSV = () => {
-      const sep = ";"; // Excel FR
-      const head = ["Hôtel", "Ville", "Total", "Ouverts", "Fermés", "Urgent", "Haute", "Moyenne", "Basse"];
-      const rows = lignes.filter(l => l.total > 0).map(l => [
-        l.hotel.name || "", l.hotel.city || "", l.total, l.ouverts, l.fermes, l.Urgent, l.Haute, l.Moyenne, l.Basse
-      ]);
-      rows.push(["TOTAL", "", totaux.total, totaux.ouverts, totaux.fermes, totaux.Urgent, totaux.Haute, totaux.Moyenne, totaux.Basse]);
-      const esc = (v) => { const s = String(v == null ? "" : v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-      const csv = [head, ...rows].map(r => r.map(esc).join(sep)).join("\r\n");
-      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "Rapport_Tickets_" + new Date().toISOString().slice(0, 10) + ".csv";
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    };
-
-    const kpi = (label, value, color) => React.createElement('div', { style: { flex: 1, minWidth: 120, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "14px 16px" } },
-      React.createElement('div', { style: { fontSize: 26, fontWeight: 700, color: color || SB, lineHeight: 1 } }, value),
-      React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 5 } }, label)
-    );
-
-    const th = { textAlign: "left", fontSize: 11, fontWeight: 700, color: "#888", padding: "9px 10px", borderBottom: "2px solid #ECECF2", whiteSpace: "nowrap" };
-    const thN = { ...th, textAlign: "center" };
-    const td = { fontSize: 12.5, color: "#333", padding: "9px 10px", borderBottom: "1px solid #F4F4F8" };
-    const tdN = { ...td, textAlign: "center", fontWeight: 600 };
-    const pill = (n, color) => n > 0
-      ? React.createElement('span', { style: { display: "inline-block", minWidth: 22, fontSize: 11.5, fontWeight: 700, color: color, background: color + "18", padding: "2px 7px", borderRadius: 20 } }, n)
-      : React.createElement('span', { style: { color: "#CCC" } }, "—");
-
-    content = React.createElement('div', null,
-      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Récapitulatif des tickets par établissement sur la période choisie. Cliquez sur « Exporter CSV » pour ouvrir le tableau dans Excel."
-      ),
-
-      // Barre de filtres
-      React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", marginBottom: 16, padding: 14, background: "white", border: "1px solid #E8E8F0", borderRadius: 10 } },
-        React.createElement('div', null,
-          React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 5 } }, "Période"),
-          React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-            [["mois", "Ce mois"], ["annee", "Cette année"], ["perso", "Personnalisée"], ["tout", "Tout"]].map(([v, lbl]) =>
-              React.createElement('button', { key: v, onClick: () => setRtPeriode(v), style: { padding: "7px 13px", border: "1px solid " + (rtPeriode === v ? G : "#DDD"), background: rtPeriode === v ? G + "18" : "white", color: rtPeriode === v ? G2 : "#555", borderRadius: 7, fontSize: 12, fontWeight: rtPeriode === v ? 600 : 400, cursor: "pointer" } }, lbl)
-            )
-          )
-        ),
-        rtPeriode === "perso" && React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "flex-end" } },
-          React.createElement('div', null,
-            React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 5 } }, "Du"),
-            React.createElement('input', { type: "date", value: rtDebut, onChange: e => setRtDebut(e.target.value), style: rtInp })
-          ),
-          React.createElement('div', null,
-            React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 5 } }, "Au"),
-            React.createElement('input', { type: "date", value: rtFin, onChange: e => setRtFin(e.target.value), style: rtInp })
-          )
-        ),
-        React.createElement('div', { style: { marginLeft: "auto" } },
-          React.createElement('button', { onClick: exportCSV, disabled: ticketsPeriode.length === 0, style: { padding: "9px 16px", background: ticketsPeriode.length === 0 ? "#EEE" : SB, color: ticketsPeriode.length === 0 ? "#AAA" : "white", border: "none", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: ticketsPeriode.length === 0 ? "default" : "pointer" } }, "⬇ Exporter CSV")
-        )
-      ),
-
-      ticketsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
-
-      // KPIs globaux
-      !ticketsLoading && React.createElement('div', { style: { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 } },
-        kpi(libellePeriode + " — Total", totaux.total, SB),
-        kpi("Ouverts", totaux.ouverts, "#2F855A"),
-        kpi("Fermés", totaux.fermes, "#999"),
-        kpi("Urgents", totaux.Urgent, "#E53E3E")
-      ),
-
-      // Tableau par hôtel
-      !ticketsLoading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, overflow: "hidden" } },
-        React.createElement('div', { style: { overflowX: "auto" } },
-          React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 640 } },
-            React.createElement('thead', null,
-              React.createElement('tr', null,
-                React.createElement('th', { style: th }, "Établissement"),
-                React.createElement('th', { style: thN }, "Total"),
-                React.createElement('th', { style: thN }, "Ouverts"),
-                React.createElement('th', { style: thN }, "Fermés"),
-                React.createElement('th', { style: thN }, "Urgent"),
-                React.createElement('th', { style: thN }, "Haute"),
-                React.createElement('th', { style: thN }, "Moyenne"),
-                React.createElement('th', { style: thN }, "Basse")
-              )
-            ),
-            React.createElement('tbody', null,
-              lignes.filter(l => l.total > 0).length === 0
-                ? React.createElement('tr', null, React.createElement('td', { colSpan: 8, style: { ...td, textAlign: "center", color: "#999", padding: 24 } }, "Aucun ticket sur cette période."))
-                : lignes.filter(l => l.total > 0).map(l => React.createElement('tr', { key: l.hotel.id },
-                    React.createElement('td', { style: td },
-                      React.createElement('div', { style: { fontWeight: 600, color: "#1a1a3e" } }, l.hotel.name || "—"),
-                      l.hotel.city && React.createElement('div', { style: { fontSize: 11, color: "#999" } }, l.hotel.city)
-                    ),
-                    React.createElement('td', { style: tdN }, l.total),
-                    React.createElement('td', { style: tdN }, pill(l.ouverts, "#2F855A")),
-                    React.createElement('td', { style: tdN }, l.fermes > 0 ? React.createElement('span', { style: { color: "#999", fontWeight: 600 } }, l.fermes) : React.createElement('span', { style: { color: "#CCC" } }, "—")),
-                    React.createElement('td', { style: tdN }, pill(l.Urgent, prioColor("Urgent"))),
-                    React.createElement('td', { style: tdN }, pill(l.Haute, prioColor("Haute"))),
-                    React.createElement('td', { style: tdN }, pill(l.Moyenne, prioColor("Moyenne"))),
-                    React.createElement('td', { style: tdN }, pill(l.Basse, prioColor("Basse")))
-                  ))
-            ),
-            React.createElement('tfoot', null,
-              React.createElement('tr', { style: { background: "#FAFAFC" } },
-                React.createElement('td', { style: { ...td, fontWeight: 700, color: SB } }, "TOTAL"),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700 } }, totaux.total),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700, color: "#2F855A" } }, totaux.ouverts),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700, color: "#999" } }, totaux.fermes),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700, color: prioColor("Urgent") } }, totaux.Urgent),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700, color: prioColor("Haute") } }, totaux.Haute),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700, color: prioColor("Moyenne") } }, totaux.Moyenne),
-                React.createElement('td', { style: { ...tdN, fontWeight: 700, color: prioColor("Basse") } }, totaux.Basse)
-              )
-            )
-          )
-        )
-      )
-    );
-  }
-
   if (page === "tickets-admin" && isAdmin) {
     const statusColor = (s) => s === "closed" ? "#999" : "#2F855A";
     const statusLabel = (s) => s === "closed" ? "Fermé" : "Ouvert";
@@ -4064,7 +3873,7 @@ const nav = isAdmin
               React.createElement('span', { style: { fontWeight: 600 } }, docForm.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
               React.createElement('span', { style: { display: "block", fontSize: 11, color: "#888", marginTop: 2 } },
                 docForm.visible_client
-                  ? "Le client verra cette fiche et ses fichiers dans son espace « Mon installation »."
+                  ? "Le client verra cette fiche et ses fichiers dans son espace « Baie Informatique »."
                   : "Réservée à DSI Hotel. Cochez la case pour la partager avec le client."
               )
             )
@@ -4730,7 +4539,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Documentation technique" : page === "tickets-admin" ? "Tickets" : page === "rapport-tickets" ? "Rapport Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon installation" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
