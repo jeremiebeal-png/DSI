@@ -268,6 +268,10 @@ function App() {
   const [loginErr, setLoginErr] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
   const [showPw, setShowPw] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);   // panneau "mot de passe oublié"
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState("");        // message succès/erreur
 
   // ---------- MFA (double authentification, obligatoire pour l'admin) ----------
   const [mfaState, setMfaState] = useState("checking"); // checking | ok | enroll | challenge
@@ -752,6 +756,38 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const { error } = await sb.auth.signInWithPassword({ email, password: pw });
     if (error) setLoginErr("Email ou mot de passe incorrect.");
     setLoggingIn(false);
+  };
+
+  // Mot de passe oublié : envoie une simple notification au support (qui réinitialise
+  // manuellement via l'espace admin). Pas de lien self-service.
+  const submitForgot = async () => {
+    const em = nettoyerEmail(forgotEmail || "").trim();
+    if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+      setForgotMsg("⚠️ Merci d'indiquer une adresse email valide.");
+      return;
+    }
+    setForgotBusy(true);
+    setForgotMsg("");
+    try {
+      const subject = "[MOT DE PASSE OUBLIÉ] Demande de réinitialisation";
+      const text =
+        "Demande de réinitialisation de mot de passe depuis le portail.\n\n" +
+        "Compte concerné : " + em + "\n" +
+        "Date : " + new Date().toLocaleString("fr-FR") + "\n\n" +
+        "Merci de réinitialiser le mot de passe de ce compte et de communiquer les nouveaux identifiants à l'utilisateur.";
+      const res = await fetch(EMAIL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: SUPPORT_EMAIL, subject, text, replyTo: em })
+      });
+      if (!res.ok) { const d = await res.text().catch(() => ""); throw new Error("Statut " + res.status + (d ? " — " + d.slice(0, 160) : "")); }
+      setForgotMsg("✅ Votre demande a bien été envoyée au support. Vous serez recontacté rapidement.");
+      setForgotEmail("");
+    } catch (e) {
+      setForgotMsg("❌ L'envoi a échoué (" + (e.message || e) + "). Réessayez ou contactez support@dsihotel.com.");
+    } finally {
+      setForgotBusy(false);
+    }
   };
   // ---------- PAGE SÉCURITÉ : gestion des appareils MFA (super-admin) ----------
   const loadSecFactors = async () => {
@@ -1959,7 +1995,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     serveurs_ok: true, serveurs_note: "", observations: ""
   });
   const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "" });
-  const emptySrv = () => ({ libelle: "", ok: true });
+  const emptySrv = () => ({ libelle: "", ok: true, note: "" });
 
   const ticketVersLigne = (t) => ({
     description: (t.subject || t.category || "Demande").trim(),
@@ -2070,7 +2106,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       service: d.service || "", statut: d.statut || "ok", motif: d.motif || ""
     }));
     setRapLignes(lignes.length ? lignes : [emptyLigne()]);
-    const srv = (rapServeurs[r.id] || []).map(s => ({ libelle: s.libelle || "", ok: s.ok !== false }));
+    const srv = (rapServeurs[r.id] || []).map(s => ({ libelle: s.libelle || "", ok: s.ok !== false, note: s.note || "" }));
     setRapSrvLignes(srv.length ? srv : [emptySrv()]);
     setRapErr(""); setRapNote("");
     setRapModal(r);
@@ -2129,7 +2165,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         if (error) throw error;
       }
       const srv = rapSrvLignes.filter(s => s.libelle.trim()).map((s, i) => ({
-        rapport_id: rapId, libelle: s.libelle.trim(), ok: !!s.ok, position: i,
+        rapport_id: rapId, libelle: s.libelle.trim(), ok: !!s.ok, note: (s.note || "").trim() || null, position: i,
       }));
       if (srv.length) {
         const { error } = await sb.from("rapport_serveurs").insert(srv);
@@ -2243,6 +2279,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       doc.setFont("helvetica", "bold");
       doc.text(s.ok ? "OK" : "Anomalie", pageW - mR, y, { align: "right" });
       line(5.5);
+      if (s.note) {
+        doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(90, 90, 90);
+        const nn = doc.splitTextToSize("↳ " + s.note, contentW - 6);
+        doc.text(nn, mL + 6, y); line(nn.length * 4.5 + 1);
+      }
     });
 
     if (r.observations) {
@@ -2631,7 +2672,18 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
             )
           ),
           loginErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 14 } }, loginErr),
-          React.createElement('button', { onClick: doLogin, disabled: loggingIn, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: loggingIn ? "default" : "pointer", opacity: loggingIn ? 0.6 : 1 } }, loggingIn ? "Connexion..." : "Se connecter")
+          React.createElement('button', { onClick: doLogin, disabled: loggingIn, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: loggingIn ? "default" : "pointer", opacity: loggingIn ? 0.6 : 1 } }, loggingIn ? "Connexion..." : "Se connecter"),
+          React.createElement('div', { style: { textAlign: "center", marginTop: 14 } },
+            React.createElement('button', { type: "button", onClick: () => { setForgotOpen(!forgotOpen); setForgotMsg(""); setForgotEmail(email || ""); }, style: { background: "none", border: "none", color: "rgba(255,255,255,.5)", fontSize: 12.5, cursor: "pointer", textDecoration: "underline", padding: 4 } }, "Mot de passe oublié ?")
+          ),
+          forgotOpen && React.createElement('div', { style: { marginTop: 12, paddingTop: 16, borderTop: `1px solid ${G}25` } },
+            React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12, lineHeight: 1.5, marginBottom: 10 } },
+              "Indiquez votre adresse email : le support recevra votre demande et réinitialisera votre mot de passe."
+            ),
+            React.createElement('input', { value: forgotEmail, onChange: e => { setForgotEmail(e.target.value); setForgotMsg(""); }, onKeyDown: e => e.key === "Enter" && submitForgot(), placeholder: "votre@email.com", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none", marginBottom: 10 } }),
+            forgotMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 10, color: forgotMsg.startsWith("✅") ? "#9AE6B4" : "#FC8181", lineHeight: 1.4 } }, forgotMsg),
+            React.createElement('button', { onClick: submitForgot, disabled: forgotBusy, style: { width: "100%", padding: 10, background: "transparent", border: `1px solid ${G}`, color: G, borderRadius: 7, fontSize: 13.5, fontWeight: 500, cursor: forgotBusy ? "default" : "pointer", opacity: forgotBusy ? 0.6 : 1 } }, forgotBusy ? "Envoi..." : "Envoyer la demande")
+          )
         )
       )
     );
@@ -4218,9 +4270,12 @@ const nav = isAdmin
                     srv.length > 0 && React.createElement('div', { style: { marginBottom: 10, paddingTop: 8, borderTop: "1px dashed #EEE" } },
                       React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 4 } }, "Vérifications serveurs :"),
                       React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } },
-                        srv.map(s => React.createElement('div', { key: s.id, style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#444" } },
-                          React.createElement('span', null, "• " + s.libelle),
-                          React.createElement('span', { style: { fontWeight: 600, color: s.ok ? "#2E7D32" : "#C0392B" } }, s.ok ? "OK" : "Anomalie")
+                        srv.map(s => React.createElement('div', { key: s.id, style: { display: "flex", flexDirection: "column", gap: 1 } },
+                          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#444" } },
+                            React.createElement('span', null, "• " + s.libelle),
+                            React.createElement('span', { style: { fontWeight: 600, color: s.ok ? "#2E7D32" : "#C0392B" } }, s.ok ? "OK" : "Anomalie")
+                          ),
+                          s.note && React.createElement('div', { style: { fontSize: 11, color: "#888", fontStyle: "italic", paddingLeft: 10 } }, "↳ " + s.note)
                         ))
                       )
                     ),
@@ -4327,13 +4382,16 @@ const nav = isAdmin
             ),
             React.createElement('div', { style: { fontSize: 11.5, color: "#999", marginBottom: 6 } }, "Détail des vérifications (ex. Serveur AD, Interface Agilysis…) :"),
             React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 7 } },
-              rapSrvLignes.map((s, i) => React.createElement('div', { key: i, style: { display: "flex", gap: 7, alignItems: "center" } },
-                React.createElement('input', { value: s.libelle, onChange: e => setSrv(i, "libelle", e.target.value), placeholder: "Nom du serveur / vérification", style: { ...inp, fontSize: 12, flex: 1 } }),
-                React.createElement('select', { value: s.ok ? "ok" : "ko", onChange: e => setSrv(i, "ok", e.target.value === "ok"), style: { ...inp, fontSize: 12, width: 120, flexShrink: 0 } },
-                  React.createElement('option', { value: "ok" }, "✅ OK"),
-                  React.createElement('option', { value: "ko" }, "⚠️ Anomalie")
+              rapSrvLignes.map((s, i) => React.createElement('div', { key: i, style: { display: "flex", flexDirection: "column", gap: 6, padding: 8, border: "1px solid #EEE", borderRadius: 8 } },
+                React.createElement('div', { style: { display: "flex", gap: 7, alignItems: "center" } },
+                  React.createElement('input', { value: s.libelle, onChange: e => setSrv(i, "libelle", e.target.value), placeholder: "Nom du serveur / vérification", style: { ...inp, fontSize: 12, flex: 1 } }),
+                  React.createElement('select', { value: s.ok ? "ok" : "ko", onChange: e => setSrv(i, "ok", e.target.value === "ok"), style: { ...inp, fontSize: 12, width: 120, flexShrink: 0 } },
+                    React.createElement('option', { value: "ok" }, "✅ OK"),
+                    React.createElement('option', { value: "ko" }, "⚠️ Anomalie")
+                  ),
+                  rapSrvLignes.length > 1 && React.createElement('button', { onClick: () => removeSrv(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 15, padding: "2px 4px", flexShrink: 0 } }, "✕")
                 ),
-                rapSrvLignes.length > 1 && React.createElement('button', { onClick: () => removeSrv(i), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 15, padding: "2px 4px", flexShrink: 0 } }, "✕")
+                React.createElement('input', { value: s.note || "", onChange: e => setSrv(i, "note", e.target.value), placeholder: "Remarque (optionnel, même si OK)", style: { ...inp, fontSize: 11.5 } })
               ))
             ),
             React.createElement('button', { onClick: addSrv, style: { marginTop: 8, padding: "6px 11px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter une vérification"),
