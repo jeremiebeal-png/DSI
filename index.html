@@ -1166,7 +1166,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         hotel_id: myHotelId,
         contact_name: supportForm.name,
         contact_role: supportForm.role,
-        contact_email: supportForm.contactEmail,
+        contact_email: nettoyerEmail(supportForm.contactEmail || "").trim(),
         contact_phone: supportForm.phone,
         category: supportForm.cat,
         priority: supportForm.prio,
@@ -1197,6 +1197,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const submitSupportForm = async () => {
     if (!supportForm.name.trim() || !supportForm.message.trim()) return;
+    // L'email professionnel est obligatoire : sans lui, la réponse du support ne pourrait pas
+    // revenir au client (l'envoi sortant se base sur contact_email).
+    const emailClean = nettoyerEmail(supportForm.contactEmail || "").trim();
+    if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
+      setSupportError("Merci d'indiquer un email professionnel valide : c'est à cette adresse que le support vous répondra.");
+      return;
+    }
     setSupportError("");
     const { subject, bodyText } = buildSupportSubjectBody();
 
@@ -1613,8 +1620,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setReplyImageUrls([]);
     }
 
-    // 3) Envoyer par email — uniquement l'admin notifie le client
-    if (isAdmin && ticket.contact_email) {
+    // 3) Envoyer par email — uniquement l'admin notifie le client.
+    // Destinataire : l'email du contact du ticket ; à défaut (anciens tickets créés
+    // sans email), on retombe sur l'email du compte de l'hôtel rattaché.
+    const ticketHotel = hotels.find(h => h.id === ticket.hotel_id);
+    const destClient = nettoyerEmail(ticket.contact_email || (ticketHotel && ticketHotel.account_email) || "").trim();
+    if (isAdmin && destClient) {
       try {
         // Adresses en copie = celles cochées dans l'UI (détectées du fil + ajouts
         // manuels). On revalide et on ré-exclut le contact principal / nos adresses
@@ -1657,7 +1668,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: nettoyerEmail(ticket.contact_email), subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName(), cc: ccList })
+          body: JSON.stringify({ to: destClient, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName(), cc: ccList })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -1668,6 +1679,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       } catch (e) {
         setReplyNote("Réponse enregistrée ✅ mais l'email a échoué (" + (e.message || e) + "). Le client la verra dans son espace.");
       }
+    } else if (isAdmin && !destClient) {
+      // Aucun email exploitable (ni contact du ticket, ni compte hôtel) :
+      // on avertit clairement l'admin plutôt que d'échouer en silence.
+      setReplyNote("⚠️ Réponse enregistrée mais AUCUN email envoyé : ce ticket n'a pas d'adresse client (ni email de contact, ni email de compte hôtel). Le client ne recevra rien par email. Ajoutez une adresse au contact du ticket pour lui répondre.");
     } else {
       setReplyNote("Message enregistré ✅");
     }
@@ -1682,7 +1697,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: "closed" } : t));
 
     // 2) Notification email au client (optionnelle)
-    if (notify && ticket.contact_email) {
+    const closeHotel = hotels.find(h => h.id === ticket.hotel_id);
+    const closeDest = nettoyerEmail(ticket.contact_email || (closeHotel && closeHotel.account_email) || "").trim();
+    if (notify && closeDest) {
       try {
         const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"} — Résolu`;
         const bodyText =
@@ -1694,7 +1711,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: nettoyerEmail(ticket.contact_email), subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() })
+          body: JSON.stringify({ to: closeDest, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -1705,8 +1722,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       } catch (e) {
         setReplyNote("Ticket fermé ✅ mais l'email a échoué (" + (e.message || e) + ").");
       }
-    } else if (notify && !ticket.contact_email) {
-      setReplyNote("Ticket fermé ✅ (pas d'email client renseigné, aucune notification envoyée).");
+    } else if (notify && !closeDest) {
+      setReplyNote("⚠️ Ticket fermé mais AUCUN email envoyé : pas d'adresse client (ni contact, ni compte hôtel).");
     } else {
       setReplyNote("Ticket fermé sans notification ✅");
     }
@@ -3290,7 +3307,7 @@ const nav = isAdmin
                 )
               ),
               React.createElement('div', { style: { marginBottom: 14 } },
-                React.createElement('label', { style: labelStyle }, "Email professionnel"),
+                React.createElement('label', { style: labelStyle }, "Email professionnel *"),
                 React.createElement('input', { value: supportForm.contactEmail, onChange: e => setSupportForm({ ...supportForm, contactEmail: e.target.value }), placeholder: "vous@hotel.com", style: inputStyle })
               ),
               React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 14 } },
