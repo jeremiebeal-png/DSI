@@ -1979,6 +1979,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [openRapId, setOpenRapId] = useState(null);     // rapport déplié dans la liste
   const [rapForm, setRapForm] = useState(null);
   const [rapLignes, setRapLignes] = useState([]);       // demandes en cours d'édition
+  const [uploadingPJ, setUploadingPJ] = useState({});   // { ligneIndex: true } pendant upload PJ
   const [rapSrvLignes, setRapSrvLignes] = useState([]); // verifs serveurs en cours d'édition
   const [savingRap, setSavingRap] = useState(false);
   const [rapErr, setRapErr] = useState("");
@@ -1994,7 +1995,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     technicien: "", hotel_id: "", services: [],
     serveurs_ok: true, serveurs_note: "", observations: ""
   });
-  const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "" });
+  const emptyLigne = () => ({ description: "", demandeur: "", service: "", statut: "ok", motif: "", explication: "", pieces_jointes: [] });
   const emptySrv = () => ({ libelle: "", ok: true, note: "" });
 
   const ticketVersLigne = (t) => ({
@@ -2103,7 +2104,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     });
     const lignes = (rapDemandes[r.id] || []).map(d => ({
       description: d.description || "", demandeur: d.demandeur || "",
-      service: d.service || "", statut: d.statut || "ok", motif: d.motif || ""
+      service: d.service || "", statut: d.statut || "ok", motif: d.motif || "",
+      explication: d.explication || "", pieces_jointes: Array.isArray(d.pieces_jointes) ? d.pieces_jointes : []
     }));
     setRapLignes(lignes.length ? lignes : [emptyLigne()]);
     const srv = (rapServeurs[r.id] || []).map(s => ({ libelle: s.libelle || "", ok: s.ok !== false, note: s.note || "" }));
@@ -2119,6 +2121,31 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setRapLignes(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l));
   const addLigne = () => setRapLignes(prev => [...prev, emptyLigne()]);
   const removeLigne = (i) => setRapLignes(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev);
+
+  // Upload d'une ou plusieurs pièces jointes sur une ligne de demande.
+  // Réutilise uploadToStorage() (bucket "uploads"). Stocke { name, url, size, type }.
+  const uploadLignePJ = async (i, fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setUploadingPJ(prev => ({ ...prev, [i]: true }));
+    try {
+      const uploaded = [];
+      for (const f of files) {
+        const url = await uploadToStorage(f, "rapports-demandes");
+        uploaded.push({ name: f.name, url, size: f.size, type: f.type || "" });
+      }
+      setRapLignes(prev => prev.map((l, idx) => idx === i
+        ? { ...l, pieces_jointes: [...(l.pieces_jointes || []), ...uploaded] }
+        : l));
+    } catch (e) {
+      setRapErr("Erreur d'upload : " + (e.message || e));
+    } finally {
+      setUploadingPJ(prev => ({ ...prev, [i]: false }));
+    }
+  };
+  const removeLignePJ = (i, pjIdx) => setRapLignes(prev => prev.map((l, idx) => idx === i
+    ? { ...l, pieces_jointes: (l.pieces_jointes || []).filter((_, k) => k !== pjIdx) }
+    : l));
 
   const setSrv = (i, field, val) =>
     setRapSrvLignes(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l));
@@ -2158,6 +2185,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         service: l.service || null,
         statut: l.statut === "attente" ? "attente" : "ok",
         motif: l.statut === "attente" ? (l.motif.trim() || null) : null,
+        explication: (l.explication || "").trim() || null,
+        pieces_jointes: Array.isArray(l.pieces_jointes) ? l.pieces_jointes : [],
         position: i,
       }));
       if (lignes.length) {
@@ -2255,6 +2284,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           const m = doc.splitTextToSize("Motif : " + d.motif, contentW - 30);
           doc.text(m, mL + 30, y); line(m.length * 4.5 + 1);
           doc.setTextColor(30, 30, 30);
+        }
+        if (d.explication) {
+          doc.setFont("helvetica", "italic"); doc.setFontSize(9); doc.setTextColor(90, 90, 90);
+          const ex = doc.splitTextToSize(d.explication, contentW - 30);
+          doc.text(ex, mL + 30, y); line(ex.length * 4.5 + 1);
+          doc.setTextColor(30, 30, 30); doc.setFont("helvetica", "normal");
         }
       });
     }
@@ -4263,7 +4298,11 @@ const nav = isAdmin
                           React.createElement('span', null, d.description),
                           d.demandeur && React.createElement('span', { style: { color: "#999" } }, "  — " + d.demandeur),
                           d.service && React.createElement('span', { style: { marginLeft: 6, fontSize: 10.5, background: "#F0EFF7", color: "#4A4A6A", padding: "1px 7px", borderRadius: 4 } }, d.service),
-                          d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif)
+                          d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif),
+                          d.explication && React.createElement('div', { style: { color: "#555", fontSize: 11.5, marginTop: 3, whiteSpace: "pre-wrap", lineHeight: 1.5 } }, d.explication),
+                          Array.isArray(d.pieces_jointes) && d.pieces_jointes.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 } },
+                            d.pieces_jointes.map((pj, k) => React.createElement('a', { key: k, href: pj.url, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, background: "#F7F5EE", border: "1px solid #E6DFC8", color: G2, padding: "2px 8px", borderRadius: 5, textDecoration: "none" } }, "📄 " + pj.name))
+                          )
                         )
                       ))
                     ),
@@ -4361,7 +4400,26 @@ const nav = isAdmin
                     React.createElement('option', { value: "attente" }, "⏳ En attente")
                   )
                 ),
-                l.statut === "attente" && React.createElement('input', { value: l.motif, onChange: e => setLigne(i, "motif", e.target.value), placeholder: "Pourquoi en attente ?", style: { ...inp, fontSize: 12, marginTop: 8, borderColor: "#F0C98A", background: "#FFFDF8" } })
+                l.statut === "attente" && React.createElement('input', { value: l.motif, onChange: e => setLigne(i, "motif", e.target.value), placeholder: "Pourquoi en attente ?", style: { ...inp, fontSize: 12, marginTop: 8, borderColor: "#F0C98A", background: "#FFFDF8" } }),
+                // Texte libre d'explication
+                React.createElement('textarea', { value: l.explication || "", onChange: e => setLigne(i, "explication", e.target.value), placeholder: "Explication complémentaire (optionnel)…", rows: 2, style: { ...inp, fontSize: 12, marginTop: 8, resize: "vertical" } }),
+                // Pièces jointes de la ligne
+                React.createElement('div', { style: { marginTop: 8 } },
+                  React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                    React.createElement('label', { style: { display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: uploadingPJ[i] ? "wait" : "pointer" } },
+                      uploadingPJ[i] ? "⏳ Envoi…" : "📎 Ajouter une pièce jointe",
+                      React.createElement('input', { type: "file", multiple: true, disabled: !!uploadingPJ[i], onChange: e => { uploadLignePJ(i, e.target.files); e.target.value = ""; }, style: { display: "none" } })
+                    )
+                  ),
+                  (l.pieces_jointes || []).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 6 } },
+                    (l.pieces_jointes || []).map((pj, k) => React.createElement('div', { key: k, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: "white", border: "1px solid #ECECF2", borderRadius: 6, fontSize: 12 } },
+                      React.createElement('span', { style: { flexShrink: 0 } }, "📄"),
+                      React.createElement('a', { href: pj.url, target: "_blank", rel: "noopener noreferrer", style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SB, textDecoration: "none" } }, pj.name),
+                      pj.size ? React.createElement('span', { style: { color: "#999", fontSize: 11, whiteSpace: "nowrap" } }, (pj.size / 1024 < 1024 ? Math.round(pj.size / 1024) + " Ko" : (pj.size / 1048576).toFixed(1) + " Mo")) : null,
+                      React.createElement('button', { onClick: () => removeLignePJ(i, k), title: "Retirer", style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 14, padding: "0 2px", flexShrink: 0 } }, "✕")
+                    ))
+                  )
+                )
               ))
             ),
             React.createElement('button', { onClick: addLigne, style: { marginTop: 10, padding: "7px 12px", background: "none", border: "1px dashed #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter une demande")
