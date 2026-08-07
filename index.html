@@ -778,7 +778,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const res = await fetch(EMAIL_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: SUPPORT_EMAIL, subject, text, replyTo: em })
+        body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject, text, replyTo: em })
       });
       if (!res.ok) { const d = await res.text().catch(() => ""); throw new Error("Statut " + res.status + (d ? " — " + d.slice(0, 160) : "")); }
       setForgotMsg("✅ Votre demande a bien été envoyée au support. Vous serez recontacté rapidement.");
