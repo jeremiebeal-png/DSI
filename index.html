@@ -20,6 +20,7 @@ const { useState, useEffect, useRef } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
+const TEAM_EMAIL = "team@dsihotel.fr";
 const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
 
 // ====== SIGNATURE EMAIL DSI HOTEL ======
@@ -1159,7 +1160,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return { subject, bodyText };
   };
 
-  // Enregistre le ticket en base et retourne son id (ou null en cas d'échec)
+  // Enregistre le ticket en base et retourne { id, reference } (ou null en cas d'échec)
   const logTicketToDb = async () => {
     try {
       const { data, error } = await sb.from("tickets").insert({
@@ -1174,7 +1175,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         status: "open"
       }).select().single();
       if (error) return null;
-      return data.id;
+      return data; // { id, reference, ... }
     } catch (e) { return null; /* silencieux : l'email reste l'envoi prioritaire */ }
   };
 
@@ -1210,17 +1211,30 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setSupportSending(true);
     try {
       // Enregistre le ticket puis archive les pièces jointes dans le portail
-      const newTicketId = await logTicketToDb();
+      const newTicket = await logTicketToDb();
+      const newTicketId = newTicket ? newTicket.id : null;
+      const reference = newTicket && newTicket.reference ? newTicket.reference : null;
       await uploadTicketFiles(supportForm.files, newTicketId, null, "client");
       const attachments = await Promise.all(supportForm.files.map(f => new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve({ filename: f.name, content: reader.result.split(",")[1] });
         reader.readAsDataURL(f);
       })));
+      // Notification à l'équipe DSI (team@dsihotel.fr), avec la référence exacte du
+      // ticket et un lien direct vers le portail. support@dsihotel.com est en copie.
+      // On préfixe le sujet par la référence pour le suivi et le threading.
+      const refPrefix = reference ? `[${reference}] ` : "";
+      const lienTicket = reference
+        ? `https://portail.dsihotel.com/?ticket=${encodeURIComponent(reference)}`
+        : "https://portail.dsihotel.com/";
+      const bodyTeam = bodyText +
+        "\n\n—————————————————————\n" +
+        (reference ? `👉 Accéder au ticket ${reference} : ${lienTicket}\n` : "") +
+        `Répondre à cet email répond directement au client (${emailClean}).`;
       const res = await fetch(EMAIL_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: SUPPORT_EMAIL, subject, text: bodyText, replyTo: supportForm.contactEmail || undefined, attachments })
+        body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject: refPrefix + subject, text: bodyTeam, replyTo: emailClean || undefined, attachments })
       });
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
