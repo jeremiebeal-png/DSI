@@ -22,6 +22,9 @@ const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const SUPPORT_EMAIL = "support@dsihotel.com";
 const TEAM_EMAIL = "team@dsihotel.fr";
 const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
+// Worker dédié CheckCentral (statuts de backup). Ajuster l'URL après déploiement
+// du Worker "dsi-hotel-checkcentral" si le sous-domaine diffère.
+const CHECKCENTRAL_API_URL = "https://dsi-hotel-checkcentral.jeremie-beal.workers.dev/status";
 
 // ====== SIGNATURE EMAIL DSI HOTEL ======
 const SIGN_LOGO_URL = "https://www.dsihotel.com/dsi-logo-gold.png";
@@ -504,6 +507,7 @@ function App() {
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention" },
     { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité" },
     { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types" },
+    { key: "docs",       page: "backups",          icon: "💾", label: "Backups" },
   ];
   useEffect(() => {
     if (!isAdmin) return;
@@ -1726,6 +1730,102 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // ============================================================
+  //  BACKUPS — intégration CheckCentral (admin uniquement)
+  //  Le portail interroge le Worker dédié (relais serveur), qui appelle
+  //  l'API CheckCentral (getChecks) et renvoie les statuts normalisés.
+  //  Les checks sont regroupés par "groupe" CheckCentral. Un mapping
+  //  optionnel (checkcentral_group_map) associe un groupe à un hôtel.
+  // ============================================================
+  const [bkChecks, setBkChecks] = useState([]);
+  const [bkLoading, setBkLoading] = useState(false);
+  const [bkNote, setBkNote] = useState("");
+  const [bkFetchedAt, setBkFetchedAt] = useState(null);
+  const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
+  const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
+
+  const loadBackups = async () => {
+    setBkLoading(true);
+    setBkNote("");
+    try {
+      // Mapping groupe → hôtel (facultatif ; ne bloque pas l'affichage si absent)
+      try {
+        const { data: maps } = await sb.from("checkcentral_group_map").select("group_id,hotel_id");
+        const m = {};
+        (maps || []).forEach(x => { if (x.group_id) m[x.group_id] = x.hotel_id; });
+        setBkGroupMap(m);
+      } catch (e) { /* table peut ne pas exister encore */ }
+
+      const res = await fetch(CHECKCENTRAL_API_URL, { method: "GET" });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        setBkNote("Erreur Worker CheckCentral (" + res.status + ")" + (t ? " — " + t.slice(0, 200) : "") + ".");
+        setBkChecks([]);
+        return;
+      }
+      const data = await res.json();
+      if (data.error) { setBkNote("Erreur : " + data.error + (data.detail ? " — " + data.detail : "")); setBkChecks([]); return; }
+      setBkChecks(data.checks || []);
+      setBkFetchedAt(data.fetchedAt || new Date().toISOString());
+      if ((data.checks || []).length === 0) setBkNote("Aucun check retourné par CheckCentral.");
+    } catch (e) {
+      setBkNote("Erreur : " + (e.message || e) + " (le Worker CheckCentral est-il déployé et l'URL correcte ?)");
+      setBkChecks([]);
+    } finally {
+      setBkLoading(false);
+    }
+  };
+
+  // Statut → couleur/priorité. Failure=rouge, Warning=orange, Success=vert,
+  // le reste (Paused/Resumed/Override...) = gris neutre (états volontaires).
+  const bkStatusMeta = (statut) => {
+    const s = (statut || "").toLowerCase();
+    if (s === "failure") return { color: "#E53E3E", bg: "#FDECEC", label: "Échec", rank: 0 };
+    if (s === "warning") return { color: "#DD6B20", bg: "#FEF0E4", label: "Avertissement", rank: 1 };
+    if (s === "success") return { color: "#2F855A", bg: "#E9F6EE", label: "OK", rank: 3 };
+    return { color: "#718096", bg: "#F0F0F4", label: statut || "—", rank: 2 };
+  };
+
+  const fmtDateHeureFr2 = (iso) => { try { return iso ? new Date(iso).toLocaleString("fr-FR") : "—"; } catch (e) { return "—"; } };
+
+  // Regroupe les checks par groupe et calcule le pire statut du groupe.
+  const bkGroupes = (() => {
+    const map = {};
+    (bkChecks || []).forEach(c => {
+      const key = c.group_id || c.group || "(sans groupe)";
+      if (!map[key]) map[key] = { key, group_id: c.group_id, group: c.group || "(sans groupe)", checks: [] };
+      map[key].checks.push(c);
+    });
+    const arr = Object.values(map).map(g => {
+      // pire rang = statut le plus grave (rank 0 = échec)
+      let pire = 3;
+      g.checks.forEach(c => { pire = Math.min(pire, bkStatusMeta(c.status).rank); });
+      g.pireRank = pire;
+      g.nbEchec = g.checks.filter(c => bkStatusMeta(c.status).rank === 0).length;
+      g.nbWarn = g.checks.filter(c => bkStatusMeta(c.status).rank === 1).length;
+      g.nbOk = g.checks.filter(c => bkStatusMeta(c.status).rank === 3).length;
+      // tri interne des checks par gravité puis nom
+      g.checks.sort((a, b) => {
+        const ra = bkStatusMeta(a.status).rank, rb = bkStatusMeta(b.status).rank;
+        return ra !== rb ? ra - rb : String(a.name).localeCompare(String(b.name));
+      });
+      return g;
+    });
+    // groupes triés : ceux avec échec d'abord, puis warning, puis le reste
+    arr.sort((a, b) => a.pireRank - b.pireRank || String(a.group).localeCompare(String(b.group)));
+    return arr;
+  })();
+
+  const bkStats = (() => {
+    let echec = 0, warn = 0, ok = 0, autre = 0;
+    (bkChecks || []).forEach(c => {
+      const r = bkStatusMeta(c.status).rank;
+      if (r === 0) echec++; else if (r === 1) warn++; else if (r === 3) ok++; else autre++;
+    });
+    const groupesEnEchec = bkGroupes.filter(g => g.pireRank === 0).length;
+    return { total: bkChecks.length, echec, warn, ok, autre, groupesEnEchec, nbGroupes: bkGroupes.length };
+  })();
+
 
 
   useEffect(() => {
@@ -2459,6 +2559,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   useEffect(() => {
     if (page === "rapports" && isAdmin) { loadRapports(); loadRapportEnvois(); }
+    if (page === "backups" && isAdmin) loadBackups();
   }, [page, profile]);
 
   const openNewRapport = () => {
@@ -4431,6 +4532,79 @@ const nav = isAdmin
   };
 
   // --- Page ADMIN : sélection client + période + génération + envoi ---
+  // ---------- BACKUPS (CheckCentral) — admin uniquement ----------
+  if (page === "backups" && isAdmin) {
+    const nomGroupe = (g) => {
+      const hid = g.group_id && bkGroupMap[g.group_id];
+      const hotel = hid && hotels.find(h => h.id === hid);
+      return hotel ? hotel.name : g.group;
+    };
+    const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Statut des sauvegardes surveillées par CheckCentral, regroupées par site. Les groupes présentant un échec apparaissent en premier. Données lues en direct via l'API CheckCentral."
+      ),
+      // Bandeau de synthèse
+      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
+        [
+          { l: "Checks au total", v: bkStats.total, c: "#0F0F24" },
+          { l: "En échec", v: bkStats.echec, c: "#E53E3E" },
+          { l: "Avertissements", v: bkStats.warn, c: "#DD6B20" },
+          { l: "OK", v: bkStats.ok, c: "#2F855A" },
+          { l: "Sites en échec", v: bkStats.groupesEnEchec + " / " + bkStats.nbGroupes, c: bkStats.groupesEnEchec > 0 ? "#E53E3E" : "#2F855A" },
+        ].map((s, i) => React.createElement('div', { key: i, style: { flex: "1 1 130px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
+          React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 5 } }, s.l),
+          React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: s.c } }, String(s.v))
+        ))
+      ),
+      // Barre d'actions
+      React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
+        React.createElement('button', { onClick: loadBackups, disabled: bkLoading, style: { padding: "8px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: bkLoading ? 0.6 : 1 } }, bkLoading ? "Actualisation..." : "🔄 Actualiser"),
+        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt))
+      ),
+      bkNote && React.createElement('div', { style: { fontSize: 12, color: bkNote.startsWith("Erreur") ? "#C53030" : "#666", marginBottom: 14, background: bkNote.startsWith("Erreur") ? "#FDECEC" : "#F6F6FA", border: "1px solid " + (bkNote.startsWith("Erreur") ? "#F5C6C6" : "#E8E8F0"), borderRadius: 8, padding: "9px 12px" } }, bkNote),
+      // Liste des groupes
+      bkLoading && bkChecks.length === 0
+        ? React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Chargement des statuts...")
+        : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
+            bkGroupes.map(g => {
+              const meta = bkStatusMeta(g.pireRank === 0 ? "Failure" : g.pireRank === 1 ? "Warning" : g.pireRank === 3 ? "Success" : "Autre");
+              const ouvert = !!bkOpenGroups[g.key];
+              return React.createElement('div', { key: g.key, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
+                // En-tête du groupe (cliquable)
+                React.createElement('div', { onClick: () => toggleGroupe(g.key), style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+                  React.createElement('span', { style: { width: 10, height: 10, borderRadius: "50%", background: meta.color, flexShrink: 0 } }),
+                  React.createElement('div', { style: { flex: 1 } },
+                    React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: "#222" } }, nomGroupe(g)),
+                    React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 2 } }, g.checks.length + " check" + (g.checks.length > 1 ? "s" : ""))
+                  ),
+                  // Compteurs
+                  g.nbEchec > 0 && React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: "#E53E3E", background: "#FDECEC", padding: "2px 9px", borderRadius: 20 } }, g.nbEchec + " échec" + (g.nbEchec > 1 ? "s" : "")),
+                  g.nbWarn > 0 && React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: "#DD6B20", background: "#FEF0E4", padding: "2px 9px", borderRadius: 20 } }, g.nbWarn),
+                  g.nbOk > 0 && React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: "#2F855A", background: "#E9F6EE", padding: "2px 9px", borderRadius: 20 } }, g.nbOk + " OK"),
+                  React.createElement('span', { style: { fontSize: 12, color: "#AAA", marginLeft: 4 } }, ouvert ? "▲" : "▼")
+                ),
+                // Détail des checks du groupe
+                ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8" } },
+                  g.checks.map((c, i) => {
+                    const cm = bkStatusMeta(c.status);
+                    return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < g.checks.length - 1 ? "1px solid #F6F6FA" : "none" } },
+                      React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: cm.color, flexShrink: 0 } }),
+                      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                        React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
+                        c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description)
+                      ),
+                      React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(c.updatedIso)),
+                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: cm.color, background: cm.bg, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap" } }, cm.label)
+                    );
+                  })
+                )
+              );
+            })
+          )
+    );
+  }
+
   if (page === "rapport-tickets" && isAdmin) {
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
@@ -5027,7 +5201,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
