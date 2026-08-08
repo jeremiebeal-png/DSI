@@ -499,6 +499,7 @@ function App() {
     { key: "procedures", page: "proc-admin",      icon: "📚", label: "Gérer les procédures" },
     { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Baie Informatique" },
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
+    { key: "tickets",    page: "rapport-tickets",  icon: "📈", label: "Rapport Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention" },
     { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité" },
@@ -1355,6 +1356,294 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setTicketState(map);
   };
 
+  // ============================================================
+  //  RAPPORT DE SUIVI DES TICKETS
+  //  - Admin : choisit un hôtel + une période, visualise, exporte, envoie.
+  //  - Superviseur : consulte le rapport de son propre hôtel (lecture seule).
+  // ============================================================
+  const [rapTkHotel, setRapTkHotel] = useState("");      // hôtel sélectionné (admin)
+  const [rapTkDu, setRapTkDu] = useState("");             // date début (YYYY-MM-DD)
+  const [rapTkAu, setRapTkAu] = useState("");             // date fin (YYYY-MM-DD)
+  const [rapTkRows, setRapTkRows] = useState([]);         // lignes calculées
+  const [rapTkLoading, setRapTkLoading] = useState(false);
+  const [rapTkNote, setRapTkNote] = useState("");
+  const [rapTkGenere, setRapTkGenere] = useState(false);  // un rapport a été généré
+  const [rapTkEnvoi, setRapTkEnvoi] = useState(false);     // envoi email en cours
+
+  // Par défaut : le mois en cours (du 1er à aujourd'hui)
+  useEffect(() => {
+    if (!rapTkDu && !rapTkAu) {
+      const now = new Date();
+      const debut = new Date(now.getFullYear(), now.getMonth(), 1);
+      const iso = (d) => d.toISOString().slice(0, 10);
+      setRapTkDu(iso(debut));
+      setRapTkAu(iso(now));
+    }
+  }, []);
+
+  // Charge les tickets d'un hôtel sur la période et calcule les métriques.
+  //  - hotelId : l'hôtel ciblé (pour le superviseur, c'est le sien, imposé)
+  const genererRapportTickets = async (hotelIdForce) => {
+    const hid = hotelIdForce || rapTkHotel;
+    if (!hid) { setRapTkNote("Veuillez choisir un établissement."); return; }
+    setRapTkLoading(true);
+    setRapTkNote("");
+    setRapTkGenere(false);
+    try {
+      // Bornes de période : on inclut toute la journée de fin.
+      const bDu = rapTkDu ? new Date(rapTkDu + "T00:00:00").toISOString() : null;
+      const bAu = rapTkAu ? new Date(rapTkAu + "T23:59:59").toISOString() : null;
+
+      let q = sb.from("tickets").select("*").eq("hotel_id", hid).order("created_at", { ascending: false });
+      if (bDu) q = q.gte("created_at", bDu);
+      if (bAu) q = q.lte("created_at", bAu);
+      const { data: tks, error } = await q;
+      if (error) throw error;
+
+      const ids = (tks || []).map(t => t.id);
+      // Récupère tous les messages de ces tickets pour compter et mesurer le délai.
+      let msgsByTicket = {};
+      if (ids.length > 0) {
+        const { data: msgs } = await sb.from("ticket_messages")
+          .select("ticket_id,sender_role,created_at")
+          .in("ticket_id", ids)
+          .order("created_at", { ascending: true });
+        (msgs || []).forEach(m => { (msgsByTicket[m.ticket_id] = msgsByTicket[m.ticket_id] || []).push(m); });
+      }
+
+      const rows = (tks || []).map(t => {
+        const ms = msgsByTicket[t.id] || [];
+        const nbMessages = ms.length;
+        // Délai de 1re réponse = écart entre création du ticket et 1er message "admin".
+        const premiereReponse = ms.find(m => m.sender_role === "admin");
+        let delaiH = null;
+        if (premiereReponse) {
+          const diffMs = new Date(premiereReponse.created_at) - new Date(t.created_at);
+          if (diffMs >= 0) delaiH = diffMs / 3600000; // en heures
+        }
+        return {
+          reference: t.reference || "—",
+          subject: t.subject || t.category || "(sans objet)",
+          category: t.category || "—",
+          priority: t.priority || "—",
+          status: t.status,
+          created_at: t.created_at,
+          closed_at: t.closed_at || null,
+          nbMessages,
+          delaiH,
+        };
+      });
+      setRapTkRows(rows);
+      setRapTkGenere(true);
+      if (rows.length === 0) setRapTkNote("Aucun ticket sur cette période pour cet établissement.");
+    } catch (e) {
+      setRapTkNote("Erreur : " + (e.message || e));
+    } finally {
+      setRapTkLoading(false);
+    }
+  };
+
+  // Statistiques de synthèse à partir des lignes calculées.
+  const rapTkStats = (() => {
+    const total = rapTkRows.length;
+    const ouverts = rapTkRows.filter(r => r.status !== "closed").length;
+    const fermes = total - ouverts;
+    const delais = rapTkRows.map(r => r.delaiH).filter(v => v !== null);
+    const delaiMoyen = delais.length ? (delais.reduce((a, b) => a + b, 0) / delais.length) : null;
+    return { total, ouverts, fermes, delaiMoyen };
+  })();
+
+  // Formatage lisible d'un délai en heures (ex. "3 h", "1 j 4 h").
+  const fmtDelai = (h) => {
+    if (h === null || h === undefined) return "—";
+    if (h < 24) return Math.round(h) + " h";
+    const j = Math.floor(h / 24);
+    const reste = Math.round(h % 24);
+    return j + " j" + (reste ? " " + reste + " h" : "");
+  };
+  const fmtDateHeureFr = (d) => { try { return new Date(d).toLocaleString("fr-FR"); } catch (e) { return d || "—"; } };
+
+  // ---- Export CSV (ouvre directement dans Excel) ----
+  const exportRapportTicketsCsv = () => {
+    const hotel = hotels.find(h => h.id === (rapTkHotel || myHotelId));
+    const nomHotel = hotel ? hotel.name : "etablissement";
+    const sep = ";"; // Excel FR attend le point-virgule
+    const esc = (v) => {
+      const s = String(v === null || v === undefined ? "" : v);
+      return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const entete = ["Référence", "Titre", "Catégorie", "Priorité", "Statut", "Ouvert le", "Fermé le", "Nb messages", "Délai 1re réponse"];
+    const lignes = rapTkRows.map(r => [
+      r.reference, r.subject, r.category, r.priority,
+      r.status === "closed" ? "Fermé" : "Ouvert",
+      fmtDateHeureFr(r.created_at),
+      r.closed_at ? fmtDateHeureFr(r.closed_at) : "",
+      r.nbMessages,
+      fmtDelai(r.delaiH),
+    ]);
+    const contenu = [entete, ...lignes].map(row => row.map(esc).join(sep)).join("\r\n");
+    // BOM UTF-8 pour que les accents s'affichent correctement dans Excel
+    const blob = new Blob(["\uFEFF" + contenu], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Rapport_tickets_" + nomHotel.replace(/[^\w]+/g, "_") + "_" + (rapTkDu || "") + "_" + (rapTkAu || "") + ".csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ---- Export PDF (jsPDF) — dessine le tableau manuellement ----
+  const buildRapportTicketsPdf = () => {
+    const hotel = hotels.find(h => h.id === (rapTkHotel || myHotelId));
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+    const pageW = 297, pageH = 210, mL = 12, mR = 12;
+    let y = 18;
+
+    // En-tête (même charte que le rapport d'intervention)
+    doc.setFillColor(15, 15, 36);
+    doc.rect(0, 0, pageW, 26, "F");
+    doc.setTextColor(201, 168, 76);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(17);
+    doc.text("DSI HOTEL", mL, 12);
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+    doc.text("Rapport de suivi des tickets", mL, 20);
+    doc.setFontSize(8);
+    doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23", pageW - mR, 11, { align: "right" });
+    doc.text("support@dsihotel.com  •  www.dsihotel.com", pageW - mR, 17, { align: "right" });
+
+    y = 36;
+    doc.setTextColor(20, 20, 40);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+    doc.text("Établissement : " + (hotel ? hotel.name : "—"), mL, y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    const periode = "Période : " + (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui");
+    doc.text(periode, pageW - mR, y, { align: "right" });
+    y += 7;
+
+    // Bandeau de synthèse
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(60, 60, 70);
+    doc.text(
+      "Total : " + rapTkStats.total + "   |   Ouverts : " + rapTkStats.ouverts +
+      "   |   Fermés : " + rapTkStats.fermes +
+      "   |   Délai moyen 1re réponse : " + fmtDelai(rapTkStats.delaiMoyen),
+      mL, y
+    );
+    y += 6;
+
+    // Tableau : colonnes (largeurs en mm, total ~ 273)
+    const cols = [
+      { t: "Référence", w: 24 },
+      { t: "Titre", w: 78 },
+      { t: "Catégorie", w: 30 },
+      { t: "Prio.", w: 18 },
+      { t: "Statut", w: 18 },
+      { t: "Ouvert le", w: 34 },
+      { t: "Fermé le", w: 34 },
+      { t: "Msg", w: 12 },
+      { t: "Délai 1re rép.", w: 25 },
+    ];
+    const drawHeader = () => {
+      doc.setFillColor(15, 15, 36);
+      doc.rect(mL, y, cols.reduce((a, c) => a + c.w, 0), 8, "F");
+      doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      let x = mL;
+      cols.forEach(c => { doc.text(c.t, x + 1.5, y + 5.3); x += c.w; });
+      y += 8;
+      doc.setTextColor(30, 30, 30); doc.setFont("helvetica", "normal");
+    };
+    drawHeader();
+
+    rapTkRows.forEach((r, i) => {
+      // Retour à la ligne du titre si trop long
+      const titreLines = doc.splitTextToSize(r.subject, cols[1].w - 3);
+      const rowH = Math.max(6, titreLines.length * 4 + 2);
+      if (y + rowH > pageH - 12) { doc.addPage(); y = 16; drawHeader(); }
+      if (i % 2 === 0) { doc.setFillColor(245, 245, 250); doc.rect(mL, y, cols.reduce((a, c) => a + c.w, 0), rowH, "F"); }
+      doc.setFontSize(8); doc.setTextColor(30, 30, 30);
+      const cells = [
+        r.reference,
+        null, // titre géré à part (multi-lignes)
+        r.category,
+        r.priority,
+        r.status === "closed" ? "Fermé" : "Ouvert",
+        r.created_at ? fmtDateFr(r.created_at) : "—",
+        r.closed_at ? fmtDateFr(r.closed_at) : "—",
+        String(r.nbMessages),
+        fmtDelai(r.delaiH),
+      ];
+      let x = mL;
+      cols.forEach((c, ci) => {
+        if (ci === 1) {
+          doc.text(titreLines, x + 1.5, y + 4);
+        } else {
+          doc.text(String(cells[ci] || "—"), x + 1.5, y + 4);
+        }
+        x += c.w;
+      });
+      y += rowH;
+    });
+
+    // Pied de page
+    doc.setFontSize(7); doc.setTextColor(150, 150, 150);
+    doc.text("Document généré le " + new Date().toLocaleString("fr-FR") + " — DSI Hotel", mL, pageH - 6);
+    return { doc, hotel };
+  };
+
+  const exportRapportTicketsPdf = () => {
+    const { doc, hotel } = buildRapportTicketsPdf();
+    const nomHotel = hotel ? hotel.name.replace(/[^\w]+/g, "_") : "etablissement";
+    doc.save("Rapport_tickets_" + nomHotel + "_" + (rapTkDu || "") + "_" + (rapTkAu || "") + ".pdf");
+  };
+
+  // ---- Envoi du rapport au superviseur du client (email + PDF joint) ----
+  // Destinataire = l'email de compte de l'hôtel (account_email), qui est celui
+  // du superviseur. On peut aussi retomber sur standard_email si besoin.
+  const envoyerRapportTicketsEmail = async () => {
+    const hotel = hotels.find(h => h.id === rapTkHotel);
+    if (!hotel) { setRapTkNote("Veuillez d'abord choisir un établissement et générer le rapport."); return; }
+    const dest = nettoyerEmail((hotel.account_email || hotel.standard_email || "")).trim();
+    if (!dest) { setRapTkNote("⚠️ Aucun email de compte pour cet établissement : impossible d'envoyer."); return; }
+    setRapTkEnvoi(true);
+    setRapTkNote("Envoi en cours…");
+    try {
+      const { doc } = buildRapportTicketsPdf();
+      const pdfB64 = doc.output("datauristring").split(",")[1];
+      const periode = (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui");
+      const subject = "Rapport de suivi des tickets — " + hotel.name + " — " + periode;
+      const bodyText =
+        "Bonjour,\n\n" +
+        "Veuillez trouver ci-joint le rapport de suivi de vos tickets de support pour la période du " + periode + ".\n\n" +
+        "Synthèse : " + rapTkStats.total + " ticket(s) au total, dont " + rapTkStats.ouverts + " ouvert(s) et " + rapTkStats.fermes + " fermé(s).\n\n" +
+        "Ce rapport est également consultable à tout moment depuis votre espace, rubrique « Rapport Tickets ».\n\n" +
+        "Nous restons à votre disposition pour toute question.";
+      const mail = buildSignedEmail(bodyText);
+      const nomFichier = "Rapport_tickets_" + hotel.name.replace(/[^\w]+/g, "_") + ".pdf";
+      const res = await fetch(EMAIL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: dest, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL,
+          fromName: adminFromName(),
+          attachments: [{ filename: nomFichier, content: pdfB64 }]
+        })
+      });
+      if (!res.ok) {
+        const d = await res.text().catch(() => "");
+        setRapTkNote("❌ L'email n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
+      } else {
+        setRapTkNote("✅ Rapport envoyé à " + dest);
+      }
+    } catch (e) {
+      setRapTkNote("❌ Échec de l'envoi (" + (e.message || e) + ").");
+    } finally {
+      setRapTkEnvoi(false);
+    }
+  };
+
+
+
   useEffect(() => {
     if (page === "tickets-admin" || page === "tickets-client") loadTickets();
   }, [page, profile]);
@@ -1365,6 +1654,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (page === "securite" && (isSuperAdmin || isSupervisor)) loadSecFactors();
     if ((page === "ninjaone" || page === "rapport-securite") && profile) loadNjRapports();
     if (page === "rapport-intervention" && isSupervisor) loadRapportsClient();
+    if (page === "rapport-tickets" && isSupervisor && myHotelId) genererRapportTickets(myHotelId);
   }, [page, profile]);
 
   // Rapports NinjaOne : lecture directe (RLS autorise admin=tout, superviseur=son hôtel).
@@ -1762,10 +2052,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ---------- TICKETS : FERMER (avec ou sans notification email) ----------
   const closeTicket = async (ticket, notify) => {
-    // 1) Fermer le ticket en base
-    const { error } = await sb.from("tickets").update({ status: "closed" }).eq("id", ticket.id);
+    // 1) Fermer le ticket en base (avec la date de fermeture)
+    const fermeLe = new Date().toISOString();
+    const { error } = await sb.from("tickets").update({ status: "closed", closed_at: fermeLe }).eq("id", ticket.id);
     if (error) { setReplyNote("Erreur : impossible de fermer le ticket (" + error.message + ")."); return; }
-    setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: "closed" } : t));
+    setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: "closed", closed_at: fermeLe } : t));
 
     // 2) Notification email au client (optionnelle)
     const closeHotel = hotels.find(h => h.id === ticket.hotel_id);
@@ -2792,6 +3083,7 @@ const nav = isAdmin
         { p: "mon-installation", icon: "🗂️", label: "Baie Informatique" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
+        ...(isSupervisor ? [{ p: "rapport-tickets", icon: "📈", label: "Rapport Tickets" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
         ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapport Intervention" }] : []),
         ...(isSupervisor ? [{ p: "securite", icon: "🔐", label: "Sécurité" }] : [])
@@ -3658,8 +3950,13 @@ const nav = isAdmin
                   return liste.length > 0 ? React.createElement('div', { style: { marginTop: 2, color: "#7A6" } }, "👥 En copie : " + liste.join(", ")) : null;
                 })()
               ),
+              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
+                nettoyerSignature(t.message)
+              ),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               msgsSansDoublon(msgs, t).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
-                msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
+                msgsSansDoublon(msgs, t).map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
@@ -3667,11 +3964,6 @@ const nav = isAdmin
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
-              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
-                nettoyerSignature(t.message)
-              ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => { const v = e.target.value; setReplyText(v); if (replyHtmlOverride && v.trim() !== (replyHtmlOverride.plain || "").trim()) setReplyHtmlOverride(null); }, placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 210, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 // ---- Personnes en copie (Cc) : cases à cocher + ajout manuel ----
@@ -3789,9 +4081,14 @@ const nav = isAdmin
               React.createElement('span', { style: { fontSize: 12, color: "#AAA" } }, isOpen ? "▲" : "▼")
             ),
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
+              React.createElement('div', { style: { background: "white", border: "1px solid #EEE", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
+                nettoyerSignature(t.message)
+              ),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
               msgsSansDoublon(msgs, t).length > 0
                 ? React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
-                    msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
+                    msgsSansDoublon(msgs, t).map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                       m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
@@ -3800,11 +4097,6 @@ const nav = isAdmin
                     ))
                   )
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
-              React.createElement('div', { style: { background: "white", border: "1px solid #EEE", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
-                nettoyerSignature(t.message)
-              ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => setReplyText(e.target.value), placeholder: "Ajouter un message...", style: { width: "100%", minHeight: 60, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 React.createElement('div', { style: { marginBottom: 8 } },
@@ -3997,6 +4289,118 @@ const nav = isAdmin
         React.createElement('span', { style: { color: G2, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" } }, "Ouvrir ↗")
       )),
       !njLoading && njRapports.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun rapport de sécurité pour le moment.")
+    );
+  }
+
+  // ---------- RAPPORT DE SUIVI DES TICKETS ----------
+  // Tableau + barre de synthèse + boutons export, partagés admin/superviseur.
+  const renderRapportTicketsTable = () => {
+    const stColor = (s) => s === "closed" ? "#999" : "#2F855A";
+    const prColor = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
+    const th = (txt, extra) => React.createElement('th', { style: Object.assign({ textAlign: "left", padding: "9px 10px", fontSize: 11, fontWeight: 600, color: "#666", borderBottom: "2px solid #E8E8F0", whiteSpace: "nowrap" }, extra || {}) }, txt);
+    const td = (child, extra) => React.createElement('td', { style: Object.assign({ padding: "9px 10px", fontSize: 12, color: "#333", borderBottom: "1px solid #F2F2F6", verticalAlign: "top" }, extra || {}) }, child);
+    return React.createElement('div', null,
+      // Bandeau de synthèse (4 chiffres clés)
+      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
+        [
+          { l: "Total tickets", v: rapTkStats.total, c: "#0F0F24" },
+          { l: "Ouverts", v: rapTkStats.ouverts, c: "#2F855A" },
+          { l: "Fermés", v: rapTkStats.fermes, c: "#888" },
+          { l: "Délai moyen 1re réponse", v: fmtDelai(rapTkStats.delaiMoyen), c: G2 },
+        ].map((s, i) => React.createElement('div', { key: i, style: { flex: "1 1 150px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
+          React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 5 } }, s.l),
+          React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: s.c } }, String(s.v))
+        ))
+      ),
+      // Boutons d'export
+      rapTkRows.length > 0 && React.createElement('div', { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } },
+        React.createElement('button', { onClick: exportRapportTicketsPdf, style: { padding: "8px 15px", background: "#0F0F24", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "📄 Exporter en PDF"),
+        React.createElement('button', { onClick: exportRapportTicketsCsv, style: { padding: "8px 15px", background: "white", border: "1px solid #2F855A", color: "#2F855A", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "📊 Exporter en Excel (CSV)")
+      ),
+      // Tableau
+      rapTkRows.length > 0
+        ? React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "auto" } },
+            React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 860 } },
+              React.createElement('thead', null,
+                React.createElement('tr', null,
+                  th("Référence"), th("Titre"), th("Catégorie"), th("Priorité"), th("Statut"),
+                  th("Ouvert le"), th("Fermé le"), th("Msg", { textAlign: "center" }), th("Délai 1re rép.")
+                )
+              ),
+              React.createElement('tbody', null,
+                rapTkRows.map((r, i) => React.createElement('tr', { key: i },
+                  td(React.createElement('span', { style: { fontWeight: 600, color: G2 } }, r.reference)),
+                  td(r.subject, { minWidth: 240 }),
+                  td(r.category),
+                  td(React.createElement('span', { style: { fontWeight: 600, color: prColor(r.priority) } }, r.priority)),
+                  td(React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: stColor(r.status), background: stColor(r.status) + "18", padding: "2px 9px", borderRadius: 20 } }, r.status === "closed" ? "Fermé" : "Ouvert")),
+                  td(fmtDateHeureFr(r.created_at), { whiteSpace: "nowrap", fontSize: 11 }),
+                  td(r.closed_at ? fmtDateHeureFr(r.closed_at) : "—", { whiteSpace: "nowrap", fontSize: 11 }),
+                  td(String(r.nbMessages), { textAlign: "center" }),
+                  td(fmtDelai(r.delaiH), { whiteSpace: "nowrap" })
+                ))
+              )
+            )
+          )
+        : (rapTkGenere && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun ticket sur cette période."))
+    );
+  };
+
+  // --- Page ADMIN : sélection client + période + génération + envoi ---
+  if (page === "rapport-tickets" && isAdmin) {
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Générez un rapport de suivi des tickets par établissement et par période. Vous pouvez l'exporter (PDF / Excel) ou l'envoyer au superviseur du client, qui pourra le consulter depuis son espace."
+      ),
+      // Filtres
+      React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 16, marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" } },
+        React.createElement('div', { style: { flex: "1 1 220px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Établissement"),
+          React.createElement('select', { value: rapTkHotel, onChange: e => setRapTkHotel(e.target.value), style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } },
+            React.createElement('option', { value: "" }, "— Choisir un établissement —"),
+            hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+          )
+        ),
+        React.createElement('div', { style: { flex: "0 1 150px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Du"),
+          React.createElement('input', { type: "date", value: rapTkDu, onChange: e => setRapTkDu(e.target.value), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } })
+        ),
+        React.createElement('div', { style: { flex: "0 1 150px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Au"),
+          React.createElement('input', { type: "date", value: rapTkAu, onChange: e => setRapTkAu(e.target.value), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } })
+        ),
+        React.createElement('button', { onClick: () => genererRapportTickets(), disabled: rapTkLoading, style: { padding: "9px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: rapTkLoading ? 0.6 : 1 } }, rapTkLoading ? "Génération..." : "Générer le rapport")
+      ),
+      rapTkNote && React.createElement('div', { style: { fontSize: 12, color: rapTkNote.startsWith("Erreur") ? "#C53030" : "#666", marginBottom: 14 } }, rapTkNote),
+      // Envoi au superviseur (visible seulement après génération, si hôtel choisi)
+      rapTkGenere && rapTkRows.length > 0 && React.createElement('div', { style: { background: "#FBFBFD", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px", marginBottom: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+        React.createElement('span', { style: { fontSize: 12, color: "#555", flex: "1 1 auto" } }, "Le superviseur de cet établissement peut déjà consulter ce rapport depuis son espace (rubrique « Rapport Tickets »). Vous pouvez aussi le lui envoyer par email avec le PDF joint."),
+        React.createElement('button', { onClick: () => envoyerRapportTicketsEmail(), disabled: rapTkEnvoi, style: { padding: "8px 15px", background: "#0F0F24", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: rapTkEnvoi ? 0.6 : 1 } }, rapTkEnvoi ? "Envoi..." : "✉️ Envoyer au client")
+      ),
+      renderRapportTicketsTable()
+    );
+  }
+
+  // --- Page SUPERVISEUR : lecture seule de son propre hôtel ---
+  if (page === "rapport-tickets" && isSupervisor) {
+    const monHotel = hotels.find(h => h.id === myHotelId);
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Suivi de vos tickets de support" + (monHotel ? " — " + monHotel.name : "") + ". Choisissez une période puis exportez le rapport en PDF ou Excel si besoin."
+      ),
+      React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 16, marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" } },
+        React.createElement('div', { style: { flex: "0 1 150px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Du"),
+          React.createElement('input', { type: "date", value: rapTkDu, onChange: e => setRapTkDu(e.target.value), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } })
+        ),
+        React.createElement('div', { style: { flex: "0 1 150px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Au"),
+          React.createElement('input', { type: "date", value: rapTkAu, onChange: e => setRapTkAu(e.target.value), style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } })
+        ),
+        React.createElement('button', { onClick: () => genererRapportTickets(myHotelId), disabled: rapTkLoading, style: { padding: "9px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: rapTkLoading ? 0.6 : 1 } }, rapTkLoading ? "Chargement..." : "Actualiser")
+      ),
+      rapTkNote && React.createElement('div', { style: { fontSize: 12, color: rapTkNote.startsWith("Erreur") ? "#C53030" : "#666", marginBottom: 14 } }, rapTkNote),
+      renderRapportTicketsTable()
     );
   }
 
@@ -4539,7 +4943,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
