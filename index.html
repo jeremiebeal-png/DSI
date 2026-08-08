@@ -1355,89 +1355,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setTicketState(map);
   };
 
-  // ====== ALERTE SONORE (admins + super-admin) — nouveau ticket / nouvelle réponse client ======
-  // Le son est généré à la volée via la Web Audio API : aucun fichier externe à héberger.
-  // Les navigateurs bloquent l'audio tant que l'utilisateur n'a pas interagi avec la page :
-  // on "débloque" donc le contexte audio au premier clic/touche.
-  const audioCtxRef = useRef(null);
-  const audioReadyRef = useRef(false);
-
-  useEffect(() => {
-    const debloquer = () => {
-      try {
-        if (!audioCtxRef.current) {
-          const AC = window.AudioContext || window.webkitAudioContext;
-          if (AC) audioCtxRef.current = new AC();
-        }
-        if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-          audioCtxRef.current.resume();
-        }
-        audioReadyRef.current = true;
-      } catch (e) {}
-    };
-    window.addEventListener("click", debloquer);
-    window.addEventListener("keydown", debloquer);
-    return () => {
-      window.removeEventListener("click", debloquer);
-      window.removeEventListener("keydown", debloquer);
-    };
-  }, []);
-
-  // Joue un petit "bip-bip" à deux notes (agréable, non agressif).
-  const jouerSonAlerte = () => {
-    try {
-      const ctx = audioCtxRef.current;
-      if (!ctx || !audioReadyRef.current) return;
-      if (ctx.state === "suspended") ctx.resume();
-      const notes = [880, 1174]; // La5 puis Ré6
-      notes.forEach((freq, i) => {
-        const t0 = ctx.currentTime + i * 0.16;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, t0);
-        gain.gain.setValueAtTime(0.0001, t0);
-        gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(t0);
-        osc.stop(t0 + 0.16);
-      });
-    } catch (e) {}
-  };
-
-  // Abonnement Realtime : uniquement pour les admins (dont le super-admin).
-  // Nécessite que la réplication Realtime soit activée sur les tables
-  // "tickets" et "ticket_messages" dans Supabase (voir instructions).
-  useEffect(() => {
-    if (!isAdmin) return;
-
-    const canal = sb
-      .channel("alerte-tickets")
-      // Nouveau ticket créé (portail client OU email entrant)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "tickets" },
-        () => { jouerSonAlerte(); if (page === "tickets-admin") loadTickets(); }
-      )
-      // Nouvelle réponse — on ne sonne que si elle vient d'un client,
-      // jamais pour les messages émis par le support lui-même.
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "ticket_messages" },
-        (payload) => {
-          const role = payload && payload.new && payload.new.sender_role;
-          if (role === "client") {
-            jouerSonAlerte();
-            if (page === "tickets-admin") loadTickets();
-          }
-        }
-      )
-      .subscribe();
-
-    return () => { sb.removeChannel(canal); };
-  }, [isAdmin, page]);
-
   useEffect(() => {
     if (page === "tickets-admin" || page === "tickets-client") loadTickets();
   }, [page, profile]);
@@ -3741,13 +3658,8 @@ const nav = isAdmin
                   return liste.length > 0 ? React.createElement('div', { style: { marginTop: 2, color: "#7A6" } }, "👥 En copie : " + liste.join(", ")) : null;
                 })()
               ),
-              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
-                nettoyerSignature(t.message)
-              ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               msgsSansDoublon(msgs, t).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
-                msgsSansDoublon(msgs, t).map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
+                msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
@@ -3755,6 +3667,11 @@ const nav = isAdmin
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
+              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
+                nettoyerSignature(t.message)
+              ),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => { const v = e.target.value; setReplyText(v); if (replyHtmlOverride && v.trim() !== (replyHtmlOverride.plain || "").trim()) setReplyHtmlOverride(null); }, placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 210, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 // ---- Personnes en copie (Cc) : cases à cocher + ajout manuel ----
@@ -3872,14 +3789,9 @@ const nav = isAdmin
               React.createElement('span', { style: { fontSize: 12, color: "#AAA" } }, isOpen ? "▲" : "▼")
             ),
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
-              React.createElement('div', { style: { background: "white", border: "1px solid #EEE", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
-                nettoyerSignature(t.message)
-              ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
               msgsSansDoublon(msgs, t).length > 0
                 ? React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
-                    msgsSansDoublon(msgs, t).map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
+                    msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                       m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
@@ -3888,6 +3800,11 @@ const nav = isAdmin
                     ))
                   )
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
+              React.createElement('div', { style: { background: "white", border: "1px solid #EEE", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
+                nettoyerSignature(t.message)
+              ),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => setReplyText(e.target.value), placeholder: "Ajouter un message...", style: { width: "100%", minHeight: 60, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 React.createElement('div', { style: { marginBottom: 8 } },
