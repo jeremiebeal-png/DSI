@@ -459,7 +459,7 @@ function App() {
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSel, setMergeSel] = useState([]); // ids de tickets sélectionnés
   const [mergeBusy, setMergeBusy] = useState(false)
-  const [ticketView, setTicketView] = useState("cards"); // "cards" | "table"
+  const [ticketView, setTicketView] = useState("table"); // "cards" | "table" — tableau par défaut
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
   const [fwdTicket, setFwdTicket] = useState(null);   // ticket en cours de transfert
