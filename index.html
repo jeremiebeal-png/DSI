@@ -511,6 +511,7 @@ function App() {
     { key: "procedures", page: "proc-admin",      icon: "📚", label: "Gérer les procédures" },
     { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Baie Informatique" },
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
+    { key: "tickets",    page: "rapport-jour",     icon: "📄", label: "Rapport Jour" },
     { key: "tickets",    page: "rapport-tickets",  icon: "📈", label: "Rapport Tickets" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention" },
@@ -1514,6 +1515,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [rapTkGenere, setRapTkGenere] = useState(false);  // un rapport a été généré
   const [rapTkEnvoi, setRapTkEnvoi] = useState(false);     // envoi email en cours
 
+  // ---- Rapport Jour (tickets ouverts d'un client, pour les techniciens) ----
+  const [rjHotel, setRjHotel] = useState("");   // hôtel sélectionné
+  const [rjEmail, setRjEmail] = useState("");   // destinataire de l'envoi (technicien)
+  const [rjEnvoi, setRjEnvoi] = useState(false); // envoi en cours
+  const [rjNote, setRjNote] = useState("");      // message d'état
+
   // Par défaut : le mois en cours (du 1er à aujourd'hui)
   useEffect(() => {
     if (!rapTkDu && !rapTkAu) {
@@ -1787,6 +1794,166 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   // ============================================================
+  //  RAPPORT JOUR — tickets ouverts d'un client, pour les techniciens
+  //  PDF listant, par ticket ouvert : objet, contact, date, priorité et
+  //  la demande initiale du client. Destiné à être envoyé au technicien
+  //  avant son passage sur site.
+  // ============================================================
+  const rjTicketsOuverts = () => {
+    return (tickets || [])
+      .filter(t => t.status !== "closed" && t.hotel_id === rjHotel)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  };
+
+  const buildRapportJourPdf = () => {
+    const hotel = hotels.find(h => h.id === rjHotel);
+    const rows = rjTicketsOuverts();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const pageW = 210, pageH = 297, mL = 14, mR = 14;
+    const contentW = pageW - mL - mR;
+    let y = 18;
+
+    doc.setFillColor(15, 15, 36);
+    doc.rect(0, 0, pageW, 26, "F");
+    doc.setTextColor(201, 168, 76);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(17);
+    doc.text("DSI HOTEL", mL, 12);
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+    doc.text("Rapport Jour — tickets ouverts", mL, 20);
+    doc.setFontSize(7.5);
+    doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23", pageW - mR, 11, { align: "right" });
+    doc.text("support@dsihotel.com  •  www.dsihotel.com", pageW - mR, 16, { align: "right" });
+
+    y = 36;
+    doc.setTextColor(20, 20, 40);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(12);
+    doc.text("Établissement : " + (hotel ? hotel.name : "—"), mL, y);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90, 90, 100);
+    doc.text("Édité le " + new Date().toLocaleString("fr-FR"), pageW - mR, y, { align: "right" });
+    y += 7;
+    doc.setFontSize(9.5); doc.setTextColor(60, 60, 70);
+    doc.text(rows.length + " ticket(s) ouvert(s) à traiter.", mL, y);
+    y += 6;
+    doc.setDrawColor(210, 210, 220); doc.line(mL, y, pageW - mR, y);
+    y += 6;
+
+    const prioLabel = (p) => p || "—";
+    if (rows.length === 0) {
+      doc.setFont("helvetica", "italic"); doc.setFontSize(11); doc.setTextColor(120, 120, 130);
+      doc.text("Aucun ticket ouvert pour cet établissement.", mL, y + 6);
+    }
+
+    rows.forEach((t, i) => {
+      const initial = (t.message || "").toString().trim() || "(pas de demande initiale enregistrée)";
+      const demandeLines = doc.splitTextToSize(initial, contentW - 6);
+      const objet = (t.subject || "(sans objet)").toString();
+      const objetLines = doc.splitTextToSize(objet, contentW - 30);
+      const blocH = 10 + objetLines.length * 5 + 6 + Math.min(demandeLines.length, 12) * 4.3 + 8;
+      if (y + blocH > pageH - 14) { doc.addPage(); y = 18; }
+
+      doc.setFillColor(245, 245, 250);
+      doc.roundedRect(mL, y, contentW, blocH - 4, 2, 2, "F");
+      const innerX = mL + 4;
+      let yy = y + 7;
+
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(20, 20, 40);
+      doc.text((i + 1) + ". " + objetLines[0], innerX, yy);
+      const pc = ({ "Urgent": [229, 62, 62], "Haute": [221, 107, 32], "Moyenne": [49, 130, 206], "Basse": [113, 128, 150] }[t.priority] || [113, 128, 150]);
+      doc.setFillColor(pc[0], pc[1], pc[2]);
+      const pLbl = prioLabel(t.priority);
+      const pW = doc.getTextWidth(pLbl) + 8;
+      doc.roundedRect(pageW - mR - pW - 4, yy - 4.5, pW, 6.5, 2, 2, "F");
+      doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+      doc.text(pLbl, pageW - mR - pW - 4 + pW / 2, yy - 0.2, { align: "center" });
+      doc.setTextColor(20, 20, 40); doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+      for (let k = 1; k < objetLines.length; k++) { yy += 5; doc.text(objetLines[k], innerX, yy); }
+      yy += 6;
+
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(90, 90, 100);
+      const contact = (t.contact_name || "—") + (t.contact_email ? "  <" + t.contact_email + ">" : "") + (t.contact_phone ? "  •  " + t.contact_phone : "");
+      doc.text(doc.splitTextToSize(contact, contentW - 40)[0], innerX, yy);
+      doc.text("Ouvert le " + (t.created_at ? new Date(t.created_at).toLocaleString("fr-FR") : "—"), pageW - mR - 4, yy, { align: "right" });
+      yy += 5.5;
+
+      doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(120, 120, 130);
+      doc.text("DEMANDE INITIALE", innerX, yy);
+      yy += 4.5;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(45, 45, 55);
+      const maxLines = 14;
+      const shown = demandeLines.slice(0, maxLines);
+      shown.forEach(line => { doc.text(line, innerX, yy); yy += 4.3; });
+      if (demandeLines.length > maxLines) {
+        doc.setFont("helvetica", "italic"); doc.setTextColor(140, 140, 150); doc.setFontSize(8);
+        doc.text("… (message tronqué — voir le ticket complet dans le portail)", innerX, yy);
+        yy += 4.3;
+      }
+
+      y += blocH;
+    });
+
+    const pages = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p);
+      doc.setFontSize(7); doc.setTextColor(150, 150, 150);
+      doc.text("Rapport Jour — DSI Hotel — " + (hotel ? hotel.name : ""), mL, pageH - 6);
+      doc.text("Page " + p + " / " + pages, pageW - mR, pageH - 6, { align: "right" });
+    }
+    return { doc, hotel, rows };
+  };
+
+  const exportRapportJourPdf = () => {
+    const hotel = hotels.find(h => h.id === rjHotel);
+    if (!hotel) { setRjNote("Veuillez d'abord choisir un établissement."); return; }
+    const { doc } = buildRapportJourPdf();
+    const nom = hotel.name.replace(/[^\w]+/g, "_");
+    const jour = new Date().toISOString().slice(0, 10);
+    doc.save("Rapport_Jour_" + nom + "_" + jour + ".pdf");
+  };
+
+  const envoyerRapportJourEmail = async () => {
+    const hotel = hotels.find(h => h.id === rjHotel);
+    if (!hotel) { setRjNote("Veuillez d'abord choisir un établissement."); return; }
+    const dest = nettoyerEmail((rjEmail || "")).trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest)) { setRjNote("⚠️ Adresse email du technicien invalide."); return; }
+    setRjEnvoi(true);
+    setRjNote("Envoi en cours…");
+    try {
+      const { doc, rows } = buildRapportJourPdf();
+      const pdfB64 = doc.output("datauristring").split(",")[1];
+      const jour = new Date().toLocaleDateString("fr-FR");
+      const subject = "Rapport Jour — " + hotel.name + " — " + jour + " (" + rows.length + " ticket(s) ouvert(s))";
+      const bodyText =
+        "Bonjour,\n\n" +
+        "Veuillez trouver ci-joint le rapport des tickets actuellement ouverts pour " + hotel.name + ", à consulter avant votre intervention sur site.\n\n" +
+        rows.length + " ticket(s) ouvert(s) à ce jour.\n\n" +
+        "Bonne intervention.";
+      const mail = buildSignedEmail(bodyText);
+      const nomFichier = "Rapport_Jour_" + hotel.name.replace(/[^\w]+/g, "_") + ".pdf";
+      const res = await fetch(EMAIL_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: dest, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL,
+          fromName: adminFromName(),
+          attachments: [{ filename: nomFichier, content: pdfB64 }]
+        })
+      });
+      if (!res.ok) {
+        const d = await res.text().catch(() => "");
+        setRjNote("❌ L'email n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
+      } else {
+        setRjNote("✅ Rapport envoyé à " + dest);
+      }
+    } catch (e) {
+      setRjNote("❌ Échec de l'envoi (" + (e.message || e) + ").");
+    } finally {
+      setRjEnvoi(false);
+    }
+  };
+
+  // ============================================================
   //  BACKUPS — intégration CheckCentral (admin uniquement)
   //  Le portail interroge le Worker dédié (relais serveur), qui appelle
   //  l'API CheckCentral (getChecks) et renvoie les statuts normalisés.
@@ -1885,7 +2052,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
 
   useEffect(() => {
-    if (page === "tickets-admin" || page === "tickets-client") loadTickets();
+    if (page === "tickets-admin" || page === "tickets-client" || page === "rapport-jour") loadTickets();
   }, [page, profile]);
 
   useEffect(() => {
@@ -4626,6 +4793,54 @@ const nav = isAdmin
     );
   };
 
+  // ---------- RAPPORT JOUR (tickets ouverts par client, pour techniciens) ----------
+  if (page === "rapport-jour" && isAdmin) {
+    const rjRows = rjHotel ? rjTicketsOuverts() : [];
+    const rjHotelObj = hotels.find(h => h.id === rjHotel);
+    const prioColorRj = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Générez un PDF des tickets actuellement ouverts pour un établissement, à transmettre à vos techniciens avant leur passage sur site pour qu'ils connaissent les problèmes en cours. Choisissez un client, puis téléchargez ou envoyez le rapport par email."
+      ),
+      React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 16, marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" } },
+        React.createElement('div', { style: { flex: "1 1 260px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Établissement"),
+          React.createElement('select', { value: rjHotel, onChange: e => { setRjHotel(e.target.value); setRjNote(""); }, style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } },
+            React.createElement('option', { value: "" }, "— Choisir un établissement —"),
+            hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+          )
+        ),
+        React.createElement('button', { onClick: exportRapportJourPdf, disabled: !rjHotel, style: { padding: "9px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: rjHotel ? "pointer" : "default", opacity: rjHotel ? 1 : 0.5 } }, "⬇️ Télécharger le PDF")
+      ),
+      rjHotel && React.createElement('div', { style: { background: "#FBFBFD", border: "1px solid #E8E8F0", borderRadius: 10, padding: "14px 16px", marginBottom: 18, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" } },
+        React.createElement('div', { style: { flex: "1 1 260px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Envoyer au technicien (email)"),
+          React.createElement('input', { type: "email", value: rjEmail, onChange: e => setRjEmail(e.target.value), placeholder: "technicien@exemple.com", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } })
+        ),
+        React.createElement('button', { onClick: envoyerRapportJourEmail, disabled: rjEnvoi || !rjEmail.trim(), style: { padding: "9px 18px", background: "#0F0F24", border: "none", color: "white", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: (rjEnvoi || !rjEmail.trim()) ? "default" : "pointer", opacity: (rjEnvoi || !rjEmail.trim()) ? 0.6 : 1 } }, rjEnvoi ? "Envoi…" : "✉️ Envoyer le rapport")
+      ),
+      rjNote && React.createElement('div', { style: { fontSize: 12.5, color: rjNote.startsWith("❌") || rjNote.startsWith("⚠️") ? "#C53030" : (rjNote.startsWith("✅") ? "#2F855A" : "#666"), marginBottom: 14, background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px" } }, rjNote),
+      !rjHotel && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Choisissez un établissement pour prévisualiser ses tickets ouverts."),
+      rjHotel && React.createElement('div', null,
+        React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e", marginBottom: 10 } }, (rjHotelObj ? rjHotelObj.name : "") + " — " + rjRows.length + " ticket(s) ouvert(s)"),
+        rjRows.length === 0
+          ? React.createElement('div', { style: { padding: 24, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun ticket ouvert pour cet établissement.")
+          : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
+              rjRows.map((t, i) => React.createElement('div', { key: t.id, style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "13px 16px" } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 } },
+                  React.createElement('span', { style: { width: 4, height: 22, borderRadius: 3, background: prioColorRj(t.priority), flexShrink: 0 } }),
+                  React.createElement('div', { style: { flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: "#1a1a3e" } }, (i + 1) + ". " + (t.subject || "(sans objet)")),
+                  React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prioColorRj(t.priority) } }, t.priority || "—")
+                ),
+                React.createElement('div', { style: { fontSize: 11.5, color: "#999", marginBottom: 8 } }, (t.contact_name || "—") + (t.contact_email ? " · " + t.contact_email : "") + " · Ouvert le " + new Date(t.created_at).toLocaleString("fr-FR")),
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 700, color: "#B7B7C5", letterSpacing: "0.04em", marginBottom: 3 } }, "DEMANDE INITIALE"),
+                React.createElement('div', { style: { fontSize: 12.5, color: "#444", whiteSpace: "pre-wrap", lineHeight: 1.5, maxHeight: 140, overflow: "hidden" } }, (t.message || "(pas de demande initiale enregistrée)").toString())
+              ))
+            )
+      )
+    );
+  }
+
   // --- Page ADMIN : sélection client + période + génération + envoi ---
   // ---------- BACKUPS (CheckCentral) — admin uniquement ----------
   if (page === "backups" && isAdmin) {
@@ -5296,7 +5511,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
