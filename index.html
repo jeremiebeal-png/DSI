@@ -594,7 +594,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           if (!window.__dsiPageInit) {
             window.__dsiPageInit = true;
             const refDirect = data.role === "admin" && pendingTicketRef;
-            setPage(refDirect ? "tickets-admin" : (data.role === "admin" ? "client-admin" : "knowledge"));
+            setPage(refDirect ? "tickets-admin" : "accueil");
           }
         }
       });
@@ -1987,7 +1987,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkFetchedAt, setBkFetchedAt] = useState(null);
   const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
   const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
-  const [bkOldOpen, setBkOldOpen] = useState(false); // dépliage de l'alerte "backups > 7 jours"
 
   const loadBackups = async () => {
     setBkLoading(true);
@@ -2071,30 +2070,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return { total: bkChecks.length, echec, warn, ok, autre, groupesEnEchec, nbGroupes: bkGroupes.length };
   })();
 
-  // Backups « obsolètes » : checks dont la dernière exécution (updatedIso)
-  // remonte à plus de 7 jours — le backup n'a plus rien remonté depuis une semaine.
-  const BK_SEUIL_JOURS = 7;
-  const bkAncienChecks = (() => {
-    const now = Date.now();
-    const limite = BK_SEUIL_JOURS * 24 * 60 * 60 * 1000;
-    const arr = [];
-    (bkChecks || []).forEach(c => {
-      if (!c.updatedIso) return;
-      const t = new Date(c.updatedIso).getTime();
-      if (isNaN(t)) return;
-      const ageMs = now - t;
-      if (ageMs > limite) {
-        arr.push({ ...c, ageJours: Math.floor(ageMs / (24 * 60 * 60 * 1000)) });
-      }
-    });
-    arr.sort((a, b) => b.ageJours - a.ageJours);
-    return arr;
-  })();
-
 
 
   useEffect(() => {
-    if (page === "tickets-admin" || page === "tickets-client" || page === "rapport-jour") loadTickets();
+    if (page === "tickets-admin" || page === "tickets-client" || page === "rapport-jour" || page === "accueil") loadTickets();
   }, [page, profile]);
 
   // Dès que l'admin saisit un terme de recherche, charge (une seule fois) le
@@ -2831,7 +2810,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   useEffect(() => {
     if (page === "rapports" && isAdmin) { loadRapports(); loadRapportEnvois(); }
-    if (page === "backups" && isAdmin) loadBackups();
+    if ((page === "backups" || page === "accueil") && isAdmin) loadBackups();
   }, [page, profile]);
 
   const openNewRapport = () => {
@@ -3524,6 +3503,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 const nav = isAdmin
     ? (() => {
         const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label }));
+        // Onglet Accueil en tête de menu
+        items.unshift({ p: "accueil", icon: "🏠", label: "Accueil" });
         // Insère "Gérer les admins" juste après "Gérer les clients"
         if (isSuperAdmin) {
           const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins" };
@@ -3536,6 +3517,7 @@ const nav = isAdmin
         return items;
       })()
     : [
+        { p: "accueil", icon: "🏠", label: "Accueil" },
         { p: "knowledge", icon: "📖", label: "Procédures" },
         { p: "mon-installation", icon: "🗂️", label: "Baie Informatique" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
@@ -3546,6 +3528,145 @@ const nav = isAdmin
         ...(isSupervisor ? [{ p: "securite", icon: "🔐", label: "Sécurité" }] : [])
       ];
   let content = null;
+
+  // ---------- PAGE D'ACCUEIL (admin = orienté action ; client = vitrine) ----------
+  if (page === "accueil") {
+    const prenom = (() => {
+      const n = (profile && profile.full_name ? String(profile.full_name).trim() : "");
+      if (n) return n.split(/\s+/)[0];
+      const mail = (profile && profile.email ? String(profile.email).trim() : "");
+      return mail ? mail.split("@")[0] : "";
+    })();
+    const goTo = (p) => setPage(p);
+    const SLA_MS_ACC = 4 * 60 * 60 * 1000;
+
+    if (isAdmin) {
+      // ---- Proposition 2 : accueil orienté action ----
+      const ouverts = (tickets || []).filter(t => t.status !== "closed");
+      const enRetard = ouverts.filter(t => {
+        const st = ticketState[t.id];
+        return st && st.kind && st.since && (Date.now() - new Date(st.since).getTime() > SLA_MS_ACC);
+      });
+      const nonAssignes = ouverts.filter(t => !t.hotel_id);
+      const bkEchec = bkStats ? bkStats.echec : 0;
+      const bkMuets = (bkAncienChecks || []).length;
+
+      const alerte = (couleur, bg, bord, icone, titre, sousTitre, page) =>
+        React.createElement('div', { onClick: () => goTo(page), style: { flex: "1 1 260px", cursor: "pointer", background: bg, border: "1px solid " + bord, borderRadius: 12, padding: "16px 18px", display: "flex", alignItems: "center", gap: 14, transition: "transform .1s" } },
+          React.createElement('span', { style: { fontSize: 26, flexShrink: 0 } }, icone),
+          React.createElement('div', { style: { flex: 1 } },
+            React.createElement('div', { style: { fontSize: 22, fontWeight: 800, color: couleur, lineHeight: 1.1 } }, titre),
+            React.createElement('div', { style: { fontSize: 12.5, color: "#666", marginTop: 3 } }, sousTitre)
+          ),
+          React.createElement('span', { style: { fontSize: 16, color: couleur } }, "→")
+        );
+
+      const miniChiffre = (val, lbl, coul) => React.createElement('div', { style: { flex: "1 1 120px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
+        React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 4 } }, lbl),
+        React.createElement('div', { style: { fontSize: 21, fontWeight: 700, color: coul } }, String(val))
+      );
+
+      const raccourci = (icone, lbl, page) => React.createElement('button', { onClick: () => goTo(page), style: { flex: "1 1 150px", display: "flex", alignItems: "center", gap: 10, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "13px 15px", cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", textAlign: "left" } },
+        React.createElement('span', { style: { fontSize: 20 } }, icone),
+        React.createElement('span', null, lbl)
+      );
+
+      // Encarts d'alerte : uniquement ceux qui ont du contenu (sinon on montre "tout est calme")
+      const alertes = [];
+      if (enRetard.length > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "🔴", enRetard.length + " ticket" + (enRetard.length > 1 ? "s" : "") + " en retard", "Sans réponse depuis plus de 4h — à traiter", "tickets-admin"));
+      if (bkEchec > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "💾", bkEchec + " backup" + (bkEchec > 1 ? "s" : "") + " en échec", "Sauvegardes en échec à vérifier", "backups"));
+      if (bkMuets > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "⚠️", bkMuets + " backup" + (bkMuets > 1 ? "s" : "") + " muet" + (bkMuets > 1 ? "s" : ""), "Aucune exécution depuis plus de 7 jours", "backups"));
+      if (nonAssignes.length > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "🏨", nonAssignes.length + " ticket" + (nonAssignes.length > 1 ? "s" : "") + " non assigné" + (nonAssignes.length > 1 ? "s" : ""), "À rattacher à un établissement", "tickets-admin"));
+
+      content = React.createElement('div', null,
+        // Bandeau de bienvenue
+        React.createElement('div', { style: { background: SB, borderRadius: 14, padding: "22px 26px", marginBottom: 20, color: "white" } },
+          React.createElement('div', { style: { fontSize: 20, fontWeight: 700, color: G } }, "Bonjour" + (prenom ? " " + prenom : "") + " 👋"),
+          React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 6, lineHeight: 1.6 } }, "Bienvenue sur le portail DSI Hotel. Voici l'essentiel à traiter aujourd'hui. Sélectionnez un onglet à gauche à tout moment.")
+        ),
+        // Encarts d'alerte
+        alertes.length > 0
+          ? React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 } }, alertes)
+          : React.createElement('div', { style: { background: "#E9F6EE", border: "1px solid #B7E0C6", borderRadius: 12, padding: "16px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 } },
+              React.createElement('span', { style: { fontSize: 24 } }, "✅"),
+              React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: "#2F855A" } }, "Rien d'urgent pour le moment. Tout est sous contrôle.")
+            ),
+        // Chiffres secondaires
+        React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 } }, "En un coup d'œil"),
+        React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 22 } },
+          miniChiffre(ouverts.length, "Tickets ouverts", "#0F0F24"),
+          miniChiffre(enRetard.length, "En retard", enRetard.length > 0 ? "#E53E3E" : "#2F855A"),
+          miniChiffre(bkStats ? bkStats.echec : "—", "Backups en échec", bkEchec > 0 ? "#E53E3E" : "#2F855A"),
+          miniChiffre(bkStats ? (bkStats.groupesEnEchec + " / " + bkStats.nbGroupes) : "—", "Sites en échec", bkStats && bkStats.groupesEnEchec > 0 ? "#E53E3E" : "#2F855A"),
+          miniChiffre((hotels || []).length, "Établissements", "#0F0F24")
+        ),
+        // Raccourcis
+        React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 } }, "Accès rapide"),
+        React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
+          raccourci("🎫", "Tickets", "tickets-admin"),
+          raccourci("📄", "Rapport Jour", "rapport-jour"),
+          raccourci("💾", "Backups", "backups"),
+          raccourci("🏨", "Clients", "client-admin"),
+          raccourci("📊", "Projets", "projets"),
+          raccourci("📚", "Procédures", "proc-admin")
+        )
+      );
+    } else {
+      // ---- Proposition 3 : accueil vitrine + widgets (client / superviseur) ----
+      const monHotel = hotels.find(h => h.id === myHotelId);
+      const mesTickets = (tickets || []).filter(t => t.status !== "closed");
+      const nbProc = (procedures || []).length;
+
+      const widget = (titre, children) => React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, padding: "16px 18px" } },
+        React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 12 } }, titre),
+        children
+      );
+      const raccourci = (icone, lbl, page) => React.createElement('button', { onClick: () => goTo(page), style: { flex: "1 1 160px", display: "flex", alignItems: "center", gap: 10, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "14px 16px", cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", textAlign: "left" } },
+        React.createElement('span', { style: { fontSize: 20 } }, icone),
+        React.createElement('span', null, lbl)
+      );
+
+      content = React.createElement('div', null,
+        React.createElement('div', { style: { display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 22, alignItems: "stretch" } },
+          // Bloc présentation (vitrine)
+          React.createElement('div', { style: { flex: "2 1 340px", background: SB, borderRadius: 14, padding: "26px 28px", color: "white" } },
+            React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: G, marginBottom: 4 } }, "Bienvenue" + (prenom ? ", " + prenom : "") + " 👋"),
+            monHotel && React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.6)", marginBottom: 14 } }, monHotel.name),
+            React.createElement('div', { style: { fontSize: 13.5, color: "rgba(255,255,255,.8)", lineHeight: 1.7, marginBottom: 18 } },
+              "Votre portail de support informatique DSI Hotel réunit en un seul endroit vos procédures, vos demandes de support, l'inventaire de votre baie informatique et vos rapports. Sélectionnez une rubrique ci-dessous ou dans le menu de gauche."
+            ),
+            React.createElement('div', { style: { fontSize: 12, color: "rgba(255,255,255,.55)", lineHeight: 1.8, borderTop: "1px solid rgba(255,255,255,.12)", paddingTop: 14 } },
+              "Besoin d'aide ? ",
+              React.createElement('a', { href: "mailto:" + SUPPORT_EMAIL, style: { color: G, textDecoration: "none" } }, SUPPORT_EMAIL),
+              "  •  www.dsihotel.com"
+            )
+          ),
+          // Widgets à droite
+          React.createElement('div', { style: { flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 14 } },
+            widget("Mes demandes en cours", React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 30, fontWeight: 800, color: mesTickets.length > 0 ? "#0F0F24" : "#2F855A" } }, String(mesTickets.length)),
+              React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 2 } }, mesTickets.length === 0 ? "Aucune demande ouverte" : "demande(s) de support ouverte(s)"),
+              isSupervisor && React.createElement('button', { onClick: () => goTo("tickets-client"), style: { marginTop: 12, padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "Voir mes demandes →")
+            )),
+            widget("Procédures disponibles", React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 30, fontWeight: 800, color: "#0F0F24" } }, String(nbProc)),
+              React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 2 } }, "fiche(s) pratique(s) à consulter"),
+              React.createElement('button', { onClick: () => goTo("knowledge"), style: { marginTop: 12, padding: "8px 14px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "Parcourir →")
+            ))
+          )
+        ),
+        // Raccourcis
+        React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 } }, "Accès rapide"),
+        React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
+          raccourci("📖", "Procédures", "knowledge"),
+          raccourci("🗂️", "Baie Informatique", "mon-installation"),
+          raccourci("📧", "Contacter le support", "contact"),
+          ...(isSupervisor ? [raccourci("🎫", "Mes demandes", "tickets-client")] : []),
+          ...(isSupervisor ? [raccourci("🔧", "Rapport Intervention", "rapport-intervention")] : [])
+        )
+      );
+    }
+  }
 
   // ---------- ADMIN : GESTION CLIENTS ----------
   if (page === "client-admin" && isAdmin) {
@@ -4956,35 +5077,6 @@ const nav = isAdmin
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
         "Statut des sauvegardes surveillées par CheckCentral, regroupées par site. Les groupes présentant un échec apparaissent en premier. Données lues en direct via l'API CheckCentral."
       ),
-      // Alerte : backups sans exécution depuis plus de 7 jours
-      bkAncienChecks.length > 0 && React.createElement('div', { style: { marginBottom: 16, background: "#FDECEC", border: "1px solid #F5B5B5", borderRadius: 10, overflow: "hidden" } },
-        React.createElement('div', { onClick: () => setBkOldOpen(v => !v), style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
-          React.createElement('span', { style: { fontSize: 18, flexShrink: 0 } }, "⚠️"),
-          React.createElement('div', { style: { flex: 1 } },
-            React.createElement('div', { style: { fontSize: 14, fontWeight: 700, color: "#B02A2A" } },
-              bkAncienChecks.length + " sauvegarde" + (bkAncienChecks.length > 1 ? "s" : "") + " sans exécution depuis plus de " + BK_SEUIL_JOURS + " jours"
-            ),
-            React.createElement('div', { style: { fontSize: 11.5, color: "#B45454", marginTop: 2 } }, "Cliquez pour voir " + (bkAncienChecks.length > 1 ? "les backups concernés" : "le backup concerné"))
-          ),
-          React.createElement('span', { style: { fontSize: 12, color: "#B02A2A", marginLeft: 4 } }, bkOldOpen ? "▲" : "▼")
-        ),
-        bkOldOpen && React.createElement('div', { style: { borderTop: "1px solid #F5B5B5", background: "white" } },
-          bkAncienChecks.map((c, i) => {
-            const hid = c.group_id && bkGroupMap[c.group_id];
-            const hotel = hid && hotels.find(h => h.id === hid);
-            const site = hotel ? hotel.name : (c.group || "(sans groupe)");
-            return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
-              React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: "#E53E3E", flexShrink: 0 } }),
-              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-                React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
-                React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, site + (c.description ? " · " + c.description : ""))
-              ),
-              React.createElement('span', { style: { fontSize: 11, color: "#B02A2A", fontWeight: 600, whiteSpace: "nowrap" } }, "Il y a " + c.ageJours + " j"),
-              React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(c.updatedIso))
-            );
-          })
-        )
-      ),
       // Bandeau de synthèse
       React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
         [
@@ -5642,7 +5734,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
