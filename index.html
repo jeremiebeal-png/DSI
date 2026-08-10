@@ -2276,28 +2276,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // message : on la retire du fil pour éviter le doublon.
   const msgsSansDoublon = (msgs, t) => {
     if (!msgs || msgs.length === 0) return [];
+    // Un message porteur d'images inline (capture d'écran dans le body_html)
+    // ne doit JAMAIS être masqué comme doublon : sinon la capture disparaît.
+    const porteImage = (m) => m && m.body_html && /<img\b/i.test(m.body_html);
     const initial = (t && t.message ? String(t.message) : "");
     if (!initial.trim()) return msgs;
-    // Normalisation tolérante : on compacte espaces et sauts de ligne, et on
-    // compare en minuscules, car la version email (m.body) et la colonne
-    // ticket.message peuvent différer légèrement (signature, espaces, retours).
     const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
     const ni = norm(initial);
     const idx = msgs.findIndex(m => {
       if (m.sender_role !== "client") return false;
+      if (porteImage(m)) return false; // on garde les messages avec capture
       const nb = norm(m.body);
       if (!nb) return false;
-      // Égalité tolérante OU fort recouvrement (l'un commence par l'autre sur
-      // au moins 40 caractères) : couvre les écarts de nettoyage de signature.
       if (nb === ni) return true;
       const court = Math.min(nb.length, ni.length);
       if (court >= 40 && (nb.startsWith(ni.slice(0, court)) || ni.startsWith(nb.slice(0, court)))) return true;
       return false;
     });
     if (idx === -1) {
-      // Repli : si le tout premier message est du client, c'est la demande
-      // initiale ré-affichée -> on le retire.
-      if (msgs[0] && msgs[0].sender_role === "client") return msgs.slice(1);
+      // Repli : si le tout premier message est du client SANS image, c'est la
+      // demande initiale ré-affichée -> on le retire. Avec image, on le garde.
+      if (msgs[0] && msgs[0].sender_role === "client" && !porteImage(msgs[0])) return msgs.slice(1);
       return msgs;
     }
     return msgs.filter((_, i) => i !== idx);
