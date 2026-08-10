@@ -1409,14 +1409,26 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // Mot à retaper pour confirmer : la référence si elle existe, sinon "SUPPRIMER"
+  // (certains anciens tickets de test n'ont pas de référence — sinon impossible à supprimer).
+  const motConfirmation = (t) => {
+    const r = (t && t.reference ? String(t.reference).trim() : "");
+    return r ? r : "SUPPRIMER";
+  };
+  const confirmationOK = () => {
+    const attendu = motConfirmation(supprTicket);
+    return normaliserRef(supprConfirm) === normaliserRef(attendu) || (supprConfirm || "").trim().toUpperCase() === attendu.toUpperCase();
+  };
+
   const supprimerTicketDefinitif = async () => {
     if (!supprTicket) return;
     const ref = supprTicket.reference || "";
-    if (normaliserRef(supprConfirm) !== normaliserRef(ref)) {
-      setSupprNote("⚠️ La confirmation ne correspond pas à la référence. Retapez « " + ref + " » pour confirmer.");
+    const attendu = motConfirmation(supprTicket);
+    if (!confirmationOK()) {
+      setSupprNote("⚠️ La confirmation ne correspond pas. Retapez « " + attendu + " » pour confirmer.");
       return;
     }
-    if (!confirm("SUPPRESSION DÉFINITIVE\n\nLe ticket " + ref + " et TOUS ses messages et pièces jointes vont être supprimés définitivement.\n\nCette action est IRRÉVERSIBLE. Continuer ?")) return;
+    if (!confirm("SUPPRESSION DÉFINITIVE\n\nLe ticket " + (ref || "(sans référence)") + " et TOUS ses messages et pièces jointes vont être supprimés définitivement.\n\nCette action est IRRÉVERSIBLE. Continuer ?")) return;
     setSupprBusy(true);
     setSupprNote("Suppression en cours…");
     try {
@@ -3716,10 +3728,10 @@ const nav = isAdmin
           React.createElement('div', null, "📌 Statut : " + (supprTicket.status === "closed" ? "Fermé" : "Ouvert"))
         ),
         React.createElement('div', { style: { borderTop: "1px solid #F0E0E0", paddingTop: 14 } },
-          React.createElement('label', { style: { display: "block", fontSize: 12, fontWeight: 600, color: "#B02A2A", marginBottom: 6 } }, "Pour confirmer, retapez la référence « " + supprTicket.reference + " » ci-dessous :"),
+          React.createElement('label', { style: { display: "block", fontSize: 12, fontWeight: 600, color: "#B02A2A", marginBottom: 6 } }, supprTicket.reference ? ("Pour confirmer, retapez la référence « " + supprTicket.reference + " » ci-dessous :") : "Ce ticket n'a pas de référence. Pour confirmer, tapez « SUPPRIMER » ci-dessous :"),
           React.createElement('div', { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
-            React.createElement('input', { type: "text", value: supprConfirm, onChange: e => setSupprConfirm(e.target.value), placeholder: supprTicket.reference, style: { flex: "1 1 200px", padding: "9px 11px", border: "1px solid #F5B5B5", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } }),
-            React.createElement('button', { onClick: supprimerTicketDefinitif, disabled: supprBusy || normaliserRef(supprConfirm) !== normaliserRef(supprTicket.reference), style: { padding: "9px 18px", background: "#C53030", border: "none", color: "white", borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: (supprBusy || normaliserRef(supprConfirm) !== normaliserRef(supprTicket.reference)) ? "default" : "pointer", opacity: (supprBusy || normaliserRef(supprConfirm) !== normaliserRef(supprTicket.reference)) ? 0.5 : 1 } }, supprBusy ? "Suppression…" : "🗑️ Supprimer définitivement"),
+            React.createElement('input', { type: "text", value: supprConfirm, onChange: e => setSupprConfirm(e.target.value), placeholder: motConfirmation(supprTicket), style: { flex: "1 1 200px", padding: "9px 11px", border: "1px solid #F5B5B5", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } }),
+            React.createElement('button', { onClick: supprimerTicketDefinitif, disabled: supprBusy || !confirmationOK(), style: { padding: "9px 18px", background: "#C53030", border: "none", color: "white", borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: (supprBusy || !confirmationOK()) ? "default" : "pointer", opacity: (supprBusy || !confirmationOK()) ? 0.5 : 1 } }, supprBusy ? "Suppression…" : "🗑️ Supprimer définitivement"),
             React.createElement('button', { onClick: () => { setSupprTicket(null); setSupprConfirm(""); setSupprNote(""); }, style: { padding: "9px 16px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 13, cursor: "pointer" } }, "Annuler")
           )
         )
