@@ -528,7 +528,8 @@ function App() {
     if (isSuperAdmin) allowedPages.push("admins");
     if (isSuperAdmin) allowedPages.push("login-logs");
     if (isSuperAdmin) allowedPages.push("securite");
-    const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs", "securite"];
+    if (isSuperAdmin) allowedPages.push("suppr-ticket");
+    const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs", "securite", "suppr-ticket"];
     if (adminPages.includes(page) && !allowedPages.includes(page) && page !== "proc-detail") {
       if (allowedPages.length > 0) setPage(allowedPages[0]);
     }
@@ -1355,8 +1356,76 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     });
   };
 
-  // Détermine, pour chaque ticket, s'il a du "nouveau" à traiter, et depuis quand :
-  //  - kind "new"   : aucun message du support (que la demande initiale du client)
+  // ====== SUPPRESSION DÉFINITIVE D'UN TICKET (super-admin) ======
+  // Recherche un ticket par sa référence (DSI-XXXX), puis suppression totale :
+  // fichiers Storage + lignes ticket_fichiers/ticket_messages/tickets (via RPC).
+  const normaliserRef = (r) => {
+    let s = (r || "").toString().trim().toUpperCase().replace(/\s+/g, "");
+    if (!s) return "";
+    // Accepte "1234", "DSI-1234", "2026-0224", etc. On garde tel quel si déjà préfixé.
+    if (!s.startsWith("DSI-")) s = "DSI-" + s.replace(/^DSI/, "");
+    return s;
+  };
+
+  const rechercherTicketASupprimer = async () => {
+    setSupprNote("");
+    setSupprTicket(null);
+    setSupprConfirm("");
+    const ref = normaliserRef(supprRef);
+    if (!ref) { setSupprNote("⚠️ Saisissez une référence (ex. DSI-2026-0224)."); return; }
+    setSupprBusy(true);
+    try {
+      const { data, error } = await sb.from("tickets").select("*").eq("reference", ref).limit(1);
+      if (error) { setSupprNote("❌ Erreur de recherche : " + error.message); return; }
+      if (!data || data.length === 0) { setSupprNote("Aucun ticket trouvé pour la référence « " + ref + " »."); return; }
+      setSupprTicket(data[0]);
+    } catch (e) {
+      setSupprNote("❌ Erreur : " + (e.message || e));
+    } finally {
+      setSupprBusy(false);
+    }
+  };
+
+  const supprimerTicketDefinitif = async () => {
+    if (!supprTicket) return;
+    const ref = supprTicket.reference || "";
+    if (normaliserRef(supprConfirm) !== normaliserRef(ref)) {
+      setSupprNote("⚠️ La confirmation ne correspond pas à la référence. Retapez « " + ref + " » pour confirmer.");
+      return;
+    }
+    if (!confirm("SUPPRESSION DÉFINITIVE\n\nLe ticket " + ref + " et TOUS ses messages et pièces jointes vont être supprimés définitivement.\n\nCette action est IRRÉVERSIBLE. Continuer ?")) return;
+    setSupprBusy(true);
+    setSupprNote("Suppression en cours…");
+    try {
+      // 1) Récupérer les fichiers pour les effacer du Storage
+      const { data: fichiers } = await sb.from("ticket_fichiers").select("file_url").eq("ticket_id", supprTicket.id);
+      const chemins = [];
+      (fichiers || []).forEach(f => {
+        const u = f.file_url || "";
+        const marqueur = "/public/" + STORAGE_BUCKET + "/";
+        const i = u.indexOf(marqueur);
+        if (i !== -1) chemins.push(decodeURIComponent(u.slice(i + marqueur.length)));
+      });
+      if (chemins.length > 0) {
+        try { await sb.storage.from(STORAGE_BUCKET).remove(chemins); }
+        catch (e) { /* on continue : la suppression DB reste prioritaire */ }
+      }
+      // 2) Suppression atomique en base via RPC super-admin
+      const { data, error } = await sb.rpc("supprimer_ticket_definitif", { p_ticket_id: supprTicket.id });
+      if (error) { setSupprNote("❌ Suppression refusée : " + error.message); setSupprBusy(false); return; }
+      // 3) Retirer de la liste locale si présent
+      setTickets(prev => prev.filter(x => x.id !== supprTicket.id));
+      const info = data || {};
+      setSupprNote("✅ Ticket " + ref + " supprimé définitivement (" + (info.messages_supprimes || 0) + " message(s), " + (chemins.length) + " fichier(s)).");
+      setSupprTicket(null);
+      setSupprRef("");
+      setSupprConfirm("");
+    } catch (e) {
+      setSupprNote("❌ Échec de la suppression : " + (e.message || e));
+    } finally {
+      setSupprBusy(false);
+    }
+  };
   //  - kind "reply" : le dernier message vient du client (il attend une réponse)
   //  - kind null    : rien de neuf (on a déjà répondu en dernier)
   //  - since        : date du dernier message client resté sans réponse (sert au calcul du retard 4h)
@@ -1988,6 +2057,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
   const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
   const [bkOldOpen, setBkOldOpen] = useState(false); // dépliage de l'alerte "backups > 7 jours"
+  // Suppression définitive d'un ticket (super-admin)
+  const [supprRef, setSupprRef] = useState("");        // référence saisie (DSI-XXXX)
+  const [supprTicket, setSupprTicket] = useState(null); // ticket trouvé
+  const [supprNote, setSupprNote] = useState("");       // message d'état
+  const [supprBusy, setSupprBusy] = useState(false);    // recherche/suppression en cours
+  const [supprConfirm, setSupprConfirm] = useState(""); // saisie de confirmation (la référence retapée)
 
   const loadBackups = async () => {
     setBkLoading(true);
@@ -3534,6 +3609,8 @@ const nav = isAdmin
           const idxClients = items.findIndex(i => i.p === "client-admin");
           if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem, logItem, secItem);
           else { items.unshift(secItem); items.unshift(logItem); items.unshift(adminItem); }
+          // Action sensible : placée en bas du menu
+          items.push({ p: "suppr-ticket", icon: "🗑️", label: "Suppression ticket" });
         }
         return items;
       })()
@@ -3549,6 +3626,47 @@ const nav = isAdmin
         ...(isSupervisor ? [{ p: "securite", icon: "🔐", label: "Sécurité" }] : [])
       ];
   let content = null;
+
+  // ---------- SUPPRESSION DÉFINITIVE D'UN TICKET (super-admin uniquement) ----------
+  if (page === "suppr-ticket" && isSuperAdmin) {
+    const hAssigne = supprTicket && hotels.find(h => h.id === supprTicket.hotel_id);
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", borderRadius: 10, padding: "14px 16px", marginBottom: 18, display: "flex", gap: 12, alignItems: "flex-start" } },
+        React.createElement('span', { style: { fontSize: 22 } }, "⚠️"),
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#B02A2A", marginBottom: 3 } }, "Zone sensible — suppression irréversible"),
+          React.createElement('div', { style: { fontSize: 12.5, color: "#8A4B4B", lineHeight: 1.6 } }, "Cette page supprime définitivement un ticket, tous ses messages et toutes ses pièces jointes (y compris les fichiers stockés). Le ticket ne réapparaîtra nulle part. Action réservée au super-administrateur.")
+        )
+      ),
+      // Recherche par référence
+      React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 16, marginBottom: 16, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" } },
+        React.createElement('div', { style: { flex: "1 1 260px" } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Référence du ticket à supprimer"),
+          React.createElement('input', { type: "text", value: supprRef, onChange: e => setSupprRef(e.target.value), onKeyDown: e => { if (e.key === "Enter") rechercherTicketASupprimer(); }, placeholder: "Ex. DSI-2026-0224", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } })
+        ),
+        React.createElement('button', { onClick: rechercherTicketASupprimer, disabled: supprBusy || !supprRef.trim(), style: { padding: "9px 18px", background: SB, border: "none", color: "white", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: (supprBusy || !supprRef.trim()) ? "default" : "pointer", opacity: (supprBusy || !supprRef.trim()) ? 0.6 : 1 } }, supprBusy ? "…" : "🔍 Rechercher")
+      ),
+      supprNote && React.createElement('div', { style: { fontSize: 12.5, color: supprNote.startsWith("❌") || supprNote.startsWith("⚠️") ? "#C53030" : (supprNote.startsWith("✅") ? "#2F855A" : "#666"), marginBottom: 16, background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px" } }, supprNote),
+      // Aperçu du ticket trouvé + confirmation
+      supprTicket && React.createElement('div', { style: { background: "white", border: "2px solid #F5B5B5", borderRadius: 10, padding: 18 } },
+        React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: "#1a1a3e", marginBottom: 10 } }, (supprTicket.reference || "—") + " — " + (supprTicket.subject || "(sans objet)")),
+        React.createElement('div', { style: { fontSize: 12.5, color: "#555", lineHeight: 1.9, marginBottom: 14 } },
+          React.createElement('div', null, "🏨 Hôtel : " + (hAssigne ? hAssigne.name : (supprTicket.hotel_id ? "Inconnu" : "Non assigné"))),
+          React.createElement('div', null, "👤 Contact : " + (supprTicket.contact_name || "—") + (supprTicket.contact_email ? " · " + supprTicket.contact_email : "")),
+          React.createElement('div', null, "📅 Ouvert le : " + (supprTicket.created_at ? new Date(supprTicket.created_at).toLocaleString("fr-FR") : "—")),
+          React.createElement('div', null, "📌 Statut : " + (supprTicket.status === "closed" ? "Fermé" : "Ouvert"))
+        ),
+        React.createElement('div', { style: { borderTop: "1px solid #F0E0E0", paddingTop: 14 } },
+          React.createElement('label', { style: { display: "block", fontSize: 12, fontWeight: 600, color: "#B02A2A", marginBottom: 6 } }, "Pour confirmer, retapez la référence « " + supprTicket.reference + " » ci-dessous :"),
+          React.createElement('div', { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+            React.createElement('input', { type: "text", value: supprConfirm, onChange: e => setSupprConfirm(e.target.value), placeholder: supprTicket.reference, style: { flex: "1 1 200px", padding: "9px 11px", border: "1px solid #F5B5B5", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } }),
+            React.createElement('button', { onClick: supprimerTicketDefinitif, disabled: supprBusy || normaliserRef(supprConfirm) !== normaliserRef(supprTicket.reference), style: { padding: "9px 18px", background: "#C53030", border: "none", color: "white", borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: (supprBusy || normaliserRef(supprConfirm) !== normaliserRef(supprTicket.reference)) ? "default" : "pointer", opacity: (supprBusy || normaliserRef(supprConfirm) !== normaliserRef(supprTicket.reference)) ? 0.5 : 1 } }, supprBusy ? "Suppression…" : "🗑️ Supprimer définitivement"),
+            React.createElement('button', { onClick: () => { setSupprTicket(null); setSupprConfirm(""); setSupprNote(""); }, style: { padding: "9px 16px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 13, cursor: "pointer" } }, "Annuler")
+          )
+        )
+      )
+    );
+  }
 
   // ---------- PAGE D'ACCUEIL (admin = orienté action ; client = vitrine) ----------
   if (page === "accueil") {
@@ -5784,7 +5902,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
