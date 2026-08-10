@@ -463,9 +463,15 @@ function App() {
   const [mergeSel, setMergeSel] = useState([]); // ids de tickets sélectionnés
   const [mergeBusy, setMergeBusy] = useState(false)
   const [ticketView, setTicketView] = useState("table"); // "cards" | "table" — tableau par défaut
-  const [ticketSearch, setTicketSearch] = useState(""); // terme de recherche tickets
-  const [ticketBodies, setTicketBodies] = useState({}); // { ticket_id: "corps concaténé des messages" }
-  const [ticketBodiesLoaded, setTicketBodiesLoaded] = useState(false); // corps chargés au moins une fois
+  // Remarque interne (admin only) : note unique par ticket, jamais visible du client
+  const [noteOpenId, setNoteOpenId] = useState(null);   // ticket dont l'éditeur de note est ouvert
+  const [noteText, setNoteText] = useState("");          // contenu en cours d'édition
+  const [noteBusy, setNoteBusy] = useState(false);       // sauvegarde en cours
+  const [noteSaved, setNoteSaved] = useState({});        // { ticketId: true } — a une note enregistrée (indicateur)
+  // Liste explicite des colonnes de tickets à charger côté portail.
+  // note_interne en est VOLONTAIREMENT exclue : elle n'est jamais transmise
+  // au navigateur par les requêtes de liste, et reste protégée en base.
+  const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,account_email,subject,message,category,priority,status,source,reference,created_at,closed_at,projet_id";
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
   const [fwdTicket, setFwdTicket] = useState(null);   // ticket en cours de transfert
@@ -1323,7 +1329,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const loadTickets = () => {
     if (!profile) return;
     setTicketsLoading(true);
-    let query = sb.from("tickets").select("*").order("created_at", { ascending: false });
+    let query = sb.from("tickets").select(TICKET_COLS).order("created_at", { ascending: false });
     if (!isAdmin && myHotelId) query = query.eq("hotel_id", myHotelId);
     query.then(async ({ data, error }) => {
       if (!error && data) {
@@ -1369,27 +1375,38 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setTicketState(map);
   };
 
-  // Charge le corps de tous les messages (une seule fois) pour permettre la
-  // recherche dans le contenu des tickets, y compris les tickets fermés qui ne
-  // sont pas dans la liste courante. Concatène par ticket.
-  const loadTicketBodies = async () => {
+  // ====== REMARQUE INTERNE (admin only) — lecture/écriture via RPC SECURITY DEFINER ======
+  // La note n'est jamais chargée dans la liste des tickets : on la lit à la
+  // demande, uniquement quand l'admin ouvre l'éditeur de remarque.
+  const ouvrirNote = async (ticket) => {
+    if (!isAdmin) return;
+    // Toggle : si déjà ouvert sur ce ticket, on referme
+    if (noteOpenId === ticket.id) { setNoteOpenId(null); return; }
+    setNoteOpenId(ticket.id);
+    setNoteText("");
     try {
-      const { data, error } = await sb.from("ticket_messages")
-        .select("ticket_id,body")
-        .order("created_at", { ascending: true });
-      if (error || !data) return;
-      const map = {};
-      data.forEach(m => {
-        if (!m.ticket_id) return;
-        const txt = (m.body || "").toString();
-        map[m.ticket_id] = map[m.ticket_id] ? map[m.ticket_id] + " " + txt : txt;
-      });
-      setTicketBodies(map);
-      setTicketBodiesLoaded(true);
-    } catch (e) { /* silencieux : la recherche fonctionnera au moins sur objet/contact/hôtel */ }
+      const { data, error } = await sb.rpc("get_ticket_note", { p_ticket_id: ticket.id });
+      if (!error && data != null) {
+        setNoteText(data);
+        setNoteSaved(prev => ({ ...prev, [ticket.id]: !!String(data).trim() }));
+      }
+    } catch (e) { /* silencieux : l'éditeur s'ouvre vide */ }
   };
 
-  // ====== ALERTE SONORE (admins + super-admin) — nouveau ticket / nouvelle réponse client ======
+  const enregistrerNote = async (ticket) => {
+    if (!isAdmin) return;
+    setNoteBusy(true);
+    try {
+      const { error } = await sb.rpc("set_ticket_note", { p_ticket_id: ticket.id, p_note: noteText });
+      if (error) { alert("Erreur lors de l'enregistrement de la remarque : " + error.message); return; }
+      setNoteSaved(prev => ({ ...prev, [ticket.id]: !!noteText.trim() }));
+      setNoteOpenId(null);
+    } catch (e) {
+      alert("Erreur lors de l'enregistrement de la remarque.");
+    } finally {
+      setNoteBusy(false);
+    }
+  };
   // Le son est généré à la volée via la Web Audio API : aucun fichier externe à héberger.
   // Les navigateurs bloquent l'audio tant que l'utilisateur n'a pas interagi avec la page :
   // on "débloque" donc le contexte audio au premier clic/touche.
@@ -1511,7 +1528,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const bDu = rapTkDu ? new Date(rapTkDu + "T00:00:00").toISOString() : null;
       const bAu = rapTkAu ? new Date(rapTkAu + "T23:59:59").toISOString() : null;
 
-      let q = sb.from("tickets").select("*").eq("hotel_id", hid).order("created_at", { ascending: false });
+      let q = sb.from("tickets").select(TICKET_COLS).eq("hotel_id", hid).order("created_at", { ascending: false });
       if (bDu) q = q.gte("created_at", bDu);
       if (bAu) q = q.lte("created_at", bAu);
       const { data: tks, error } = await q;
@@ -1860,14 +1877,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "tickets-admin" || page === "tickets-client") loadTickets();
   }, [page, profile]);
-
-  // Dès que l'admin saisit un terme de recherche, charge (une seule fois) le
-  // corps des messages pour permettre la recherche plein texte.
-  useEffect(() => {
-    if (isAdmin && page === "tickets-admin" && ticketSearch.trim() && !ticketBodiesLoaded) {
-      loadTicketBodies();
-    }
-  }, [ticketSearch, isAdmin, page, ticketBodiesLoaded]);
 
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
@@ -4073,40 +4082,10 @@ const nav = isAdmin
     if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed");
     if (ticketFilter === "closed") list = tickets.filter(t => t.status === "closed");
 
-    // Recherche : dès qu'un terme est saisi, on ignore le filtre Ouverts/Fermés/Tous
-    // et on cherche dans TOUS les tickets (objet + contact + hôtel + corps des messages).
-    const rechercheActive = ticketSearch.trim().length > 0;
-    if (rechercheActive) {
-      const termes = ticketSearch.toLowerCase().split(/\s+/).filter(Boolean);
-      const stripHtml = (s) => (s || "").toString().replace(/<[^>]*>/g, " ");
-      list = tickets.filter(t => {
-        const h = hotels.find(x => x.id === t.hotel_id);
-        const champs = [
-          t.subject, t.message, t.contact_name, t.contact_email,
-          t.reference, h ? h.name : "",
-          stripHtml(ticketBodies[t.id])
-        ].join(" ").toLowerCase();
-        // Tous les mots-clés doivent être présents (ET logique)
-        return termes.every(mot => champs.includes(mot));
-      });
-    }
-
     content = React.createElement('div', null,
       React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
         [["open", "Ouverts"], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
-        ),
-        // Barre de recherche : cherche dans tous les tickets (objet, contact, hôtel, messages)
-        React.createElement('div', { style: { flex: "1 1 240px", position: "relative", minWidth: 180 } },
-          React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
-          React.createElement('input', {
-            type: "text",
-            value: ticketSearch,
-            onChange: e => setTicketSearch(e.target.value),
-            placeholder: "Rechercher un ticket (objet, contact, hôtel, message)…",
-            style: { width: "100%", padding: "7px 32px 7px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 12.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }
-          }),
-          ticketSearch && React.createElement('button', { onClick: () => setTicketSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
         ),
         React.createElement('span', { style: { marginLeft: "auto", fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, list.length + (list.length > 1 ? " tickets" : " ticket")),
         React.createElement('button', { onClick: () => { setMergeMode(m => !m); setMergeSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (mergeMode ? G : "#DDD"), background: mergeMode ? G + "18" : "white", color: mergeMode ? G2 : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: mergeMode ? 500 : 400 } }, mergeMode ? "✕ Annuler la fusion" : "⚄ Fusionner"),
@@ -4121,7 +4100,7 @@ const nav = isAdmin
         React.createElement('button', { onClick: doMergeTickets, disabled: mergeSel.length < 2 || mergeBusy, style: { padding: "7px 14px", background: mergeSel.length >= 2 ? G : "#CCC", border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: mergeSel.length >= 2 ? "pointer" : "default", opacity: mergeBusy ? 0.6 : 1 } }, mergeBusy ? "Fusion..." : "Fusionner les tickets")
       ),
       ticketsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des tickets..."),
-      !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, rechercheActive ? ("Aucun ticket ne correspond à « " + ticketSearch.trim() + " ».") : "Aucun ticket dans cette catégorie."),
+      !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun ticket dans cette catégorie."),
       ticketView === "table" && !ticketsLoading && list.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.03em" } },
         React.createElement('span', { style: { width: 4, flexShrink: 0 } }),
         React.createElement('span', { style: { width: "19%" } }, "Hôtel"),
@@ -4172,6 +4151,7 @@ const nav = isAdmin
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
               React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center", marginBottom: 14, paddingBottom: 12, borderBottom: "1px dashed #E2E2EA" } },
                 React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
+                React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 t.status === "closed"
                   ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
                   : React.createElement(React.Fragment, null,
@@ -4181,6 +4161,18 @@ const nav = isAdmin
                       React.createElement('button', { onClick: () => { setFwdTicket(t); setFwdEmail(""); setFwdNote(""); setFwdMsg(""); }, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "↪ Faire suivre"),
                       React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "7px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
                     )
+              ),
+              // Éditeur de remarque interne (admin only) — jamais visible du client
+              noteOpenId === t.id && React.createElement('div', { style: { background: "#FFFDF3", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginBottom: 14 } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+                  React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#B7791F" } }, "🔒 Remarque interne"),
+                  React.createElement('span', { style: { fontSize: 11, color: "#B7791F99" } }, "Visible uniquement par les administrateurs — jamais envoyée au client.")
+                ),
+                React.createElement('textarea', { value: noteText, onChange: e => setNoteText(e.target.value), placeholder: "Ex. : mot de passe TeamViewer, contexte du dossier, personne à recontacter…", rows: 4, style: { width: "100%", padding: "9px 11px", border: "1px solid #E4D08A", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none", background: "white" } }),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 } },
+                  React.createElement('button', { onClick: () => setNoteOpenId(null), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+                  React.createElement('button', { onClick: () => enregistrerNote(t), disabled: noteBusy, style: { padding: "7px 15px", background: "#F0B429", border: "none", color: "#3D2E00", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: noteBusy ? 0.6 : 1 } }, noteBusy ? "Enregistrement…" : "Enregistrer la remarque")
+                )
               ),
               !t.hotel_id && React.createElement('div', { style: { background: "#FFFAF0", border: "1px solid #FBD38D", borderRadius: 8, padding: "10px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
                 React.createElement('span', { style: { fontSize: 12, color: "#C05621", fontWeight: 500 } }, "⚠️ Ticket non assigné à un hôtel."),
@@ -4282,14 +4274,40 @@ const nav = isAdmin
                     React.createElement('option', { value: "" }, reponsesTypes.length === 0 ? "Réponses types (vide)" : "💬 Insérer une réponse type…"),
                     reponsesTypes.map(r => React.createElement('option', { key: r.id, value: r.id }, r.titre))
                   ),
+                  React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                   React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                   React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
                   React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
                   React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
+                ),
+                // Éditeur de remarque interne (admin only) — vue cartes, ticket ouvert
+                noteOpenId === t.id && React.createElement('div', { style: { background: "#FFFDF3", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginTop: 12 } },
+                  React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+                    React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#B7791F" } }, "🔒 Remarque interne"),
+                    React.createElement('span', { style: { fontSize: 11, color: "#B7791F99" } }, "Visible uniquement par les administrateurs — jamais envoyée au client.")
+                  ),
+                  React.createElement('textarea', { value: noteText, onChange: e => setNoteText(e.target.value), placeholder: "Ex. : mot de passe TeamViewer, contexte du dossier, personne à recontacter…", rows: 4, style: { width: "100%", padding: "9px 11px", border: "1px solid #E4D08A", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none", background: "white" } }),
+                  React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 } },
+                    React.createElement('button', { onClick: () => setNoteOpenId(null), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+                    React.createElement('button', { onClick: () => enregistrerNote(t), disabled: noteBusy, style: { padding: "7px 15px", background: "#F0B429", border: "none", color: "#3D2E00", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: noteBusy ? 0.6 : 1 } }, noteBusy ? "Enregistrement…" : "Enregistrer la remarque")
+                  )
                 )
               ),
-              t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end" } },
+              t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+                React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { marginRight: "auto", padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
+              ),
+              // Éditeur de remarque interne (admin only) — vue cartes, ticket fermé
+              t.status === "closed" && noteOpenId === t.id && React.createElement('div', { style: { background: "#FFFDF3", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginTop: 12 } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+                  React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#B7791F" } }, "🔒 Remarque interne"),
+                  React.createElement('span', { style: { fontSize: 11, color: "#B7791F99" } }, "Visible uniquement par les administrateurs — jamais envoyée au client.")
+                ),
+                React.createElement('textarea', { value: noteText, onChange: e => setNoteText(e.target.value), placeholder: "Ex. : mot de passe TeamViewer, contexte du dossier, personne à recontacter…", rows: 4, style: { width: "100%", padding: "9px 11px", border: "1px solid #E4D08A", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none", background: "white" } }),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 } },
+                  React.createElement('button', { onClick: () => setNoteOpenId(null), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+                  React.createElement('button', { onClick: () => enregistrerNote(t), disabled: noteBusy, style: { padding: "7px 15px", background: "#F0B429", border: "none", color: "#3D2E00", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: noteBusy ? 0.6 : 1 } }, noteBusy ? "Enregistrement…" : "Enregistrer la remarque")
+                )
               )
             )
           );
