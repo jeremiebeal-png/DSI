@@ -4408,13 +4408,38 @@ const nav = isAdmin
                   React.createElement('button', { onClick: () => enregistrerNote(t), disabled: noteBusy, style: { padding: "7px 15px", background: "#F0B429", border: "none", color: "#3D2E00", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: noteBusy ? 0.6 : 1 } }, noteBusy ? "Enregistrement…" : "Enregistrer la remarque")
                 )
               ),
-              !t.hotel_id && React.createElement('div', { style: { background: "#FFFAF0", border: "1px solid #FBD38D", borderRadius: 8, padding: "10px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-                React.createElement('span', { style: { fontSize: 12, color: "#C05621", fontWeight: 500 } }, "⚠️ Ticket non assigné à un hôtel."),
-                React.createElement('select', { defaultValue: "", onChange: async (e) => { const hid = e.target.value; if (!hid) return; const { error } = await sb.from("tickets").update({ hotel_id: hid }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, hotel_id: hid } : x)); }, style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
-                  React.createElement('option', { value: "" }, "Assigner à un hôtel…"),
-                  hotels.map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
-                )
-              ),
+              // Rattachement / réattribution de l'hôtel. Toujours affiché :
+              //  - non assigné : bandeau orange + sélecteur
+              //  - déjà assigné : ligne discrète avec sélecteur pour corriger l'hôtel
+              (() => {
+                const hAssigne = hotels.find(hh => hh.id === t.hotel_id);
+                const onChangeHotel = async (e) => {
+                  const hid = e.target.value;
+                  if (!hid || hid === t.hotel_id) return;
+                  const ancien = hAssigne ? hAssigne.name : "(non assigné)";
+                  const nouveau = (hotels.find(hh => hh.id === hid) || {}).name || "";
+                  if (t.hotel_id && !confirm("Réattribuer ce ticket ?\n\nDe : " + ancien + "\nÀ : " + nouveau)) { e.target.value = t.hotel_id; return; }
+                  const { error } = await sb.from("tickets").update({ hotel_id: hid }).eq("id", t.id);
+                  if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, hotel_id: hid } : x));
+                  else alert("Erreur lors de la réattribution : " + error.message);
+                };
+                return t.hotel_id
+                  ? React.createElement('div', { style: { background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 8, padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                      React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "🏨 Hôtel : "),
+                      React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, hAssigne ? hAssigne.name : "Hôtel inconnu"),
+                      React.createElement('span', { style: { fontSize: 11, color: "#999", marginLeft: 4 } }, "— modifier en cas d'erreur :"),
+                      React.createElement('select', { value: t.hotel_id, onChange: onChangeHotel, style: { padding: "5px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+                        hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
+                      )
+                    )
+                  : React.createElement('div', { style: { background: "#FFFAF0", border: "1px solid #FBD38D", borderRadius: 8, padding: "10px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                      React.createElement('span', { style: { fontSize: 12, color: "#C05621", fontWeight: 500 } }, "⚠️ Ticket non assigné à un hôtel."),
+                      React.createElement('select', { defaultValue: "", onChange: onChangeHotel, style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+                        React.createElement('option', { value: "" }, "Assigner à un hôtel…"),
+                        hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
+                      )
+                    );
+              })(),
               t.subject && React.createElement('div', { style: { fontSize: 12, color: "#444", marginBottom: 10 } }, React.createElement('strong', null, "Objet : "), t.subject),
               React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.7 } },
                 React.createElement('div', null, "📧 " + (t.contact_email ? nettoyerEmail(t.contact_email) : "-") + "   📞 " + (t.contact_phone || "-")),
