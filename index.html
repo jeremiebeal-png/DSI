@@ -1386,6 +1386,29 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // Charge tous les tickets (ouverts + fermés) d'un hôtel pour la sélection.
+  const chargerTicketsHotel = async (hotelId) => {
+    setSupprHotel(hotelId);
+    setSupprTicket(null);
+    setSupprConfirm("");
+    setSupprNote("");
+    setSupprListe([]);
+    if (!hotelId) return;
+    setSupprListeBusy(true);
+    try {
+      const { data, error } = await sb.from("tickets")
+        .select("id,reference,subject,contact_name,contact_email,status,created_at,hotel_id")
+        .eq("hotel_id", hotelId)
+        .order("created_at", { ascending: false });
+      if (error) { setSupprNote("❌ Erreur : " + error.message); return; }
+      setSupprListe(data || []);
+    } catch (e) {
+      setSupprNote("❌ Erreur : " + (e.message || e));
+    } finally {
+      setSupprListeBusy(false);
+    }
+  };
+
   const supprimerTicketDefinitif = async () => {
     if (!supprTicket) return;
     const ref = supprTicket.reference || "";
@@ -1415,6 +1438,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (error) { setSupprNote("❌ Suppression refusée : " + error.message); setSupprBusy(false); return; }
       // 3) Retirer de la liste locale si présent
       setTickets(prev => prev.filter(x => x.id !== supprTicket.id));
+      setSupprListe(prev => prev.filter(x => x.id !== supprTicket.id));
       const info = data || {};
       setSupprNote("✅ Ticket " + ref + " supprimé définitivement (" + (info.messages_supprimes || 0) + " message(s), " + (chemins.length) + " fichier(s)).");
       setSupprTicket(null);
@@ -2063,6 +2087,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [supprNote, setSupprNote] = useState("");       // message d'état
   const [supprBusy, setSupprBusy] = useState(false);    // recherche/suppression en cours
   const [supprConfirm, setSupprConfirm] = useState(""); // saisie de confirmation (la référence retapée)
+  const [supprHotel, setSupprHotel] = useState("");     // hôtel sélectionné pour lister ses tickets
+  const [supprListe, setSupprListe] = useState([]);      // tickets de l'hôtel (ouverts + fermés)
+  const [supprListeBusy, setSupprListeBusy] = useState(false);
 
   const loadBackups = async () => {
     setBkLoading(true);
@@ -3645,6 +3672,38 @@ const nav = isAdmin
           React.createElement('input', { type: "text", value: supprRef, onChange: e => setSupprRef(e.target.value), onKeyDown: e => { if (e.key === "Enter") rechercherTicketASupprimer(); }, placeholder: "Ex. DSI-2026-0224", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } })
         ),
         React.createElement('button', { onClick: rechercherTicketASupprimer, disabled: supprBusy || !supprRef.trim(), style: { padding: "9px 18px", background: SB, border: "none", color: "white", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: (supprBusy || !supprRef.trim()) ? "default" : "pointer", opacity: (supprBusy || !supprRef.trim()) ? 0.6 : 1 } }, supprBusy ? "…" : "🔍 Rechercher")
+      ),
+      // Séparateur OU
+      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, margin: "6px 0 16px" } },
+        React.createElement('div', { style: { flex: 1, height: 1, background: "#E8E8F0" } }),
+        React.createElement('span', { style: { fontSize: 11, color: "#AAA", fontWeight: 600 } }, "OU"),
+        React.createElement('div', { style: { flex: 1, height: 1, background: "#E8E8F0" } })
+      ),
+      // Recherche par hôtel
+      React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 16, marginBottom: 16 } },
+        React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Rechercher par établissement"),
+        React.createElement('select', { value: supprHotel, onChange: e => chargerTicketsHotel(e.target.value), style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box" } },
+          React.createElement('option', { value: "" }, "— Choisir un établissement —"),
+          hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
+        ),
+        supprListeBusy && React.createElement('div', { style: { fontSize: 12, color: "#999", marginTop: 10 } }, "Chargement…"),
+        supprHotel && !supprListeBusy && React.createElement('div', { style: { marginTop: 12 } },
+          supprListe.length === 0
+            ? React.createElement('div', { style: { fontSize: 12.5, color: "#999", padding: "8px 0" } }, "Aucun ticket pour cet établissement.")
+            : React.createElement('div', null,
+                React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginBottom: 8 } }, supprListe.length + " ticket(s) — cliquez pour sélectionner :"),
+                React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" } },
+                  supprListe.map(t => React.createElement('div', { key: t.id, onClick: () => { setSupprTicket(t); setSupprConfirm(""); setSupprNote(""); }, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "1px solid " + (supprTicket && supprTicket.id === t.id ? "#F5B5B5" : "#EEE"), background: supprTicket && supprTicket.id === t.id ? "#FDECEC" : "white", borderRadius: 8, cursor: "pointer" } },
+                    React.createElement('span', { style: { width: 7, height: 7, borderRadius: "50%", background: t.status === "closed" ? "#A0AEC0" : "#3182CE", flexShrink: 0 } }),
+                    React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                      React.createElement('div', { style: { fontSize: 12.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.reference || "—") + " · " + (t.subject || "(sans objet)")),
+                      React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.contact_name || t.contact_email || "—") + " · " + (t.created_at ? new Date(t.created_at).toLocaleDateString("fr-FR") : ""))
+                    ),
+                    React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: t.status === "closed" ? "#718096" : "#3182CE", whiteSpace: "nowrap" } }, t.status === "closed" ? "Fermé" : "Ouvert")
+                  ))
+                )
+              )
+        )
       ),
       supprNote && React.createElement('div', { style: { fontSize: 12.5, color: supprNote.startsWith("❌") || supprNote.startsWith("⚠️") ? "#C53030" : (supprNote.startsWith("✅") ? "#2F855A" : "#666"), marginBottom: 16, background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px" } }, supprNote),
       // Aperçu du ticket trouvé + confirmation
