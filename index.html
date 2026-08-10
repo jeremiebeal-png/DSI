@@ -471,7 +471,7 @@ function App() {
   // Liste explicite des colonnes de tickets à charger côté portail.
   // note_interne en est VOLONTAIREMENT exclue : elle n'est jamais transmise
   // au navigateur par les requêtes de liste, et reste protégée en base.
-  const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,account_email,subject,message,category,priority,status,source,reference,created_at,closed_at,projet_id";
+  const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,account_email,subject,message,category,priority,status,source,reference,created_at,closed_at";
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
   const [fwdTicket, setFwdTicket] = useState(null);   // ticket en cours de transfert
@@ -1332,7 +1332,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     let query = sb.from("tickets").select(TICKET_COLS).order("created_at", { ascending: false });
     if (!isAdmin && myHotelId) query = query.eq("hotel_id", myHotelId);
     query.then(async ({ data, error }) => {
-      if (!error && data) {
+      if (error) {
+        // Repli de sécurité : si la liste de colonnes explicite échoue (colonne
+        // absente, etc.), on recharge avec select(*) pour ne jamais afficher 0 ticket.
+        let q2 = sb.from("tickets").select("*").order("created_at", { ascending: false });
+        if (!isAdmin && myHotelId) q2 = q2.eq("hotel_id", myHotelId);
+        const r2 = await q2;
+        if (!r2.error && r2.data) { setTickets(r2.data); computeTicketStates(r2.data); }
+        setTicketsLoading(false);
+        return;
+      }
+      if (data) {
         setTickets(data);
         // Calcule l'état de chaque ticket (Nouveau / Nouvelle réponse) d'après le dernier message
         computeTicketStates(data);
