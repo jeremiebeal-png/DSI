@@ -1987,6 +1987,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkFetchedAt, setBkFetchedAt] = useState(null);
   const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
   const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
+  const [bkOldOpen, setBkOldOpen] = useState(false); // dépliage de l'alerte "backups > 7 jours"
 
   const loadBackups = async () => {
     setBkLoading(true);
@@ -2068,6 +2069,26 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     });
     const groupesEnEchec = bkGroupes.filter(g => g.pireRank === 0).length;
     return { total: bkChecks.length, echec, warn, ok, autre, groupesEnEchec, nbGroupes: bkGroupes.length };
+  })();
+
+  // Backups « obsolètes » : checks dont la dernière exécution (updatedIso)
+  // remonte à plus de 7 jours — le backup n'a plus rien remonté depuis une semaine.
+  const BK_SEUIL_JOURS = 7;
+  const bkAncienChecks = (() => {
+    const now = Date.now();
+    const limite = BK_SEUIL_JOURS * 24 * 60 * 60 * 1000;
+    const arr = [];
+    (bkChecks || []).forEach(c => {
+      if (!c.updatedIso) return;
+      const t = new Date(c.updatedIso).getTime();
+      if (isNaN(t)) return;
+      const ageMs = now - t;
+      if (ageMs > limite) {
+        arr.push({ ...c, ageJours: Math.floor(ageMs / (24 * 60 * 60 * 1000)) });
+      }
+    });
+    arr.sort((a, b) => b.ageJours - a.ageJours);
+    return arr;
   })();
 
 
@@ -4934,6 +4955,35 @@ const nav = isAdmin
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
         "Statut des sauvegardes surveillées par CheckCentral, regroupées par site. Les groupes présentant un échec apparaissent en premier. Données lues en direct via l'API CheckCentral."
+      ),
+      // Alerte : backups sans exécution depuis plus de 7 jours
+      bkAncienChecks.length > 0 && React.createElement('div', { style: { marginBottom: 16, background: "#FDECEC", border: "1px solid #F5B5B5", borderRadius: 10, overflow: "hidden" } },
+        React.createElement('div', { onClick: () => setBkOldOpen(v => !v), style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+          React.createElement('span', { style: { fontSize: 18, flexShrink: 0 } }, "⚠️"),
+          React.createElement('div', { style: { flex: 1 } },
+            React.createElement('div', { style: { fontSize: 14, fontWeight: 700, color: "#B02A2A" } },
+              bkAncienChecks.length + " sauvegarde" + (bkAncienChecks.length > 1 ? "s" : "") + " sans exécution depuis plus de " + BK_SEUIL_JOURS + " jours"
+            ),
+            React.createElement('div', { style: { fontSize: 11.5, color: "#B45454", marginTop: 2 } }, "Cliquez pour voir " + (bkAncienChecks.length > 1 ? "les backups concernés" : "le backup concerné"))
+          ),
+          React.createElement('span', { style: { fontSize: 12, color: "#B02A2A", marginLeft: 4 } }, bkOldOpen ? "▲" : "▼")
+        ),
+        bkOldOpen && React.createElement('div', { style: { borderTop: "1px solid #F5B5B5", background: "white" } },
+          bkAncienChecks.map((c, i) => {
+            const hid = c.group_id && bkGroupMap[c.group_id];
+            const hotel = hid && hotels.find(h => h.id === hid);
+            const site = hotel ? hotel.name : (c.group || "(sans groupe)");
+            return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
+              React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: "#E53E3E", flexShrink: 0 } }),
+              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
+                React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, site + (c.description ? " · " + c.description : ""))
+              ),
+              React.createElement('span', { style: { fontSize: 11, color: "#B02A2A", fontWeight: 600, whiteSpace: "nowrap" } }, "Il y a " + c.ageJours + " j"),
+              React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(c.updatedIso))
+            );
+          })
+        )
       ),
       // Bandeau de synthèse
       React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
