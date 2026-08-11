@@ -2140,8 +2140,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // le reste (Paused/Resumed/Override...) = gris neutre (états volontaires).
   const bkStatusMeta = (statut) => {
     const s = (statut || "").toLowerCase();
-    if (s === "failure") return { color: "#E53E3E", bg: "#FDECEC", label: "Échec", rank: 0 };
-    if (s === "warning") return { color: "#DD6B20", bg: "#FEF0E4", label: "Avertissement", rank: 1 };
+    if (s === "failure") return { color: "#DC2626", bg: "#FDECEC", label: "Échec", rank: 0 };
+    if (s === "warning") return { color: "#F59E0B", bg: "#FEF0E4", label: "Avertissement", rank: 1 };
     if (s === "success") return { color: "#2F855A", bg: "#E9F6EE", label: "OK", rank: 3 };
     return { color: "#718096", bg: "#F0F0F4", label: statut || "—", rank: 2 };
   };
