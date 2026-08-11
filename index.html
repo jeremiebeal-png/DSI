@@ -2094,6 +2094,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
   const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
   const [bkOldOpen, setBkOldOpen] = useState(false); // dépliage de l'alerte "backups > 7 jours"
+  // Notes manuelles d'explication sur les backups en échec/muets (motif métier).
+  const [bkNotes, setBkNotes] = useState({});        // { check_id: { note, updated_by, updated_at } }
+  const [bkNoteEditId, setBkNoteEditId] = useState(null); // check_id dont l'éditeur est ouvert
+  const [bkNoteDraft, setBkNoteDraft] = useState(""); // texte en cours de saisie
+  const [bkNoteBusy, setBkNoteBusy] = useState(false);
   // Suppression définitive d'un ticket (super-admin)
   const [supprRef, setSupprRef] = useState("");        // référence saisie (DSI-XXXX)
   const [supprTicket, setSupprTicket] = useState(null); // ticket trouvé
@@ -2103,6 +2108,73 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [supprHotel, setSupprHotel] = useState("");     // hôtel sélectionné pour lister ses tickets
   const [supprListe, setSupprListe] = useState([]);      // tickets de l'hôtel (ouverts + fermés)
   const [supprListeBusy, setSupprListeBusy] = useState(false);
+
+  // Charge toutes les notes d'explication de backup en un seul appel (RPC admin).
+  const loadBackupNotes = async () => {
+    try {
+      const { data, error } = await sb.rpc("get_backup_notes");
+      if (error) return; // silencieux : la table/RPC peut ne pas exister encore
+      const map = {};
+      (data || []).forEach(n => {
+        if (n && n.check_id) map[n.check_id] = { note: n.note || "", updated_by: n.updated_by || "", updated_at: n.updated_at || null };
+      });
+      setBkNotes(map);
+    } catch (e) { /* silencieux */ }
+  };
+
+  // Enregistre (ou supprime si vide) la note d'un check, puis met à jour l'état local.
+  const saveBackupNote = async (checkId) => {
+    if (!checkId) return;
+    setBkNoteBusy(true);
+    try {
+      const texte = (bkNoteDraft || "").trim();
+      const { error } = await sb.rpc("set_backup_note", { p_check_id: checkId, p_note: texte });
+      if (error) { alert("Erreur lors de l'enregistrement de la note : " + error.message); return; }
+      setBkNotes(prev => {
+        const copy = { ...prev };
+        if (texte) copy[checkId] = { note: texte, updated_by: (profile && profile.email) || "", updated_at: new Date().toISOString() };
+        else delete copy[checkId];
+        return copy;
+      });
+      setBkNoteEditId(null);
+      setBkNoteDraft("");
+    } catch (e) {
+      alert("Erreur lors de l'enregistrement de la note.");
+    } finally {
+      setBkNoteBusy(false);
+    }
+  };
+
+  const ouvrirNoteBackup = (checkId) => {
+    if (bkNoteEditId === checkId) { setBkNoteEditId(null); return; }
+    setBkNoteEditId(checkId);
+    setBkNoteDraft((bkNotes[checkId] && bkNotes[checkId].note) || "");
+  };
+
+  // Bloc réutilisable : affichage de la note existante + bouton/éditeur.
+  // N'apparaît que pour les checks en échec ou muets (règle appliquée à l'appel).
+  const renderBackupNote = (checkId) => {
+    const existante = bkNotes[checkId];
+    const enEdition = bkNoteEditId === checkId;
+    return React.createElement('div', { style: { marginTop: 6 } },
+      existante && !enEdition && React.createElement('div', { style: { display: "flex", alignItems: "flex-start", gap: 6, background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 9px", marginBottom: 4 } },
+        React.createElement('span', { style: { fontSize: 12, flexShrink: 0 } }, "📝"),
+        React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+          React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", lineHeight: 1.5, whiteSpace: "pre-wrap" } }, existante.note),
+          existante.updated_by && React.createElement('div', { style: { fontSize: 10, color: "#B9A15A", marginTop: 2 } }, "— " + existante.updated_by)
+        )
+      ),
+      enEdition
+        ? React.createElement('div', { style: { marginTop: 4 } },
+            React.createElement('textarea', { value: bkNoteDraft, onChange: e => setBkNoteDraft(e.target.value), placeholder: "Expliquez pourquoi ce backup ne passe pas (ex. NAS débranché, site fermé, migration en cours…)", autoFocus: true, style: { width: "100%", minHeight: 54, padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" } }),
+            React.createElement('div', { style: { display: "flex", gap: 6, marginTop: 5 } },
+              React.createElement('button', { onClick: () => saveBackupNote(checkId), disabled: bkNoteBusy, style: { padding: "5px 12px", background: G, border: "none", color: "#111", borderRadius: 6, fontSize: 11.5, fontWeight: 600, cursor: bkNoteBusy ? "default" : "pointer", opacity: bkNoteBusy ? 0.6 : 1 } }, bkNoteBusy ? "…" : "Enregistrer"),
+              React.createElement('button', { onClick: () => { setBkNoteEditId(null); setBkNoteDraft(""); }, style: { padding: "5px 12px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 6, fontSize: 11.5, cursor: "pointer" } }, "Annuler")
+            )
+          )
+        : React.createElement('button', { onClick: () => ouvrirNoteBackup(checkId), style: { padding: "3px 9px", background: "none", border: "1px solid #E8D89A", color: "#8A6D1F", borderRadius: 6, fontSize: 11, cursor: "pointer", fontWeight: 500 } }, existante ? "✏️ Modifier la note" : "📝 Ajouter une note")
+    );
+  };
 
   const loadBackups = async () => {
     setBkLoading(true);
@@ -2127,6 +2199,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (data.error) { setBkNote("Erreur : " + data.error + (data.detail ? " — " + data.detail : "")); setBkChecks([]); return; }
       setBkChecks(data.checks || []);
       setBkFetchedAt(data.fetchedAt || new Date().toISOString());
+      loadBackupNotes(); // charge les notes d'explication en parallèle
       if ((data.checks || []).length === 0) setBkNote("Aucun check retourné par CheckCentral.");
     } catch (e) {
       setBkNote("Erreur : " + (e.message || e) + " (le Worker CheckCentral est-il déployé et l'URL correcte ?)");
@@ -2140,8 +2213,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // le reste (Paused/Resumed/Override...) = gris neutre (états volontaires).
   const bkStatusMeta = (statut) => {
     const s = (statut || "").toLowerCase();
-    if (s === "failure") return { color: "#DC2626", bg: "#FDECEC", label: "Échec", rank: 0 };
-    if (s === "warning") return { color: "#F59E0B", bg: "#FEF0E4", label: "Avertissement", rank: 1 };
+    if (s === "failure") return { color: "#E53E3E", bg: "#FDECEC", label: "Échec", rank: 0 };
+    if (s === "warning") return { color: "#DD6B20", bg: "#FEF0E4", label: "Avertissement", rank: 1 };
     if (s === "success") return { color: "#2F855A", bg: "#E9F6EE", label: "OK", rank: 3 };
     return { color: "#718096", bg: "#F0F0F4", label: statut || "—", rank: 2 };
   };
@@ -5318,13 +5391,14 @@ const nav = isAdmin
             const hid = c.group_id && bkGroupMap[c.group_id];
             const hotel = hid && hotels.find(h => h.id === hid);
             const site = hotel ? hotel.name : (c.group || "(sans groupe)");
-            return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
-              React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: "#E53E3E", flexShrink: 0 } }),
+            return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
+              React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: "#E53E3E", flexShrink: 0, marginTop: 4 } }),
               React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                 React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
-                React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, site + (c.description ? " · " + c.description : ""))
+                React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, site + (c.description ? " · " + c.description : "")),
+                c.id && renderBackupNote(c.id)
               ),
-              React.createElement('span', { style: { fontSize: 11, color: "#B02A2A", fontWeight: 600, whiteSpace: "nowrap" } }, "Il y a " + c.ageJours + " j"),
+              React.createElement('span', { style: { fontSize: 11, color: "#B02A2A", fontWeight: 600, whiteSpace: "nowrap", alignSelf: "flex-start" } }, "Il y a " + c.ageJours + " j"),
               React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(c.updatedIso))
             );
           })
@@ -5374,14 +5448,23 @@ const nav = isAdmin
                 ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8" } },
                   g.checks.map((c, i) => {
                     const cm = bkStatusMeta(c.status);
-                    return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < g.checks.length - 1 ? "1px solid #F6F6FA" : "none" } },
-                      React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: cm.color, flexShrink: 0 } }),
+                    // Éligible à une note = check en échec OU muet (dernière exécution > 7 jours).
+                    const estEchec = cm.rank === 0;
+                    let estMuet = false;
+                    if (c.updatedIso) {
+                      const t = new Date(c.updatedIso).getTime();
+                      if (!isNaN(t)) estMuet = (Date.now() - t) > (BK_SEUIL_JOURS * 24 * 60 * 60 * 1000);
+                    }
+                    const noteEligible = !!c.id && (estEchec || estMuet);
+                    return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 16px", borderBottom: i < g.checks.length - 1 ? "1px solid #F6F6FA" : "none" } },
+                      React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: cm.color, flexShrink: 0, marginTop: 4 } }),
                       React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                         React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
-                        c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description)
+                        c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description),
+                        noteEligible && renderBackupNote(c.id)
                       ),
-                      React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(c.updatedIso)),
-                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: cm.color, background: cm.bg, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap" } }, cm.label)
+                      React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap", marginTop: 2 } }, fmtDateHeureFr2(c.updatedIso)),
+                      React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: cm.color, background: cm.bg, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap", marginTop: 1 } }, cm.label)
                     );
                   })
                 )
