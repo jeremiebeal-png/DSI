@@ -474,7 +474,7 @@ function App() {
   // Liste explicite des colonnes de tickets à charger côté portail.
   // note_interne en est VOLONTAIREMENT exclue : elle n'est jamais transmise
   // au navigateur par les requêtes de liste, et reste protégée en base.
-  const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,account_email,subject,message,category,priority,status,source,reference,created_at,closed_at";
+  const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,subject,message,category,priority,status,source,reference,created_at,closed_at";
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
   const [fwdTicket, setFwdTicket] = useState(null);   // ticket en cours de transfert
