@@ -1337,15 +1337,29 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const loadTickets = () => {
     if (!profile) return;
     setTicketsLoading(true);
-    let query = sb.from("tickets").select(TICKET_COLS).order("created_at", { ascending: false });
-    if (!isAdmin && myHotelId) query = query.eq("hotel_id", myHotelId);
-    query.then(async ({ data, error }) => {
+    // Récupère TOUS les tickets par pages de 1000 (PostgREST plafonne chaque
+    // requête à 1000 lignes ; sans pagination on n'en verrait qu'un millier).
+    const PAGE = 1000;
+    const fetchAll = async (cols) => {
+      let rows = [];
+      let from = 0;
+      for (;;) {
+        let q = sb.from("tickets").select(cols).order("created_at", { ascending: false }).range(from, from + PAGE - 1);
+        if (!isAdmin && myHotelId) q = q.eq("hotel_id", myHotelId);
+        const { data, error } = await q;
+        if (error) return { error };
+        rows = rows.concat(data || []);
+        if (!data || data.length < PAGE) break; // dernière page atteinte
+        from += PAGE;
+      }
+      return { data: rows };
+    };
+    (async () => {
+      let { data, error } = await fetchAll(TICKET_COLS);
       if (error) {
         // Repli de sécurité : si la liste de colonnes explicite échoue (colonne
         // absente, etc.), on recharge avec select(*) pour ne jamais afficher 0 ticket.
-        let q2 = sb.from("tickets").select("*").order("created_at", { ascending: false });
-        if (!isAdmin && myHotelId) q2 = q2.eq("hotel_id", myHotelId);
-        const r2 = await q2;
+        const r2 = await fetchAll("*");
         if (!r2.error && r2.data) { setTickets(r2.data); computeTicketStates(r2.data); }
         setTicketsLoading(false);
         return;
@@ -1356,7 +1370,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         computeTicketStates(data);
       }
       setTicketsLoading(false);
-    });
+    })();
   };
 
   // ====== SUPPRESSION DÉFINITIVE D'UN TICKET (super-admin) ======
