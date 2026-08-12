@@ -462,6 +462,9 @@ function App() {
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSel, setMergeSel] = useState([]); // ids de tickets sélectionnés
   const [mergeBusy, setMergeBusy] = useState(false)
+  const [closeMode, setCloseMode] = useState(false);
+  const [closeSel, setCloseSel] = useState([]); // ids de tickets à fermer en masse
+  const [closeBusy, setCloseBusy] = useState(false)
   const [ticketView, setTicketView] = useState("table"); // "cards" | "table" — tableau par défaut
   const [ticketSearch, setTicketSearch] = useState(""); // terme de recherche tickets
   const [ticketBodies, setTicketBodies] = useState({}); // { ticket_id: "corps concaténé des messages" }
@@ -4661,6 +4664,26 @@ const nav = isAdmin
     setMergeSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
+  const toggleCloseSel = (id) => {
+    setCloseSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const doCloseTickets = async () => {
+    if (closeSel.length < 1) return;
+    if (!confirm(`Fermer ${closeSel.length} ticket${closeSel.length > 1 ? "s" : ""} ?`)) return;
+    setCloseBusy(true);
+    try {
+      await sb.from("tickets").update({ status: "closed" }).in("id", closeSel);
+      setCloseMode(false);
+      setCloseSel([]);
+      await loadTickets();
+    } catch (e) {
+      alert("Erreur lors de la fermeture : " + (e.message || e));
+    } finally {
+      setCloseBusy(false);
+    }
+  };
+
   const doMergeTickets = async () => {
     if (mergeSel.length < 2) return;
     // Ticket de destination = le plus ancien parmi les sélectionnés
@@ -4753,7 +4776,8 @@ const nav = isAdmin
           ticketSearch && React.createElement('button', { onClick: () => setTicketSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
         ),
         React.createElement('span', { style: { marginLeft: "auto", fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, list.length + (list.length > 1 ? " tickets" : " ticket")),
-        React.createElement('button', { onClick: () => { setMergeMode(m => !m); setMergeSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (mergeMode ? G : "#DDD"), background: mergeMode ? G + "18" : "white", color: mergeMode ? G2 : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: mergeMode ? 500 : 400 } }, mergeMode ? "✕ Annuler la fusion" : "⚄ Fusionner"),
+        React.createElement('button', { onClick: () => { setMergeMode(m => !m); setMergeSel([]); setCloseMode(false); setCloseSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (mergeMode ? G : "#DDD"), background: mergeMode ? G + "18" : "white", color: mergeMode ? G2 : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: mergeMode ? 500 : 400 } }, mergeMode ? "✕ Annuler la fusion" : "⚄ Fusionner"),
+        React.createElement('button', { onClick: () => { setCloseMode(m => !m); setCloseSel([]); setMergeMode(false); setMergeSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (closeMode ? "#E53E3E" : "#DDD"), background: closeMode ? "#FFF5F5" : "white", color: closeMode ? "#C53030" : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: closeMode ? 500 : 400 } }, closeMode ? "✕ Annuler" : "✓ Fermer plusieurs"),
         React.createElement('div', { style: { display: "flex", border: "1px solid #DDD", borderRadius: 7, overflow: "hidden" } },
           React.createElement('button', { onClick: () => setTicketView("cards"), title: "Vue cartes", style: { padding: "6px 11px", border: "none", background: ticketView === "cards" ? G + "18" : "white", color: ticketView === "cards" ? G2 : "#888", fontSize: 12, cursor: "pointer", fontWeight: ticketView === "cards" ? 600 : 400 } }, "\u2630 Liste"),
           React.createElement('button', { onClick: () => setTicketView("table"), title: "Vue tableau", style: { padding: "6px 11px", border: "none", borderLeft: "1px solid #DDD", background: ticketView === "table" ? G + "18" : "white", color: ticketView === "table" ? G2 : "#888", fontSize: 12, cursor: "pointer", fontWeight: ticketView === "table" ? 600 : 400 } }, "\u25A6 Tableau")
@@ -4777,6 +4801,11 @@ const nav = isAdmin
         React.createElement('span', { style: { fontSize: 12, color: "#2B6CB0", flex: 1 } }, mergeSel.length < 2 ? "Cochez au moins 2 tickets à fusionner. Le plus ancien deviendra le ticket principal." : (mergeSel.length + " tickets sélectionnés — ils seront fusionnés dans le plus ancien.")),
         React.createElement('button', { onClick: doMergeTickets, disabled: mergeSel.length < 2 || mergeBusy, style: { padding: "7px 14px", background: mergeSel.length >= 2 ? G : "#CCC", border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: mergeSel.length >= 2 ? "pointer" : "default", opacity: mergeBusy ? 0.6 : 1 } }, mergeBusy ? "Fusion..." : "Fusionner les tickets")
       ),
+      closeMode && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+        React.createElement('span', { style: { fontSize: 12, color: "#C53030", flex: 1 } }, closeSel.length < 1 ? "Cochez les tickets à fermer." : (closeSel.length + " ticket" + (closeSel.length > 1 ? "s" : "") + " sélectionné" + (closeSel.length > 1 ? "s" : "") + " — ils seront marqués comme fermés.")),
+        React.createElement('button', { onClick: () => setCloseSel(list.map(t => t.id)), style: { padding: "7px 12px", background: "white", border: "1px solid #FEB2B2", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer" } }, "Tout cocher"),
+        React.createElement('button', { onClick: doCloseTickets, disabled: closeSel.length < 1 || closeBusy, style: { padding: "7px 14px", background: closeSel.length >= 1 ? "#E53E3E" : "#CCC", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: closeSel.length >= 1 ? "pointer" : "default", opacity: closeBusy ? 0.6 : 1 } }, closeBusy ? "Fermeture..." : "Fermer les tickets sélectionnés")
+      ),
       ticketsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des tickets..."),
       !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, rechercheActive ? ("Aucun ticket ne correspond à « " + ticketSearch.trim() + " ».") : "Aucun ticket dans cette catégorie."),
       ticketView === "table" && !ticketsLoading && list.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.03em" } },
@@ -4797,8 +4826,9 @@ const nav = isAdmin
           const isOpen = openTicketId === t.id;
           const msgs = ticketMsgs[t.id] || [];
           return React.createElement('div', { key: t.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
-            React.createElement('div', { onClick: () => mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id), style: { padding: ticketView === "table" ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: ticketView === "table" ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : "transparent" } },
+            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), style: { padding: ticketView === "table" ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: ticketView === "table" ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
+              closeMode && React.createElement('input', { type: "checkbox", checked: closeSel.includes(t.id), onChange: () => toggleCloseSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer", accentColor: "#E53E3E" } }),
               ticketView === "table"
                 ? React.createElement(React.Fragment, null,
                     React.createElement('span', { style: { width: 4, height: 28, borderRadius: 3, background: prioColor(t.priority), flexShrink: 0 } }),
@@ -5040,8 +5070,9 @@ const nav = isAdmin
           const isOpen = openTicketId === t.id;
           const msgs = ticketMsgs[t.id] || [];
           return React.createElement('div', { key: t.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
-            React.createElement('div', { onClick: () => mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : "transparent" } },
+            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
+              closeMode && React.createElement('input', { type: "checkbox", checked: closeSel.includes(t.id), onChange: () => toggleCloseSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer", accentColor: "#E53E3E" } }),
               React.createElement('div', { style: { flex: 1 } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" } },
                   React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
