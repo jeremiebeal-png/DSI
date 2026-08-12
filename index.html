@@ -1487,13 +1487,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (ids.length === 0) { setTicketState({}); return; }
     const createdMap = {};
     (ticketList || []).forEach(t => { createdMap[t.id] = t.created_at; });
-    const { data, error } = await sb.from("ticket_messages")
-      .select("ticket_id,sender_role,created_at")
-      .in("ticket_id", ids)
-      .order("created_at", { ascending: true });
-    if (error || !data) return;
+    // Récupère les messages par lots d'IDs : un seul .in() avec des milliers
+    // d'IDs produit une URL trop longue (erreur 414 URI Too Long).
+    const CHUNK = 200;
+    let allMsgs = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const lot = ids.slice(i, i + CHUNK);
+      const { data, error } = await sb.from("ticket_messages")
+        .select("ticket_id,sender_role,created_at")
+        .in("ticket_id", lot)
+        .order("created_at", { ascending: true });
+      if (error || !data) continue; // on ignore un lot en échec plutôt que tout perdre
+      allMsgs = allMsgs.concat(data);
+    }
     const byTicket = {};
-    data.forEach(m => { (byTicket[m.ticket_id] = byTicket[m.ticket_id] || []).push(m); });
+    allMsgs.forEach(m => { (byTicket[m.ticket_id] = byTicket[m.ticket_id] || []).push(m); });
     const map = {};
     ids.forEach(id => {
       const msgs = byTicket[id] || [];
