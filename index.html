@@ -4687,7 +4687,14 @@ const nav = isAdmin
     if (!confirm(`Fermer ${closeSel.length} ticket${closeSel.length > 1 ? "s" : ""} ?`)) return;
     setCloseBusy(true);
     try {
-      await sb.from("tickets").update({ status: "closed" }).in("id", closeSel);
+      // Découpe en lots : une seule requête .in() avec trop d'IDs dépasse la
+      // longueur d'URL autorisée et échoue silencieusement au-delà de ~100-1000 IDs.
+      const CHUNK = 200;
+      for (let i = 0; i < closeSel.length; i += CHUNK) {
+        const lot = closeSel.slice(i, i + CHUNK);
+        const { error } = await sb.from("tickets").update({ status: "closed" }).in("id", lot);
+        if (error) throw error;
+      }
       setCloseMode(false);
       setCloseSel([]);
       await loadTickets();
