@@ -1540,6 +1540,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
   // La note n'est jamais chargée dans la liste des tickets : on la lit à la
   // demande, uniquement quand l'admin ouvre l'éditeur de remarque.
+  // Charge et affiche la remarque interne sans toggle : utilisé à l'ouverture
+  // d'un ticket pour que la remarque apparaisse automatiquement (admin only).
+  const chargerNote = async (ticket) => {
+    if (!isAdmin || !ticket) return;
+    setNoteOpenId(ticket.id);
+    setNoteText("");
+    try {
+      const { data, error } = await sb.rpc("get_ticket_note", { p_ticket_id: ticket.id });
+      if (!error && data != null) {
+        setNoteText(data);
+        setNoteSaved(prev => ({ ...prev, [ticket.id]: !!String(data).trim() }));
+      }
+    } catch (e) { /* silencieux : l'éditeur s'ouvre vide */ }
+  };
+
   const ouvrirNote = async (ticket) => {
     if (!isAdmin) return;
     // Toggle : si déjà ouvert sur ce ticket, on referme
@@ -2423,6 +2438,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setReplyCcManual("");
     loadTicketMsgs(id);
     loadTicketFiles(id);
+    if (isAdmin) { const tk = tickets.find(x => x.id === id); if (tk) chargerNote(tk); }
     // Préremplit immédiatement depuis le cache (rafraîchi ensuite par l'effet ci-dessous)
     const t = tickets.find(x => x.id === id);
     setReplyCcList(extraireCcDuFil(ticketMsgs[id] || [], t));
