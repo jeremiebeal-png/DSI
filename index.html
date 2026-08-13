@@ -8,6 +8,7 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
@@ -134,11 +135,23 @@ const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
 // on ne garde que des balises sûres (mise en forme + images + liens).
 function sanitizeRichHtml(html) {
   if (!html) return "";
+  // Assainissement par DOMPurify (bibliothèque éprouvée). On autorise le HTML
+  // d'email courant, sans scripts, iframes ni gestionnaires d'événements.
+  if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
+    return window.DOMPurify.sanitize(String(html), {
+      ALLOWED_TAGS: ['p','br','b','i','u','s','strong','em','ul','ol','li','a',
+                     'span','div','h1','h2','h3','h4','blockquote','pre','code',
+                     'img','table','thead','tbody','tr','td','th','hr','sub','sup'],
+      ALLOWED_ATTR: ['href','src','alt','title','style','target','rel','width','height','colspan','rowspan'],
+      ALLOW_DATA_ATTR: false,
+      ADD_ATTR: ['target'],
+    });
+  }
+  // Repli défensif si le CDN DOMPurify n'a pas chargé : liste noire regex.
   let h = String(html);
   h = h.replace(/<!--[\s\S]*?-->/g, "");
   h = h.replace(/<(script|style|iframe|object|embed|form|input|textarea|link|meta)[\s\S]*?<\/\1>/gi, "");
   h = h.replace(/<(script|style|iframe|object|embed|form|input|textarea|link|meta)\b[^>]*>/gi, "");
-  // Retire les gestionnaires d'événements et les URLs javascript:
   h = h.replace(/\son\w+\s*=\s*"[^"]*"/gi, "");
   h = h.replace(/\son\w+\s*=\s*'[^']*'/gi, "");
   h = h.replace(/(href|src)\s*=\s*"(\s*javascript:[^"]*)"/gi, '$1="#"');
@@ -191,76 +204,6 @@ const SUPABASE_KEY = "sb_publishable_0bUT3AjMaWBI9qQa9ZKmrA_3BRqNvbL";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const STORAGE_BUCKET = "uploads";
 
-// ------------------------------------------------------------------
-// URLs signées (bucket privé). Les fichiers sont stockés en base sous
-// forme d'URL publique historique OU de chemin ; on en extrait le chemin
-// relatif au bucket, puis on génère une URL signée temporaire à la volée.
-// Un cache mémoire évite de re-signer le même fichier en boucle.
-// ------------------------------------------------------------------
-function extractStoragePath(fileUrl) {
-  if (!fileUrl) return null;
-  const s = String(fileUrl);
-  // URL publique : .../object/public/uploads/<chemin>
-  let m = s.match(/\/object\/(?:public|sign)\/uploads\/([^?]+)/);
-  if (m) return decodeURIComponent(m[1]);
-  // URL déjà signée ou autre forme .../uploads/<chemin>
-  m = s.match(/\/uploads\/([^?]+)/);
-  if (m) return decodeURIComponent(m[1]);
-  // Sinon on suppose que c'est déjà un chemin relatif
-  if (!/^https?:\/\//i.test(s)) return s.replace(/^\/+/, "");
-  return null;
-}
-
-const _signedCache = new Map(); // path -> { url, exp }
-async function getSignedUrl(fileUrl, expiresIn) {
-  const path = extractStoragePath(fileUrl);
-  if (!path) return fileUrl || "";
-  const ttl = expiresIn || 3600;
-  const now = Date.now();
-  const hit = _signedCache.get(path);
-  if (hit && hit.exp > now + 30000) return hit.url;
-  try {
-    const { data, error } = await sb.storage.from(STORAGE_BUCKET).createSignedUrl(path, ttl);
-    if (error || !data || !data.signedUrl) return fileUrl || "";
-    _signedCache.set(path, { url: data.signedUrl, exp: now + ttl * 1000 });
-    return data.signedUrl;
-  } catch (e) {
-    return fileUrl || "";
-  }
-}
-
-// Composant <img> qui résout l'URL signée avant affichage.
-function SignedImg(props) {
-  const { fileUrl, ...rest } = props;
-  const [src, setSrc] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    getSignedUrl(fileUrl).then(u => { if (alive) setSrc(u); });
-    return () => { alive = false; };
-  }, [fileUrl]);
-  return React.createElement('img', Object.assign({}, rest, { src: src || undefined }));
-}
-
-// Composant <a> qui résout l'URL signée avant clic (href mis à jour en arrière-plan).
-function SignedLink(props) {
-  const { fileUrl, children, ...rest } = props;
-  const [href, setHref] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    getSignedUrl(fileUrl).then(u => { if (alive) setHref(u); });
-    return () => { alive = false; };
-  }, [fileUrl]);
-  const onClick = (e) => {
-    if (!href) {
-      e.preventDefault();
-      getSignedUrl(fileUrl).then(u => { setHref(u); if (u) window.open(u, "_blank", "noopener"); });
-    }
-    if (rest.onClick) rest.onClick(e);
-  };
-  return React.createElement('a', Object.assign({}, rest, { href: href || "#", onClick }), children);
-}
-
-
 const CATS = ["Cyber Sécurité", "Logiciel Marriott", "Logiciel Hilton", "Logiciel Radisson", "Logiciel IHG", "Adobe PDF", "Création de compte", "Problème Opera", "Problème Office", "Problème Mot de Passe", "Problème Réseau", "Problème Matériel", "Email entrant", "Autre"];
 const CAT_ICONS = { "Cyber Sécurité": "🛡️", "Logiciel Marriott": "🏨", "Logiciel Hilton": "🏨", "Logiciel Radisson": "🏨", "Logiciel IHG": "🏨", "Adobe PDF": "📕", "Création de compte": "👤", "Problème Opera": "🖥️", "Problème Office": "📧", "Problème Mot de Passe": "🔒", "Problème Réseau": "📶", "Problème Matériel": "🖨️", "Email entrant": "📨", "Autre": "❓" };
 const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
@@ -286,14 +229,14 @@ const FileList = ({ files, title, onOpenImage }) => {
     title && React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 6 } }, title),
     imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: docs.length ? 8 : 0 } },
       imgs.map((f, i) => onOpenImage
-        ? React.createElement(SignedImg, { key: f.id, fileUrl: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => onOpenImage(imgs, i), style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } })
-        : React.createElement(SignedLink, { key: f.id, fileUrl: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { display: "block", lineHeight: 0 } },
-            React.createElement(SignedImg, { fileUrl: f.file_url, alt: f.file_name, style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8" } })
+        ? React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => onOpenImage(imgs, i), style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } })
+        : React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", title: f.file_name, style: { display: "block", lineHeight: 0 } },
+            React.createElement('img', { src: f.file_url, alt: f.file_name, style: { width: 78, height: 78, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8" } })
           )
       )
     ),
     docs.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 5 } },
-      docs.map(f => React.createElement(SignedLink, { key: f.id, fileUrl: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "white", border: "1px solid #E8E8F0", borderRadius: 7, padding: "7px 11px", fontSize: 12, color: "#333", textDecoration: "none" } },
+      docs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "white", border: "1px solid #E8E8F0", borderRadius: 7, padding: "7px 11px", fontSize: 12, color: "#333", textDecoration: "none" } },
         React.createElement('span', { style: { fontSize: 15 } }, FILE_ICONS[fileExt(f.file_name)] || "📄"),
         React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
         React.createElement('span', { style: { color: G2, fontSize: 11, whiteSpace: "nowrap" } }, "Télécharger ⬇")
@@ -308,8 +251,8 @@ async function uploadToStorage(file, pathPrefix) {
   const path = `${pathPrefix}/${Date.now()}_${cleanName}`;
   const { error } = await sb.storage.from(STORAGE_BUCKET).upload(path, file);
   if (error) throw error;
-  // Bucket privé : on stocke le CHEMIN relatif, résolu en URL signée à l'affichage.
-  return path;
+  const { data } = sb.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
 }
 
 function App() {
@@ -1523,8 +1466,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const { data: fichiers } = await sb.from("ticket_fichiers").select("file_url").eq("ticket_id", supprTicket.id);
       const chemins = [];
       (fichiers || []).forEach(f => {
-        const chemin = extractStoragePath(f.file_url);
-        if (chemin) chemins.push(chemin);
+        const u = f.file_url || "";
+        const marqueur = "/public/" + STORAGE_BUCKET + "/";
+        const i = u.indexOf(marqueur);
+        if (i !== -1) chemins.push(decodeURIComponent(u.slice(i + marqueur.length)));
       });
       if (chemins.length > 0) {
         try { await sb.storage.from(STORAGE_BUCKET).remove(chemins); }
@@ -4408,7 +4353,7 @@ const nav = isAdmin
         React.createElement('option', { value: "" }, orphelin ? "Rattacher à…" : "Changer d\u0027hôtel…"),
         hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
       ),
-      React.createElement(SignedLink, { fileUrl: r.file_url, target: "_blank", rel: "noopener", style: { color: G2, fontSize: 12, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" } }, "Ouvrir ↗"),
+      React.createElement('a', { href: r.file_url, target: "_blank", rel: "noopener", style: { color: G2, fontSize: 12, fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" } }, "Ouvrir ↗"),
       React.createElement('button', { onClick: () => supprimerRapport(r), title: "Supprimer", style: { background: "none", border: "1px solid #E8B4B4", color: "#C53030", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 10px", whiteSpace: "nowrap" } }, "Supprimer")
     );
     content = React.createElement('div', null,
@@ -4496,7 +4441,7 @@ const nav = isAdmin
           React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Pièces jointes & images (PDF, Word, Excel, PNG, JPG) — réservé admin"),
           procFormExistingFiles.length > 0 && React.createElement('div', { style: { marginBottom: 6, display: "flex", flexDirection: "column", gap: 5 } },
             procFormExistingFiles.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
-              isImageFile(f.file_name) ? React.createElement(SignedImg, { fileUrl: f.file_url, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+              isImageFile(f.file_name) ? React.createElement('img', { src: f.file_url, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
               React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
               React.createElement('button', { onClick: () => removeExistingProcFile(f.id), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
             ))
@@ -4610,13 +4555,13 @@ const nav = isAdmin
         files.filter(f => isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
-            files.filter(f => isImageFile(f.file_name)).map((f, i, arr) => React.createElement(SignedImg, { key: i, fileUrl: f.file_url, alt: f.file_name, title: "Cliquez pour agrandir", onClick: () => openViewer(arr, i), style: { width: "100%", borderRadius: 8, border: "1px solid #EEE", cursor: "zoom-in" } }))
+            files.filter(f => isImageFile(f.file_name)).map((f, i, arr) => React.createElement('img', { key: i, src: f.file_url, alt: f.file_name, title: "Cliquez pour agrandir", onClick: () => openViewer(arr, i), style: { width: "100%", borderRadius: 8, border: "1px solid #EEE", cursor: "zoom-in" } }))
           )
         ),
         files.filter(f => !isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
-            files.filter(f => !isImageFile(f.file_name)).map((f, i) => React.createElement(SignedLink, { key: i, fileUrl: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
+            files.filter(f => !isImageFile(f.file_name)).map((f, i) => React.createElement('a', { key: i, href: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
               React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.file_name)] || "📄"),
               React.createElement('span', { style: { flex: 1 } }, f.file_name),
               React.createElement('span', { style: { color: G2, fontSize: 11 } }, "Télécharger ⬇")
@@ -5276,8 +5221,8 @@ const nav = isAdmin
           React.createElement('label', { style: labelD }, "📎 Photos, plans et documents"),
           docExistingFiles.length > 0 && React.createElement('div', { style: { marginBottom: 7, display: "flex", flexDirection: "column", gap: 5 } },
             docExistingFiles.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
-              isImageFile(f.file_name) ? React.createElement(SignedImg, { fileUrl: f.file_url, style: { width: 26, height: 26, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
-              React.createElement(SignedLink, { fileUrl: f.file_url, target: "_blank", rel: "noreferrer", style: { flex: 1, color: "#333", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
+              isImageFile(f.file_name) ? React.createElement('img', { src: f.file_url, style: { width: 26, height: 26, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+              React.createElement('a', { href: f.file_url, target: "_blank", rel: "noreferrer", style: { flex: 1, color: "#333", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
               React.createElement('button', { onClick: () => removeExistingDocFile(f.id), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
             ))
           ),
@@ -5320,7 +5265,7 @@ const nav = isAdmin
             React.createElement('button', { onClick: () => toggleDocVisible(d), title: "Cliquez pour changer la visibilité", style: { display: "block", width: "100%", textAlign: "left", marginBottom: 9, padding: "5px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${d.visible_client ? "#9AE6B4" : "#E2E2E8"}`, background: d.visible_client ? "#F0FFF4" : "#FAFAFC", color: d.visible_client ? "#276749" : "#888" } }, d.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
             d.description && React.createElement('div', { style: { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, d.description),
             imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
-              imgs.slice(0, 4).map((f, i) => React.createElement(SignedImg, { key: f.id, fileUrl: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 62, height: 62, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } })),
+              imgs.slice(0, 4).map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 62, height: 62, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } })),
               imgs.length > 4 && React.createElement('div', { onClick: () => openViewer(imgs, 4), style: { width: 62, height: 62, borderRadius: 6, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#888", fontWeight: 600, cursor: "zoom-in" } }, "+" + (imgs.length - 4))
             ),
             React.createElement(FileList, { files: fl.filter(f => !isImageFile(f.file_name)) }),
@@ -5364,7 +5309,7 @@ const nav = isAdmin
             ),
             d.description && React.createElement('div', { style: { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, d.description),
             imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
-              imgs.map((f, i) => React.createElement(SignedImg, { key: f.id, fileUrl: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 68, height: 68, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
+              imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 68, height: 68, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
             ),
             React.createElement(FileList, { files: fl.filter(f => !isImageFile(f.file_name)) })
           );
@@ -5381,7 +5326,7 @@ const nav = isAdmin
         "Rapports de supervision et de sécurité informatique de votre établissement, générés automatiquement par nos outils de surveillance."
       ),
       njLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
-      !njLoading && njRapports.map(r => React.createElement(SignedLink, { key: r.id, fileUrl: r.file_url, target: "_blank", rel: "noopener", style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 16px", marginBottom: 8, textDecoration: "none" } },
+      !njLoading && njRapports.map(r => React.createElement('a', { key: r.id, href: r.file_url, target: "_blank", rel: "noopener", style: { display: "flex", alignItems: "center", gap: 12, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 16px", marginBottom: 8, textDecoration: "none" } },
         React.createElement('div', { style: { fontSize: 22 } }, "📄"),
         React.createElement('div', { style: { flex: 1, minWidth: 0 } },
           React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.titre || r.file_name || "Rapport"),
@@ -5882,8 +5827,8 @@ const nav = isAdmin
             React.createElement('label', { style: labelS }, "📎 Pièces jointes (PDF, Word, Excel, images)"),
             projExistingFiles.length > 0 && React.createElement('div', { style: { marginBottom: 7, display: "flex", flexDirection: "column", gap: 5 } },
               projExistingFiles.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
-                isImageFile(f.file_name) ? React.createElement(SignedImg, { fileUrl: f.file_url, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
-                React.createElement(SignedLink, { fileUrl: f.file_url, target: "_blank", rel: "noreferrer", style: { flex: 1, color: "#333", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
+                isImageFile(f.file_name) ? React.createElement('img', { src: f.file_url, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+                React.createElement('a', { href: f.file_url, target: "_blank", rel: "noreferrer", style: { flex: 1, color: "#333", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
                 React.createElement('button', { onClick: () => removeExistingProjFile(f.id), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
               ))
             ),
@@ -5974,7 +5919,7 @@ const nav = isAdmin
                           d.statut === "attente" && d.motif && React.createElement('div', { style: { color: "#B26A00", fontSize: 11.5, marginTop: 1 } }, "↳ " + d.motif),
                           d.explication && React.createElement('div', { style: { color: "#555", fontSize: 11.5, marginTop: 3, whiteSpace: "pre-wrap", lineHeight: 1.5 } }, d.explication),
                           Array.isArray(d.pieces_jointes) && d.pieces_jointes.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 } },
-                            d.pieces_jointes.map((pj, k) => React.createElement(SignedLink, { key: k, fileUrl: pj.url, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, background: "#F7F5EE", border: "1px solid #E6DFC8", color: G2, padding: "2px 8px", borderRadius: 5, textDecoration: "none" } }, "📄 " + pj.name))
+                            d.pieces_jointes.map((pj, k) => React.createElement('a', { key: k, href: pj.url, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, background: "#F7F5EE", border: "1px solid #E6DFC8", color: G2, padding: "2px 8px", borderRadius: 5, textDecoration: "none" } }, "📄 " + pj.name))
                           )
                         )
                       ))
@@ -6087,7 +6032,7 @@ const nav = isAdmin
                   (l.pieces_jointes || []).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 6 } },
                     (l.pieces_jointes || []).map((pj, k) => React.createElement('div', { key: k, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: "white", border: "1px solid #ECECF2", borderRadius: 6, fontSize: 12 } },
                       React.createElement('span', { style: { flexShrink: 0 } }, "📄"),
-                      React.createElement(SignedLink, { fileUrl: pj.url, target: "_blank", rel: "noopener noreferrer", style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SB, textDecoration: "none" } }, pj.name),
+                      React.createElement('a', { href: pj.url, target: "_blank", rel: "noopener noreferrer", style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SB, textDecoration: "none" } }, pj.name),
                       pj.size ? React.createElement('span', { style: { color: "#999", fontSize: 11, whiteSpace: "nowrap" } }, (pj.size / 1024 < 1024 ? Math.round(pj.size / 1024) + " Ko" : (pj.size / 1048576).toFixed(1) + " Mo")) : null,
                       React.createElement('button', { onClick: () => removeLignePJ(i, k), title: "Retirer", style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 14, padding: "0 2px", flexShrink: 0 } }, "✕")
                     ))
@@ -6284,7 +6229,7 @@ const nav = isAdmin
       React.createElement('div', { style: { position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: "linear-gradient(rgba(0,0,0,.55), rgba(0,0,0,0))", zIndex: 3 } },
         React.createElement('span', { style: { color: "rgba(255,255,255,.9)", fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, viewer.images[viewer.index]?.file_name || ""),
         viewer.images.length > 1 && React.createElement('span', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, whiteSpace: "nowrap" } }, (viewer.index + 1) + " / " + viewer.images.length),
-        React.createElement(SignedLink, { fileUrl: viewer.images[viewer.index]?.file_url, download: viewer.images[viewer.index]?.file_name, target: "_blank", rel: "noreferrer", onClick: e => e.stopPropagation(), title: "Télécharger", style: { color: G, fontSize: 18, textDecoration: "none", padding: "2px 6px" } }, "⬇"),
+        React.createElement('a', { href: viewer.images[viewer.index]?.file_url, download: viewer.images[viewer.index]?.file_name, target: "_blank", rel: "noreferrer", onClick: e => e.stopPropagation(), title: "Télécharger", style: { color: G, fontSize: 18, textDecoration: "none", padding: "2px 6px" } }, "⬇"),
         React.createElement('button', { onClick: closeViewer, title: "Fermer (Échap)", style: { background: "none", border: "none", color: "rgba(255,255,255,.75)", fontSize: 26, cursor: "pointer", lineHeight: 1, padding: "0 4px" } }, "✕")
       ),
       // Flèche précédente
@@ -6310,8 +6255,8 @@ const nav = isAdmin
             maxWidth: "100%", maxHeight: "100%", display: "flex"
           }
         },
-          React.createElement(SignedImg, {
-            fileUrl: viewer.images[viewer.index]?.file_url,
+          React.createElement('img', {
+            src: viewer.images[viewer.index]?.file_url,
             alt: viewer.images[viewer.index]?.file_name || "",
             draggable: false,
             onClick: (e) => e.stopPropagation(),
