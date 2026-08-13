@@ -1540,19 +1540,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
   // La note n'est jamais chargée dans la liste des tickets : on la lit à la
   // demande, uniquement quand l'admin ouvre l'éditeur de remarque.
-  // Charge et affiche la remarque interne sans toggle : utilisé à l'ouverture
-  // d'un ticket pour que la remarque apparaisse automatiquement (admin only).
+  // Charge la remarque interne à l'ouverture d'un ticket, et n'affiche
+  // l'éditeur QUE si une remarque non vide existe déjà (admin only).
   const chargerNote = async (ticket) => {
     if (!isAdmin || !ticket) return;
-    setNoteOpenId(ticket.id);
-    setNoteText("");
     try {
       const { data, error } = await sb.rpc("get_ticket_note", { p_ticket_id: ticket.id });
-      if (!error && data != null) {
-        setNoteText(data);
-        setNoteSaved(prev => ({ ...prev, [ticket.id]: !!String(data).trim() }));
+      const contenu = (!error && data != null) ? String(data) : "";
+      if (contenu.trim()) {
+        setNoteText(contenu);
+        setNoteSaved(prev => ({ ...prev, [ticket.id]: true }));
+        setNoteOpenId(ticket.id);
+      } else {
+        setNoteSaved(prev => ({ ...prev, [ticket.id]: false }));
       }
-    } catch (e) { /* silencieux : l'éditeur s'ouvre vide */ }
+    } catch (e) { /* silencieux : l'éditeur reste fermé */ }
   };
 
   const ouvrirNote = async (ticket) => {
