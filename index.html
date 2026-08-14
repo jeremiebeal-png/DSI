@@ -2470,6 +2470,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return mail || "Support DSI Hotel";
   };
 
+  // Libellé expéditeur d'une réponse de TICKET : nom du demandeur (contact qui a
+  // ouvert le ticket), afin qu'il apparaisse dans le fil côté boîte support.
+  // Repli sur le nom de l'admin si le contact est absent. Nettoie les caractères
+  // qui casseraient l'en-tête From.
+  const demandeurFromName = (t) => {
+    const n = (t && t.contact_name ? String(t.contact_name).replace(/["<>\r\n]/g, "").trim() : "");
+    return n || adminFromName();
+  };
+
   // Nettoie l'affichage des messages/signatures reçus par email :
   // - retire les "<mailto:xxx>" collés après une adresse déjà visible
   // - retire les "<https://…>" / "<http://…>" en doublon après un libellé
@@ -2717,7 +2726,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: destClient, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: adminFromName(), cc: ccList })
+          body: JSON.stringify({ to: destClient, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, attachments, fromName: demandeurFromName(ticket), cc: ccList })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
@@ -2761,7 +2770,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const res = await fetch(EMAIL_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: closeDest, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: adminFromName() })
+          body: JSON.stringify({ to: closeDest, subject, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: demandeurFromName(ticket) })
         });
         if (!res.ok) {
           const d = await res.text().catch(() => "");
