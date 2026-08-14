@@ -1311,7 +1311,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const res = await fetch(EMAIL_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject: refPrefix + subject, text: bodyTeam, replyTo: emailClean || undefined, attachments })
+        body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject: refPrefix + subject, text: bodyTeam, replyTo: emailClean || undefined, attachments, fromName: (String(supportForm.name || "").replace(/["<>\r\n]/g, "").trim() || adminFromName()) })
       });
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
