@@ -4969,20 +4969,6 @@ const nav = isAdmin
                   return liste.length > 0 ? React.createElement('div', { style: { marginTop: 2, color: "#7A6" } }, "👥 En copie : " + liste.join(", ")) : null;
                 })()
               ),
-              msgsSansDoublon(msgs, t).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
-                msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
-                  React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
-                  m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
-                  m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
-                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
-                  m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
-                ))
-              ),
-              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
-                nettoyerSignature(t.message)
-              ),
-              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status !== "closed" && React.createElement('div', null,
                 React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => { const v = e.target.value; setReplyText(v); if (replyHtmlOverride && v.trim() !== (replyHtmlOverride.plain || "").trim()) setReplyHtmlOverride(null); }, placeholder: "Votre réponse au client...", style: { width: "100%", minHeight: 210, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
                 // ---- Personnes en copie (Cc) : cases à cocher + ajout manuel ----
@@ -5068,6 +5054,20 @@ const nav = isAdmin
                   )
                 )
               ),
+              msgsSansDoublon(msgs, t).length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 } },
+                msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
+                  React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
+                  m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
+                  m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
+                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
+                  m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
+                ))
+              ),
+              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
+                nettoyerSignature(t.message)
+              ),
+              React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" } },
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { marginRight: "auto", padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
