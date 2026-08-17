@@ -494,6 +494,7 @@ function App() {
   const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all
   const [openTicketId, setOpenTicketId] = useState(null);
   const [ticketMsgs, setTicketMsgs] = useState({}); // { ticketId: [messages] }
+  const [hoverTk, setHoverTk] = useState(null);     // { id, x, y } ticket survolé (aperçu dernière réponse client)
   const [ticketState, setTicketState] = useState({}); // { ticketId: "new" | "reply" | null }
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSel, setMergeSel] = useState([]); // ids de tickets sélectionnés
@@ -2424,6 +2425,36 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       .then(({ data, error }) => {
         if (!error) setTicketMsgs(prev => ({ ...prev, [ticketId]: data || [] }));
       });
+  };
+
+  // --- Aperçu au survol : dernière réponse du CLIENT dans un ticket ---
+  // On charge les messages du ticket à la demande (requête légère filtrée sur un
+  // seul ticket_id — pas le gros .in() qui peut expirer), après un court délai
+  // pour ne rien charger si la souris ne fait que passer. Mise en cache ensuite.
+  const hoverTimer = useRef(null);
+  const onRowEnter = (t, e) => {
+    const x = e.clientX, y = e.clientY;
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      if (!ticketMsgs[t.id]) loadTicketMsgs(t.id);
+      setHoverTk({ id: t.id, x, y });
+    }, 350);
+  };
+  const onRowMove = (e) => {
+    setHoverTk(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : prev);
+  };
+  const onRowLeave = () => {
+    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null; }
+    setHoverTk(null);
+  };
+  // Renvoie le dernier message dont l'auteur est le client, ou null.
+  const derniereReponseClient = (ticketId) => {
+    const msgs = ticketMsgs[ticketId];
+    if (!msgs) return undefined; // undefined = pas encore chargé
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].sender_role === "client") return msgs[i];
+    }
+    return null; // chargé mais aucun message client
   };
 
   const loadTicketFiles = (ticketId) => {
@@ -4896,6 +4927,30 @@ const nav = isAdmin
         React.createElement('span', { style: { width: 100, textAlign: "right", flexShrink: 0 } }, "Date")
       ),
       React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: ticketView === "table" ? 3 : 10 } },
+        hoverTk && (() => {
+          const rep = derniereReponseClient(hoverTk.id);
+          // Position : à droite du curseur, en évitant de sortir de l'écran par le bas.
+          const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+          const W = 340;
+          let left = hoverTk.x + 18; if (left + W > vw - 10) left = hoverTk.x - W - 18;
+          let top = hoverTk.y + 12; if (top + 180 > vh) top = Math.max(10, vh - 190);
+          let corps;
+          if (rep === undefined) corps = React.createElement('div', { style: { color: "#999", fontStyle: "italic" } }, "Chargement de la dernière réponse…");
+          else if (rep === null) corps = React.createElement('div', { style: { color: "#999", fontStyle: "italic" } }, "Aucune réponse du client pour ce ticket.");
+          else {
+            const txt = nettoyerSignature(rep.body || rep.body_html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            const court = txt.length > 420 ? txt.slice(0, 420) + "…" : (txt || "(message vide)");
+            corps = React.createElement(React.Fragment, null,
+              React.createElement('div', { style: { fontSize: 10.5, fontWeight: 700, color: "#3182CE", marginBottom: 5 } },
+                (rep.sender_name || "Client") + " · " + new Date(rep.created_at).toLocaleString("fr-FR")),
+              React.createElement('div', { style: { fontSize: 12, color: "#333", lineHeight: 1.5, whiteSpace: "pre-wrap" } }, court)
+            );
+          }
+          return React.createElement('div', { style: { position: "fixed", left: left, top: top, width: W, maxHeight: 200, overflow: "hidden", background: "#FFF", border: "1px solid #D8D8E4", borderRadius: 10, boxShadow: "0 8px 28px rgba(0,0,0,.16)", padding: "10px 12px", zIndex: 2000, pointerEvents: "none" } },
+            React.createElement('div', { style: { fontSize: 9.5, fontWeight: 700, color: "#AAA", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 4 } }, "Dernière réponse du client"),
+            corps
+          );
+        })(),
         list.map(t => {
           const h = hotels.find(x => x.id === t.hotel_id);
           const hotelLabel = h ? h.name : (t.hotel_id ? "Hôtel inconnu" : "⚠️ Non assigné");
@@ -4909,7 +4964,7 @@ const nav = isAdmin
           const aTraiter = _st && (_st.kind === "new" || _st.kind === "reply") && t.status !== "closed";
           const bgLigne = aTraiter ? "#FFF7ED" : "white";
           return React.createElement('div', { key: t.id, style: { background: bgLigne, borderRadius: 10, border: aTraiter ? "1px solid #FCD9A8" : "1px solid #E8E8F0", overflow: "hidden" } },
-            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), style: { padding: ticketView === "table" ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: ticketView === "table" ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
+            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), onMouseEnter: ticketView === "table" ? (e) => onRowEnter(t, e) : undefined, onMouseMove: ticketView === "table" ? onRowMove : undefined, onMouseLeave: ticketView === "table" ? onRowLeave : undefined, style: { padding: ticketView === "table" ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: ticketView === "table" ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
               closeMode && React.createElement('input', { type: "checkbox", checked: closeSel.includes(t.id), onChange: () => toggleCloseSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer", accentColor: "#E53E3E" } }),
               ticketView === "table"
