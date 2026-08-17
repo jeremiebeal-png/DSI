@@ -2989,6 +2989,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [rapModal, setRapModal] = useState(null);       // null | "new" | rapport object
   const [openRapId, setOpenRapId] = useState(null);     // rapport déplié dans la liste
   const [rapMoisReplies, setRapMoisReplies] = useState(null); // Set des clés de mois repliés (null = pas encore initialisé)
+  const [rapHotelsReplies, setRapHotelsReplies] = useState(new Set()); // Set des clés "moisKey|hotelId" repliées (dépliés par défaut)
   const [rapForm, setRapForm] = useState(null);
   const [rapLignes, setRapLignes] = useState([]);       // demandes en cours d'édition
   const [uploadingPJ, setUploadingPJ] = useState({});   // { ligneIndex: true } pendant upload PJ
@@ -5976,8 +5977,23 @@ const nav = isAdmin
                   React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: "#999", background: "#F0F0F6", padding: "1px 8px", borderRadius: 20 } }, grp.items.length),
                   React.createElement('span', { style: { flex: 1, height: 1, background: "#ECECF2" } })
                 ),
-                !estReplie(grp.key) && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
-                  grp.items.map(r => {
+                !estReplie(grp.key) && (() => {
+                  // Sous-groupement par hôtel dans le mois. En-tête hôtel dépliable
+                  // UNIQUEMENT si l'hôtel a 2+ rapports ce mois-ci ; sinon carte directe.
+                  const parHotel = [];
+                  const idx = {};
+                  grp.items.forEach(r => {
+                    const hid = r.hotel_id || "_none";
+                    if (idx[hid] == null) { idx[hid] = parHotel.length; parHotel.push({ hid: r.hotel_id, name: hotelName(r.hotel_id), items: [] }); }
+                    parHotel[idx[hid]].items.push(r);
+                  });
+                  const hotelReplie = (hid) => rapHotelsReplies.has(grp.key + "|" + hid);
+                  const toggleHotel = (hid) => {
+                    const s = new Set(rapHotelsReplies); const k = grp.key + "|" + hid;
+                    if (s.has(k)) s.delete(k); else s.add(k);
+                    setRapHotelsReplies(s);
+                  };
+                  const renderRapCard = (r) => {
                 const dems = rapDemandes[r.id] || [];
                 const srv = rapServeurs[r.id] || [];
                 const nbAttente = dems.filter(d => d.statut === "attente").length;
@@ -6042,8 +6058,27 @@ const nav = isAdmin
                     )
                   )
                 );
-                  })
-                )
+                  };
+                  return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+                    parHotel.map(hg => {
+                      // 1 seul rapport pour cet hôtel : carte directe, pas d'en-tête.
+                      if (hg.items.length < 2) return renderRapCard(hg.items[0]);
+                      // 2+ rapports : en-tête hôtel dépliable (déplié par défaut).
+                      const replie = hotelReplie(hg.hid || "_none");
+                      return React.createElement('div', { key: "h_" + (hg.hid || "none"), style: { border: "1px solid #ECECF2", borderRadius: 10, overflow: "hidden", background: "#FBFBFD" } },
+                        React.createElement('div', { onClick: () => toggleHotel(hg.hid || "_none"), style: { display: "flex", alignItems: "center", gap: 9, padding: "9px 13px", cursor: "pointer", userSelect: "none", background: "#F5F5FA" } },
+                          React.createElement('span', { style: { fontSize: 10, color: "#AAA", width: 11, flexShrink: 0, transform: replie ? "rotate(-90deg)" : "none", transition: "transform .15s" } }, "▼"),
+                          React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, "🏨"),
+                          React.createElement('span', { style: { fontSize: 13, fontWeight: 700, color: SB, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hg.name),
+                          React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: "#888", background: "#EDEDF3", padding: "1px 8px", borderRadius: 20, flexShrink: 0 } }, hg.items.length + " rapports")
+                        ),
+                        !replie && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, padding: 8 } },
+                          hg.items.map(r => renderRapCard(r))
+                        )
+                      );
+                    })
+                  );
+                })()
               ))
             ),
 
