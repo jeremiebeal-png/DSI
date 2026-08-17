@@ -159,6 +159,29 @@ function sanitizeRichHtml(html) {
   return h;
 }
 
+// Rend du HTML d'email assaini et masque proprement les images externes qui
+// n'ont pas pu se charger (logos/pixels de signature Salesforce, etc.),
+// au lieu d'afficher une icône "image cassée". Les vraies captures ré-hébergées
+// sur Supabase Storage s'affichent normalement.
+function RichHtml(props) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const imgs = ref.current.querySelectorAll('img');
+    imgs.forEach((img) => {
+      const hide = () => { img.style.display = 'none'; };
+      // Si déjà chargée en erreur au moment du montage
+      if (img.complete && img.naturalWidth === 0) { hide(); return; }
+      img.addEventListener('error', hide, { once: true });
+    });
+  }, [props.html]);
+  return React.createElement('div', {
+    ref: ref,
+    style: props.style || null,
+    dangerouslySetInnerHTML: { __html: sanitizeRichHtml(props.html) }
+  });
+}
+
 // Éditeur de texte riche (WYSIWYG) basé sur contentEditable, sans dépendance externe.
 // props : value (html), onChange(html), onInsertImage() -> déclenche l'upload,
 //         placeholder. La ref interne évite de réécrire le HTML à chaque frappe.
@@ -5067,7 +5090,7 @@ const nav = isAdmin
                 msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-end" : "flex-start", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
-                  m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
+                  m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                   React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
@@ -5141,7 +5164,7 @@ const nav = isAdmin
                     msgsSansDoublon(msgs, t).slice().reverse().map(m => React.createElement('div', { key: m.id, style: { alignSelf: m.sender_role === "admin" ? "flex-start" : "flex-end", maxWidth: "85%", background: m.sender_role === "admin" ? G + "22" : "#EAF2FB", border: `1px solid ${m.sender_role === "admin" ? G + "44" : "#B6D4F0"}`, borderRadius: 8, padding: "8px 12px" } },
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
-                      m.body_html ? React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.6 }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(m.body_html) } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
+                      m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                       React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
                       m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                     ))
@@ -6127,7 +6150,7 @@ const nav = isAdmin
                     ),
                     React.createElement('button', { onClick: e => { e.stopPropagation(); openEditReponse(r); }, style: { flexShrink: 0, padding: "6px 12px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
                   ),
-                  open && (r.contenu_html || r.contenu) && React.createElement('div', { style: { fontSize: 12.5, color: "#555", padding: "0 16px 14px", borderTop: "1px solid #F2F2F6" }, dangerouslySetInnerHTML: { __html: sanitizeRichHtml(r.contenu_html || ("<p>" + String(r.contenu).replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>")) } })
+                  open && (r.contenu_html || r.contenu) && React.createElement(RichHtml, { html: r.contenu_html || ("<p>" + String(r.contenu).replace(/</g, "&lt;").replace(/\n/g, "<br>") + "</p>"), style: { fontSize: 12.5, color: "#555", padding: "0 16px 14px", borderTop: "1px solid #F2F2F6" } })
                 );
               })
             ),
