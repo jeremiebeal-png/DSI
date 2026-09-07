@@ -321,6 +321,10 @@ function App() {
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryErr, setRecoveryErr] = useState("");
   const [recoveryDone, setRecoveryDone] = useState(false);
+  // Étape TOTP quand le compte a la MFA : "pw" (saisie mot de passe) -> "mfa" (code) -> validation.
+  const [recoveryStep, setRecoveryStep] = useState("pw");
+  const [recoveryMfaCode, setRecoveryMfaCode] = useState("");
+  const [recoveryMfaFactorId, setRecoveryMfaFactorId] = useState(null);
 
   // ---------- MFA (double authentification, obligatoire pour l'admin) ----------
   const [mfaState, setMfaState] = useState("checking"); // checking | ok | enroll | challenge
@@ -864,7 +868,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
-  // Définition du nouveau mot de passe en mode recovery (session temporaire active).
+  // Applique réellement le nouveau mot de passe (session au bon niveau).
+  const applyRecoveryPassword = async () => {
+    const { error } = await sb.auth.updateUser({ password: recoveryPw.trim() });
+    if (error) { setRecoveryErr("Erreur : " + error.message); return false; }
+    setRecoveryDone(true);
+    setRecoveryPw(""); setRecoveryPw2("");
+    setRecoveryMfaCode(""); setRecoveryStep("pw");
+    // Nettoie le hash de l'URL (retire les jetons du lien).
+    try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
+    return true;
+  };
+
+  // Étape 1 : valide le mot de passe saisi. Si le compte a la MFA et que la
+  // session n'est pas encore AAL2, on demande d'abord le code TOTP (Supabase
+  // refuse updateUser sinon). Sinon, on applique directement.
   const submitRecovery = async () => {
     setRecoveryErr("");
     const p1 = recoveryPw.trim();
@@ -873,14 +891,43 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (p1 !== p2) { setRecoveryErr("Les deux mots de passe ne correspondent pas."); return; }
     setRecoveryBusy(true);
     try {
-      const { error } = await sb.auth.updateUser({ password: p1 });
-      if (error) { setRecoveryErr("Erreur : " + error.message); return; }
-      setRecoveryDone(true);
-      setRecoveryPw(""); setRecoveryPw2("");
-      // Nettoie le hash de l'URL (retire les jetons du lien).
-      try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
+      let needMfa = false, factorId = null;
+      try {
+        const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (aal && aal.currentLevel !== "aal2") {
+          const { data: factors } = await sb.auth.mfa.listFactors();
+          const verified = (factors && factors.totp || []).filter(f => f.status === "verified");
+          if (verified.length > 0) { needMfa = true; factorId = verified[0].id; }
+        }
+      } catch (e) {}
+      if (needMfa) {
+        setRecoveryMfaFactorId(factorId);
+        setRecoveryStep("mfa");
+        return; // on ne touche pas au mot de passe tant que l'AAL2 n'est pas atteint
+      }
+      await applyRecoveryPassword();
     } catch (e) {
       setRecoveryErr("Erreur : " + (e.message || e));
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  // Étape 2 (comptes MFA) : valide le code TOTP -> élève la session en AAL2 ->
+  // applique le nouveau mot de passe.
+  const submitRecoveryMfa = async () => {
+    setRecoveryErr("");
+    const code = recoveryMfaCode.replace(/\s/g, "");
+    if (code.length !== 6 || !recoveryMfaFactorId) { setRecoveryErr("Entrez le code à 6 chiffres."); return; }
+    setRecoveryBusy(true);
+    try {
+      const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: recoveryMfaFactorId });
+      if (chErr) throw chErr;
+      const { error: vErr } = await sb.auth.mfa.verify({ factorId: recoveryMfaFactorId, challengeId: ch.id, code });
+      if (vErr) { setRecoveryErr("Code incorrect ou expiré. Vérifiez l'heure de votre téléphone et réessayez."); return; }
+      await applyRecoveryPassword();
+    } catch (e) {
+      setRecoveryErr("Code incorrect ou expiré. Vérifiez l'heure de votre téléphone et réessayez.");
     } finally {
       setRecoveryBusy(false);
     }
@@ -3808,7 +3855,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           recoveryDone
             ? React.createElement('div', null,
                 React.createElement('div', { style: { color: "#9AE6B4", fontSize: 14, lineHeight: 1.5, marginBottom: 18, textAlign: "center" } }, "✅ Votre mot de passe a été mis à jour. Vous pouvez maintenant vous connecter."),
-                React.createElement('button', { onClick: () => { setRecoveryMode(false); setRecoveryDone(false); }, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: "pointer" } }, "Aller à la connexion")
+                React.createElement('button', { onClick: () => { setRecoveryMode(false); setRecoveryDone(false); setRecoveryStep("pw"); }, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: "pointer" } }, "Aller à la connexion")
+              )
+            : recoveryStep === "mfa"
+            ? React.createElement('div', null,
+                React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Ce compte est protégé par la double authentification. Entrez le code à 6 chiffres de votre application d'authentification pour confirmer."),
+                React.createElement('div', { style: { marginBottom: 14 } },
+                  React.createElement('input', { value: recoveryMfaCode, onChange: e => { setRecoveryMfaCode(e.target.value); setRecoveryErr(""); }, onKeyDown: e => e.key === "Enter" && submitRecoveryMfa(), inputMode: "numeric", maxLength: 6, placeholder: "123456", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 18, letterSpacing: "4px", textAlign: "center", outline: "none", boxSizing: "border-box" } })
+                ),
+                recoveryErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 14 } }, recoveryErr),
+                React.createElement('button', { onClick: submitRecoveryMfa, disabled: recoveryBusy, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: recoveryBusy ? "default" : "pointer", opacity: recoveryBusy ? 0.6 : 1 } }, recoveryBusy ? "Vérification..." : "Confirmer et valider"),
+                React.createElement('button', { onClick: () => { setRecoveryStep("pw"); setRecoveryMfaCode(""); setRecoveryErr(""); }, style: { width: "100%", marginTop: 10, padding: 9, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "← Retour")
               )
             : React.createElement('div', null,
                 React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Choisissez un nouveau mot de passe (8 caractères minimum)."),
