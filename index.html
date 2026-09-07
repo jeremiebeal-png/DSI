@@ -1168,6 +1168,33 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // Changement de son propre mot de passe (réservé admin / superviseur).
+  // Utilise directement la session Supabase de l'utilisateur connecté.
+  const [changePwOpen, setChangePwOpen] = useState(false);
+  const [changePwValue, setChangePwValue] = useState("");
+  const [changePwValue2, setChangePwValue2] = useState("");
+  const [changePwBusy, setChangePwBusy] = useState(false);
+  const [changePwErr, setChangePwErr] = useState("");
+  const submitChangePassword = async () => {
+    setChangePwErr("");
+    const p1 = changePwValue.trim();
+    const p2 = changePwValue2.trim();
+    if (p1.length < 8) { setChangePwErr("Le mot de passe doit contenir au moins 8 caractères."); return; }
+    if (p1 !== p2) { setChangePwErr("Les deux mots de passe ne correspondent pas."); return; }
+    setChangePwBusy(true);
+    try {
+      const { error } = await sb.auth.updateUser({ password: p1 });
+      if (error) { setChangePwErr("Erreur : " + error.message); return; }
+      alert("Votre mot de passe a été mis à jour.");
+      setChangePwOpen(false);
+      setChangePwValue(""); setChangePwValue2("");
+    } catch (e) {
+      setChangePwErr("Erreur : " + (e.message || e));
+    } finally {
+      setChangePwBusy(false);
+    }
+  };
+
 
   // ---------- PROCEDURE CRUD ----------
   const openNewProcForm = () => {
@@ -6385,6 +6412,10 @@ const nav = isAdmin
       ))
     ),
     isMobile && React.createElement('div', { style: { padding: "10px 13px", borderTop: "1px solid rgba(255,255,255,.06)" } },
+      (isAdmin || isSupervisor) && React.createElement('button', {
+        onClick: () => { setChangePwErr(""); setChangePwValue(""); setChangePwValue2(""); setChangePwOpen(true); setMenuOpen(false); },
+        style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "13px 16px", fontSize: 15, background: "transparent", color: "rgba(255,255,255,.65)" }
+      }, React.createElement('span', null, "🔑"), React.createElement('span', null, "Mot de passe")),
       React.createElement('button', {
         onClick: doLogout,
         style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "13px 16px", fontSize: 15, background: "transparent", color: "rgba(255,255,255,.65)" }
@@ -6393,6 +6424,20 @@ const nav = isAdmin
   );
 
   return React.createElement('div', { style: { display: "flex", alignItems: "flex-start", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
+    // Changement de son propre mot de passe (admin / superviseur)
+    changePwOpen && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 } },
+      React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 360, maxWidth: "90%" } },
+        React.createElement('div', { style: { fontWeight: 600, fontSize: 14, color: "#1a1a3e", marginBottom: 4 } }, "Changer mon mot de passe"),
+        React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, (profile && profile.email) || ""),
+        React.createElement('input', { type: "password", value: changePwValue, onChange: e => { setChangePwValue(e.target.value); setChangePwErr(""); }, placeholder: "Nouveau mot de passe (8 caractères min.)", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: "border-box" } }),
+        React.createElement('input', { type: "password", value: changePwValue2, onChange: e => { setChangePwValue2(e.target.value); setChangePwErr(""); }, onKeyDown: e => e.key === "Enter" && submitChangePassword(), placeholder: "Confirmer le mot de passe", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 12, boxSizing: "border-box" } }),
+        changePwErr && React.createElement('div', { style: { fontSize: 12, color: "#C53030", marginBottom: 12 } }, changePwErr),
+        React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => { setChangePwOpen(false); setChangePwValue(""); setChangePwValue2(""); setChangePwErr(""); }, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "7px 14px" } }, "Annuler"),
+          React.createElement('button', { onClick: submitChangePassword, disabled: changePwBusy, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px", opacity: changePwBusy ? 0.6 : 1 } }, changePwBusy ? "..." : "Valider")
+        )
+      )
+    ),
     // Visionneuse d'images plein écran
     fwdTicket && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 } },
       React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 460, maxWidth: "100%" } },
@@ -6501,6 +6546,11 @@ const nav = isAdmin
           React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
           React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
         ),
+        (isAdmin || isSupervisor) && React.createElement('button', {
+          onClick: () => { setChangePwErr(""); setChangePwValue(""); setChangePwValue2(""); setChangePwOpen(true); },
+          title: "Changer mon mot de passe",
+          style: { display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", background: "white", border: "1px solid #DDE0EA", color: "#555", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" }
+        }, React.createElement('span', null, "🔑"), React.createElement('span', null, "Mot de passe")),
         React.createElement('button', {
           onClick: doLogout,
           title: "Se déconnecter",
