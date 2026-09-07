@@ -312,6 +312,16 @@ function App() {
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotMsg, setForgotMsg] = useState("");        // message succès/erreur
 
+  // ---------- Réinitialisation self-service (lien email Supabase) ----------
+  // recoveryMode : l'utilisateur est arrivé via le lien de réinitialisation.
+  // Cet état a priorité sur le routage normal (voir écran dédié plus bas).
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [recoveryPw, setRecoveryPw] = useState("");
+  const [recoveryPw2, setRecoveryPw2] = useState("");
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryErr, setRecoveryErr] = useState("");
+  const [recoveryDone, setRecoveryDone] = useState(false);
+
   // ---------- MFA (double authentification, obligatoire pour l'admin) ----------
   const [mfaState, setMfaState] = useState("checking"); // checking | ok | enroll | challenge
   const [mfaFactorId, setMfaFactorId] = useState(null);
@@ -609,17 +619,28 @@ function App() {
 
   // ---------- AUTH ----------
   useEffect(() => {
+    // Détecte un retour via le lien de réinitialisation : Supabase place
+    // type=recovery dans le hash de l'URL (#access_token=...&type=recovery).
+    // On le repère tôt pour afficher l'écran dédié plutôt que router dans l'app.
+    try {
+      const h = window.location.hash || "";
+      if (h.includes("type=recovery")) setRecoveryMode(true);
+    } catch (e) {}
     sb.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setAuthLoading(false);
     });
-    const { data: listener } = sb.auth.onAuthStateChange((_event, sess) => {
+    const { data: listener } = sb.auth.onAuthStateChange((event, sess) => {
+      // PASSWORD_RECOVERY : session temporaire créée par le lien email.
+      // Elle autorise updateUser mais ne doit PAS faire entrer dans l'app.
+      if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       setSession(sess);
     });
     return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
+    if (recoveryMode) return; // en réinitialisation : ne pas charger le profil ni router
     if (!session) {
       setProfile(null); setMfaState("checking");
       window.__dsiPageInit = false; // réinitialise pour la prochaine connexion
@@ -639,7 +660,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           }
         }
       });
-  }, [session]);
+  }, [session, recoveryMode]);
 
   // ---------- JOURNAL DE CONNEXIONS ----------
   // Enregistre la connexion une fois la session pleinement authentifiée
@@ -817,8 +838,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setLoggingIn(false);
   };
 
-  // Mot de passe oublié : envoie une simple notification au support (qui réinitialise
-  // manuellement via l'espace admin). Pas de lien self-service.
+  // Mot de passe oublié : réinitialisation self-service via l'email d'authentification
+  // Supabase. L'utilisateur reçoit un lien qui le ramène sur le portail en mode
+  // recovery (voir recoveryMode), où il définit lui-même son nouveau mot de passe.
   const submitForgot = async () => {
     const em = nettoyerEmail(forgotEmail || "").trim();
     if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
@@ -828,24 +850,39 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setForgotBusy(true);
     setForgotMsg("");
     try {
-      const subject = "[MOT DE PASSE OUBLIÉ] Demande de réinitialisation";
-      const text =
-        "Demande de réinitialisation de mot de passe depuis le portail.\n\n" +
-        "Compte concerné : " + em + "\n" +
-        "Date : " + new Date().toLocaleString("fr-FR") + "\n\n" +
-        "Merci de réinitialiser le mot de passe de ce compte et de communiquer les nouveaux identifiants à l'utilisateur.";
-      const res = await fetch(EMAIL_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject, text, replyTo: em })
+      const { error } = await sb.auth.resetPasswordForEmail(em, {
+        redirectTo: "https://portail.dsihotel.com"
       });
-      if (!res.ok) { const d = await res.text().catch(() => ""); throw new Error("Statut " + res.status + (d ? " — " + d.slice(0, 160) : "")); }
-      setForgotMsg("✅ Votre demande a bien été envoyée au support. Vous serez recontacté rapidement.");
+      // Message volontairement générique : ne révèle pas si l'adresse existe.
+      if (error) throw error;
+      setForgotMsg("✅ Si un compte existe pour cette adresse, un email de réinitialisation vient d'être envoyé. Pensez à vérifier vos spams.");
       setForgotEmail("");
     } catch (e) {
       setForgotMsg("❌ L'envoi a échoué (" + (e.message || e) + "). Réessayez ou contactez support@dsihotel.com.");
     } finally {
       setForgotBusy(false);
+    }
+  };
+
+  // Définition du nouveau mot de passe en mode recovery (session temporaire active).
+  const submitRecovery = async () => {
+    setRecoveryErr("");
+    const p1 = recoveryPw.trim();
+    const p2 = recoveryPw2.trim();
+    if (p1.length < 8) { setRecoveryErr("Le mot de passe doit contenir au moins 8 caractères."); return; }
+    if (p1 !== p2) { setRecoveryErr("Les deux mots de passe ne correspondent pas."); return; }
+    setRecoveryBusy(true);
+    try {
+      const { error } = await sb.auth.updateUser({ password: p1 });
+      if (error) { setRecoveryErr("Erreur : " + error.message); return; }
+      setRecoveryDone(true);
+      setRecoveryPw(""); setRecoveryPw2("");
+      // Nettoie le hash de l'URL (retire les jetons du lien).
+      try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
+    } catch (e) {
+      setRecoveryErr("Erreur : " + (e.message || e));
+    } finally {
+      setRecoveryBusy(false);
     }
   };
   // ---------- PAGE SÉCURITÉ : gestion des appareils MFA (super-admin) ----------
@@ -3757,6 +3794,38 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     );
   }
 
+  // Écran de réinitialisation : priorité sur tout le reste tant que recoveryMode est actif.
+  if (recoveryMode) {
+    return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
+      React.createElement('div', { style: { width: 420, maxWidth: "100%" } },
+        React.createElement('div', { style: { textAlign: "center", marginBottom: 28 } },
+          React.createElement('div', { style: { display: "inline-flex", alignItems: "center", marginBottom: 10 } },
+            React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 64 } })
+          ),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 13 } }, "Réinitialisation du mot de passe")
+        ),
+        React.createElement('div', { style: { background: "rgba(255,255,255,.05)", borderRadius: 14, padding: 28, border: `1px solid ${G}30` } },
+          recoveryDone
+            ? React.createElement('div', null,
+                React.createElement('div', { style: { color: "#9AE6B4", fontSize: 14, lineHeight: 1.5, marginBottom: 18, textAlign: "center" } }, "✅ Votre mot de passe a été mis à jour. Vous pouvez maintenant vous connecter."),
+                React.createElement('button', { onClick: () => { setRecoveryMode(false); setRecoveryDone(false); }, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: "pointer" } }, "Aller à la connexion")
+              )
+            : React.createElement('div', null,
+                React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Choisissez un nouveau mot de passe (8 caractères minimum)."),
+                React.createElement('div', { style: { marginBottom: 12 } },
+                  React.createElement('input', { type: "password", value: recoveryPw, onChange: e => { setRecoveryPw(e.target.value); setRecoveryErr(""); }, placeholder: "Nouveau mot de passe", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none", boxSizing: "border-box" } })
+                ),
+                React.createElement('div', { style: { marginBottom: 14 } },
+                  React.createElement('input', { type: "password", value: recoveryPw2, onChange: e => { setRecoveryPw2(e.target.value); setRecoveryErr(""); }, onKeyDown: e => e.key === "Enter" && submitRecovery(), placeholder: "Confirmer le mot de passe", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none", boxSizing: "border-box" } })
+                ),
+                recoveryErr && React.createElement('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 14 } }, recoveryErr),
+                React.createElement('button', { onClick: submitRecovery, disabled: recoveryBusy, style: { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 15, fontWeight: 500, cursor: recoveryBusy ? "default" : "pointer", opacity: recoveryBusy ? 0.6 : 1 } }, recoveryBusy ? "Enregistrement..." : "Valider le nouveau mot de passe")
+              )
+        )
+      )
+    );
+  }
+
   if (!session || !profile) {
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
       React.createElement('div', { style: { width: 420, maxWidth: "100%" } },
@@ -3785,7 +3854,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           ),
           forgotOpen && React.createElement('div', { style: { marginTop: 12, paddingTop: 16, borderTop: `1px solid ${G}25` } },
             React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12, lineHeight: 1.5, marginBottom: 10 } },
-              "Indiquez votre adresse email : le support recevra votre demande et réinitialisera votre mot de passe."
+              "Indiquez votre adresse email : vous recevrez un lien pour définir vous-même un nouveau mot de passe."
             ),
             React.createElement('input', { value: forgotEmail, onChange: e => { setForgotEmail(e.target.value); setForgotMsg(""); }, onKeyDown: e => e.key === "Enter" && submitForgot(), placeholder: "votre@email.com", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none", marginBottom: 10 } }),
             forgotMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 10, color: forgotMsg.startsWith("✅") ? "#9AE6B4" : "#FC8181", lineHeight: 1.4 } }, forgotMsg),
