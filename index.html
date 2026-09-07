@@ -868,6 +868,18 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // Contrôle de robustesse aligné sur la politique Supabase (niveau strict) :
+  // minuscule + majuscule + chiffre + caractère spécial, 8 caractères minimum.
+  // Renvoie un message d'erreur en français, ou null si le mot de passe est valide.
+  const validerMotDePasse = (pw) => {
+    if (!pw || pw.length < 8) return "Le mot de passe doit contenir au moins 8 caractères.";
+    if (!/[a-z]/.test(pw)) return "Le mot de passe doit contenir au moins une minuscule.";
+    if (!/[A-Z]/.test(pw)) return "Le mot de passe doit contenir au moins une majuscule.";
+    if (!/[0-9]/.test(pw)) return "Le mot de passe doit contenir au moins un chiffre.";
+    if (!/[^a-zA-Z0-9]/.test(pw)) return "Le mot de passe doit contenir au moins un caractère spécial (ex. ! @ # $ % & *).";
+    return null;
+  };
+
   // Applique réellement le nouveau mot de passe (session au bon niveau).
   const applyRecoveryPassword = async () => {
     const { error } = await sb.auth.updateUser({ password: recoveryPw.trim() });
@@ -887,7 +899,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setRecoveryErr("");
     const p1 = recoveryPw.trim();
     const p2 = recoveryPw2.trim();
-    if (p1.length < 8) { setRecoveryErr("Le mot de passe doit contenir au moins 8 caractères."); return; }
+    const vErrPw = validerMotDePasse(p1);
+    if (vErrPw) { setRecoveryErr(vErrPw); return; }
     if (p1 !== p2) { setRecoveryErr("Les deux mots de passe ne correspondent pas."); return; }
     setRecoveryBusy(true);
     try {
@@ -1263,7 +1276,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setChangePwErr("");
     const p1 = changePwValue.trim();
     const p2 = changePwValue2.trim();
-    if (p1.length < 8) { setChangePwErr("Le mot de passe doit contenir au moins 8 caractères."); return; }
+    const vErrPw = validerMotDePasse(p1);
+    if (vErrPw) { setChangePwErr(vErrPw); return; }
     if (p1 !== p2) { setChangePwErr("Les deux mots de passe ne correspondent pas."); return; }
     setChangePwBusy(true);
     try {
@@ -3868,7 +3882,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
                 React.createElement('button', { onClick: () => { setRecoveryStep("pw"); setRecoveryMfaCode(""); setRecoveryErr(""); }, style: { width: "100%", marginTop: 10, padding: 9, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "← Retour")
               )
             : React.createElement('div', null,
-                React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Choisissez un nouveau mot de passe (8 caractères minimum)."),
+                React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Choisissez un nouveau mot de passe : 8 caractères minimum, avec au moins une minuscule, une majuscule, un chiffre et un caractère spécial."),
                 React.createElement('div', { style: { marginBottom: 12 } },
                   React.createElement('input', { type: "password", value: recoveryPw, onChange: e => { setRecoveryPw(e.target.value); setRecoveryErr(""); }, placeholder: "Nouveau mot de passe", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none", boxSizing: "border-box" } })
                 ),
@@ -6555,7 +6569,7 @@ const nav = isAdmin
       React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 360, maxWidth: "90%" } },
         React.createElement('div', { style: { fontWeight: 600, fontSize: 14, color: "#1a1a3e", marginBottom: 4 } }, "Changer mon mot de passe"),
         React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, (profile && profile.email) || ""),
-        React.createElement('input', { type: "password", value: changePwValue, onChange: e => { setChangePwValue(e.target.value); setChangePwErr(""); }, placeholder: "Nouveau mot de passe (8 caractères min.)", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: "border-box" } }),
+        React.createElement('input', { type: "password", value: changePwValue, onChange: e => { setChangePwValue(e.target.value); setChangePwErr(""); }, placeholder: "8 car. min. : min., MAJ., chiffre, spécial", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: "border-box" } }),
         React.createElement('input', { type: "password", value: changePwValue2, onChange: e => { setChangePwValue2(e.target.value); setChangePwErr(""); }, onKeyDown: e => e.key === "Enter" && submitChangePassword(), placeholder: "Confirmer le mot de passe", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 12, boxSizing: "border-box" } }),
         changePwErr && React.createElement('div', { style: { fontSize: 12, color: "#C53030", marginBottom: 12 } }, changePwErr),
         React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
