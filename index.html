@@ -3091,14 +3091,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setDocErr("");
     try {
       let docId = editingDocId;
+      const nouvelleDate = docForm.rappel_date || null;
       const payload = {
         titre: docForm.titre.trim(),
         categorie: docForm.categorie,
         description: docForm.description || null,
         visible_client: !!docForm.visible_client,
-        rappel_date: docForm.rappel_date || null,
+        rappel_date: nouvelleDate,
         rappel_note: docForm.rappel_note ? docForm.rappel_note.trim() : null
       };
+      // Si la date de rappel change (ou est retirée), on réarme les jalons :
+      // les rappels J-60/J-30/J-15/J-0 repartiront sur la nouvelle échéance.
+      if (editingDocId) {
+        const ancienne = (docs.find(d => d.id === editingDocId) || {}).rappel_date || null;
+        if (nouvelleDate !== ancienne) payload.rappel_jalons_envoyes = null;
+      }
       if (editingDocId) {
         const { error } = await sb.from("hotel_docs").update(payload).eq("id", editingDocId);
         if (error) throw error;
