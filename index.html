@@ -319,6 +319,20 @@ async function uploadToStorage(file, pathPrefix) {
   return data.publicUrl;
 }
 
+// Transforme un lien YouTube ou Vimeo (partagé/non répertorié) en URL d'intégration
+// pour un <iframe>. Renvoie null si le lien n'est pas reconnu.
+function videoEmbedUrl(url) {
+  if (!url) return null;
+  const u = String(url).trim();
+  // YouTube : youtu.be/ID, youtube.com/watch?v=ID, /embed/ID, /shorts/ID
+  let m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i);
+  if (m) return "https://www.youtube.com/embed/" + m[1];
+  // Vimeo : vimeo.com/ID  ou player.vimeo.com/video/ID
+  m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+  if (m) return "https://player.vimeo.com/video/" + m[1];
+  return null;
+}
+
 function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null); // { role, hotel_id }
@@ -593,7 +607,7 @@ function App() {
   const [docCatFilter, setDocCatFilter] = useState("all");
   const [showDocForm, setShowDocForm] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
-  const [docForm, setDocForm] = useState({ titre: "", categorie: DOC_CATS[0], description: "", visible_client: false, rappel_date: "", rappel_note: "" });
+  const [docForm, setDocForm] = useState({ titre: "", categorie: DOC_CATS[0], description: "", visible_client: false, rappel_date: "", rappel_note: "", video_url: "" });
   const [docNewFiles, setDocNewFiles] = useState([]);
   const [docExistingFiles, setDocExistingFiles] = useState([]);
   const [savingDoc, setSavingDoc] = useState(false);
@@ -3055,7 +3069,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const openNewDocForm = () => {
     setEditingDocId(null);
-    setDocForm({ titre: "", categorie: DOC_CATS[0], description: "", visible_client: false, rappel_date: "", rappel_note: "" });
+    setDocForm({ titre: "", categorie: DOC_CATS[0], description: "", visible_client: false, rappel_date: "", rappel_note: "", video_url: "" });
     setDocNewFiles([]);
     setDocExistingFiles([]);
     setDocErr("");
@@ -3064,7 +3078,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const openEditDocForm = (d) => {
     setEditingDocId(d.id);
-    setDocForm({ titre: d.titre || "", categorie: d.categorie || DOC_CATS[0], description: d.description || "", visible_client: !!d.visible_client, rappel_date: d.rappel_date || "", rappel_note: d.rappel_note || "" });
+    setDocForm({ titre: d.titre || "", categorie: d.categorie || DOC_CATS[0], description: d.description || "", visible_client: !!d.visible_client, rappel_date: d.rappel_date || "", rappel_note: d.rappel_note || "", video_url: d.video_url || "" });
     setDocNewFiles([]);
     setDocExistingFiles(docFiles[d.id] || []);
     setDocErr("");
@@ -3091,21 +3105,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setDocErr("");
     try {
       let docId = editingDocId;
-      const nouvelleDate = docForm.rappel_date || null;
       const payload = {
         titre: docForm.titre.trim(),
         categorie: docForm.categorie,
         description: docForm.description || null,
         visible_client: !!docForm.visible_client,
-        rappel_date: nouvelleDate,
-        rappel_note: docForm.rappel_note ? docForm.rappel_note.trim() : null
+        rappel_date: docForm.rappel_date || null,
+        rappel_note: docForm.rappel_note ? docForm.rappel_note.trim() : null,
+        video_url: docForm.video_url ? docForm.video_url.trim() : null
       };
-      // Si la date de rappel change (ou est retirée), on réarme les jalons :
-      // les rappels J-60/J-30/J-15/J-0 repartiront sur la nouvelle échéance.
-      if (editingDocId) {
-        const ancienne = (docs.find(d => d.id === editingDocId) || {}).rappel_date || null;
-        if (nouvelleDate !== ancienne) payload.rappel_jalons_envoyes = null;
-      }
       if (editingDocId) {
         const { error } = await sb.from("hotel_docs").update(payload).eq("id", editingDocId);
         if (error) throw error;
@@ -5549,6 +5557,12 @@ const nav = isAdmin
           ),
           docForm.rappel_date && React.createElement('button', { onClick: () => setDocForm({ ...docForm, rappel_date: "", rappel_note: "" }), style: { marginTop: 8, background: "none", border: "1px solid #E0C87A", color: "#8A6D1F", borderRadius: 6, fontSize: 11, cursor: "pointer", padding: "4px 10px" } }, "Retirer le rappel")
         ),
+        React.createElement('div', { style: { marginBottom: 12 } },
+          React.createElement('label', { style: labelD }, "🎬 Lien vidéo (optionnel)"),
+          React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 6 } }, "Collez un lien YouTube ou Vimeo (non répertorié conseillé). La vidéo sera lisible directement dans la fiche."),
+          React.createElement('input', { value: docForm.video_url || "", onChange: e => setDocForm({ ...docForm, video_url: e.target.value }), placeholder: "https://youtu.be/... ou https://vimeo.com/...", style: inputD }),
+          docForm.video_url && !videoEmbedUrl(docForm.video_url) && React.createElement('div', { style: { fontSize: 11, color: "#C05621", marginTop: 5 } }, "⚠️ Lien non reconnu (seuls YouTube et Vimeo sont pris en charge). Il sera affiché comme lien cliquable.")
+        ),
         React.createElement('div', { style: { marginBottom: 12, background: docForm.visible_client ? "#F0FFF4" : "#FAFAFC", border: `1px solid ${docForm.visible_client ? "#C6F6D5" : "#E8E8F0"}`, borderRadius: 8, padding: "10px 12px" } },
           React.createElement('label', { style: { display: "flex", alignItems: "flex-start", gap: 9, fontSize: 12.5, color: "#333", cursor: "pointer" } },
             React.createElement('input', { type: "checkbox", checked: docForm.visible_client, onChange: e => setDocForm({ ...docForm, visible_client: e.target.checked }), style: { marginTop: 2, cursor: "pointer" } }),
@@ -5610,6 +5624,11 @@ const nav = isAdmin
             React.createElement('button', { onClick: () => toggleDocVisible(d), title: "Cliquez pour changer la visibilité", style: { display: "block", width: "100%", textAlign: "left", marginBottom: 9, padding: "5px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 600, cursor: "pointer", border: `1px solid ${d.visible_client ? "#9AE6B4" : "#E2E2E8"}`, background: d.visible_client ? "#F0FFF4" : "#FAFAFC", color: d.visible_client ? "#276749" : "#888" } }, d.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
             d.description && renderDocDescription(d.description, { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5 }),
             isAdmin && rappelBadge(d),
+            d.video_url && (videoEmbedUrl(d.video_url)
+              ? React.createElement('div', { style: { position: "relative", width: "100%", paddingBottom: "56.25%", height: 0, marginBottom: 10, borderRadius: 8, overflow: "hidden", background: "#000" } },
+                  React.createElement('iframe', { src: videoEmbedUrl(d.video_url), title: "Vidéo", allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen", allowFullScreen: true, frameBorder: "0", style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 } })
+                )
+              : React.createElement('a', { href: d.video_url, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-block", marginBottom: 10, fontSize: 12.5, color: "#3182CE", textDecoration: "underline" } }, "🎬 Voir la vidéo")),
             imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
               imgs.slice(0, 4).map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 62, height: 62, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } })),
               imgs.length > 4 && React.createElement('div', { onClick: () => openViewer(imgs, 4), style: { width: 62, height: 62, borderRadius: 6, background: "#F0F0F8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#888", fontWeight: 600, cursor: "zoom-in" } }, "+" + (imgs.length - 4))
@@ -5655,6 +5674,11 @@ const nav = isAdmin
             ),
             d.description && renderDocDescription(d.description, { fontSize: 11.5, color: "#666", marginBottom: 9, lineHeight: 1.5 }),
             isAdmin && rappelBadge(d),
+            d.video_url && (videoEmbedUrl(d.video_url)
+              ? React.createElement('div', { style: { position: "relative", width: "100%", paddingBottom: "56.25%", height: 0, marginBottom: 10, borderRadius: 8, overflow: "hidden", background: "#000" } },
+                  React.createElement('iframe', { src: videoEmbedUrl(d.video_url), title: "Vidéo", allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen", allowFullScreen: true, frameBorder: "0", style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 } })
+                )
+              : React.createElement('a', { href: d.video_url, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-block", marginBottom: 10, fontSize: 12.5, color: "#3182CE", textDecoration: "underline" } }, "🎬 Voir la vidéo")),
             imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 9 } },
               imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 68, height: 68, objectFit: "cover", borderRadius: 6, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
             ),
