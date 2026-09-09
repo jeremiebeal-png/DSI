@@ -12,7 +12,7 @@
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
-  /* Rendu des descriptions de fiches Baie Informatique contenant du HTML (tableaux). */
+  /* Rendu des descriptions de fiches Infrastructure contenant du HTML (tableaux). */
   .dsi-desc-html { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .dsi-desc-html table { border-collapse: collapse; width: 100%; max-width: 100%; margin: 4px 0 8px; font-size: 11.5px; }
   .dsi-desc-html th, .dsi-desc-html td { border: 1px solid #E2E2E8; padding: 4px 8px; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }
@@ -276,8 +276,8 @@ const CAT_ICONS = { "Cyber Sécurité": "🛡️", "Logiciel Marriott": "🏨", 
 const FILE_ICONS = { pdf: "📕", doc: "📘", docx: "📘", xls: "📗", xlsx: "📗" };
 
 // Catégories de la documentation technique (fiches par hôtel)
-const DOC_CATS = ["Baie informatique", "Plan caméras", "Schéma réseau", "Téléphonie", "Wi-Fi", "Matériel", "Accès et codes", "Care Pack", "Autre"];
-const DOC_CAT_ICONS = { "Baie informatique": "🗄️", "Plan caméras": "📹", "Schéma réseau": "🌐", "Téléphonie": "☎️", "Wi-Fi": "📶", "Matériel": "🖥️", "Accès et codes": "🔑", "Care Pack": "📦", "Autre": "📁" };
+const DOC_CATS = ["Infrastructure", "Plan caméras", "Schéma réseau", "Téléphonie", "Wi-Fi", "Matériel", "Accès et codes", "Care Pack", "Autre"];
+const DOC_CAT_ICONS = { "Infrastructure": "🗄️", "Plan caméras": "📹", "Schéma réseau": "🌐", "Téléphonie": "☎️", "Wi-Fi": "📶", "Matériel": "🖥️", "Accès et codes": "🔑", "Care Pack": "📦", "Autre": "📁" };
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
 const fileExt = (name) => (name.split('.').pop() || '').toLowerCase();
@@ -625,7 +625,7 @@ function App() {
   const ADMIN_SECTIONS = [
     { key: "clients",    page: "client-admin",    icon: "🏨", label: "Gérer les clients" },
     { key: "procedures", page: "proc-admin",      icon: "📚", label: "Gérer les procédures" },
-    { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Baie Informatique" },
+    { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Infrastructure" },
     { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
     { key: "tickets",    page: "rapport-jour",     icon: "📄", label: "Rapport Jour" },
     { key: "tickets",    page: "rapport-tickets",  icon: "📈", label: "Rapport Tickets" },
@@ -4081,7 +4081,7 @@ const nav = isAdmin
     : [
         { p: "accueil", icon: "🏠", label: "Accueil" },
         { p: "knowledge", icon: "📖", label: "Procédures" },
-        { p: "mon-installation", icon: "🗂️", label: "Baie Informatique" },
+        { p: "mon-installation", icon: "🗂️", label: "Infrastructure" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
         ...(isSupervisor ? [{ p: "rapport-tickets", icon: "📈", label: "Rapport Tickets" }] : []),
@@ -4273,7 +4273,7 @@ const nav = isAdmin
             React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: G, marginBottom: 4 } }, "Bienvenue" + (prenom ? ", " + prenom : "") + " 👋"),
             monHotel && React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.6)", marginBottom: 14 } }, monHotel.name),
             React.createElement('div', { style: { fontSize: 13.5, color: "rgba(255,255,255,.8)", lineHeight: 1.7, marginBottom: 18 } },
-              "Votre portail de support informatique DSI Hotel réunit en un seul endroit vos procédures, vos demandes de support, l'inventaire de votre baie informatique et vos rapports. Sélectionnez une rubrique ci-dessous ou dans le menu de gauche."
+              "Votre portail de support informatique DSI Hotel réunit en un seul endroit vos procédures, vos demandes de support, l'inventaire de votre Infrastructure et vos rapports. Sélectionnez une rubrique ci-dessous ou dans le menu de gauche."
             ),
             React.createElement('div', { style: { fontSize: 12, color: "rgba(255,255,255,.55)", lineHeight: 1.8, borderTop: "1px solid rgba(255,255,255,.12)", paddingTop: 14 } },
               "Besoin d'aide ? ",
@@ -4299,7 +4299,7 @@ const nav = isAdmin
         React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 } }, "Accès rapide"),
         React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
           raccourci("📖", "Procédures", "knowledge"),
-          raccourci("🗂️", "Baie Informatique", "mon-installation"),
+          raccourci("🗂️", "Infrastructure", "mon-installation"),
           raccourci("📧", "Contacter le support", "contact"),
           ...(isSupervisor ? [raccourci("🎫", "Mes demandes", "tickets-client")] : []),
           ...(isSupervisor ? [raccourci("🔧", "Rapport Intervention", "rapport-intervention")] : [])
@@ -5573,7 +5573,7 @@ const nav = isAdmin
               React.createElement('span', { style: { fontWeight: 600 } }, docForm.visible_client ? "👁️ Visible par le client" : "🔒 Fiche interne"),
               React.createElement('span', { style: { display: "block", fontSize: 11, color: "#888", marginTop: 2 } },
                 docForm.visible_client
-                  ? "Le client verra cette fiche et ses fichiers dans son espace « Baie Informatique »."
+                  ? "Le client verra cette fiche et ses fichiers dans son espace « Infrastructure »."
                   : "Réservée à DSI Hotel. Cochez la case pour la partager avec le client."
               )
             )
@@ -6624,7 +6624,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Baie Informatique" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Baie Informatique" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
