@@ -369,7 +369,9 @@ function App() {
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(dsiGetTheme());
-  const [rapportsOpen, setRapportsOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState({});
+  // Config des menus deroulants de la sidebar (ordre = position du 1er sous-item)
+  const NAV_GROUPS = { rap: { icon: "📁", label: "Rapports" }, sup: { icon: "🎧", label: "Support" } };
   const toggleTheme = () => { const m = theme === "dark" ? "light" : "dark"; dsiApplyTheme(m); setTheme(m); };
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -645,13 +647,13 @@ function App() {
     { key: "clients",    page: "client-admin",    icon: "🏨", label: "Gérer les clients" },
     { key: "procedures", page: "proc-admin",      icon: "📚", label: "Gérer les procédures" },
     { key: "docs",       page: "docs-techniques", icon: "🗂️", label: "Infrastructure" },
-    { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets" },
+    { key: "tickets",    page: "tickets-admin",   icon: "🎫", label: "Tickets", grp: "sup" },
     { key: "tickets",    page: "rapport-jour",     icon: "📄", label: "Rapport Jour", grp: "rap" },
     { key: "tickets",    page: "rapport-tickets",  icon: "📈", label: "Rapport Tickets", grp: "rap" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention", grp: "rap" },
     { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité", grp: "rap" },
-    { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types" },
+    { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types", grp: "sup" },
     { key: "docs",       page: "backups",          icon: "💾", label: "Backups" },
   ];
   useEffect(() => {
@@ -6683,38 +6685,37 @@ const nav = isAdmin
     ),
     React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
       (() => {
-        const rapItems = nav.filter(i => i.grp === "rap");
-        const rapPages = rapItems.map(i => i.p);
-        const onRapPage = rapPages.includes(page);
-        const showRap = rapportsOpen || onRapPage;
         const btnStyle = (p) => ({ width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: page === p ? "rgba(201,168,76,.13)" : "transparent", color: page === p ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${page === p ? G : "transparent"}` });
         const els = [];
-        let rapInserted = false;
+        const groupDone = {};
         nav.forEach(({ p, icon, label, grp }) => {
-          if (grp === "rap") {
-            if (!rapInserted) {
-              rapInserted = true;
-              // En-tete du groupe deroulant
-              els.push(React.createElement('button', {
-                key: "grp-rap", onClick: () => setRapportsOpen(o => !o),
-                style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: (onRapPage && !showRap) ? "rgba(201,168,76,.13)" : "transparent", color: onRapPage ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${onRapPage ? G : "transparent"}` }
+          if (grp && NAV_GROUPS[grp]) {
+            if (groupDone[grp]) return; // sous-items deja rendus via l'en-tete
+            groupDone[grp] = true;
+            const cfg = NAV_GROUPS[grp];
+            const gItems = nav.filter(i => i.grp === grp);
+            const gPages = gItems.map(i => i.p);
+            const onGPage = gPages.includes(page);
+            const show = groupsOpen[grp] || onGPage;
+            // En-tete du groupe deroulant
+            els.push(React.createElement('button', {
+              key: "grp-" + grp, onClick: () => setGroupsOpen(s => ({ ...s, [grp]: !(s[grp] || onGPage) })),
+              style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: (onGPage && !show) ? "rgba(201,168,76,.13)" : "transparent", color: onGPage ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${onGPage ? G : "transparent"}` }
+            },
+              React.createElement('span', { style: { fontSize: 16, flexShrink: 0 } }, cfg.icon),
+              React.createElement('span', { style: { flex: 1 } }, cfg.label),
+              React.createElement('span', { style: { fontSize: 11, flexShrink: 0, opacity: .7, transition: "transform .2s", transform: show ? "rotate(90deg)" : "rotate(0deg)" } }, "▶")
+            ));
+            if (show) {
+              gItems.forEach(it => els.push(React.createElement('button', {
+                key: it.p, onClick: () => go(it.p),
+                style: { ...btnStyle(it.p), paddingLeft: isMobile ? 40 : 34, fontSize: isMobile ? 14 : 12.5 }
               },
-                React.createElement('span', { style: { fontSize: 16, flexShrink: 0 } }, "📁"),
-                React.createElement('span', { style: { flex: 1 } }, "Rapports"),
-                React.createElement('span', { style: { fontSize: 11, flexShrink: 0, opacity: .7, transition: "transform .2s", transform: showRap ? "rotate(90deg)" : "rotate(0deg)" } }, "▶")
-              ));
-              // Sous-items (si deplie)
-              if (showRap) {
-                rapItems.forEach(it => els.push(React.createElement('button', {
-                  key: it.p, onClick: () => go(it.p),
-                  style: { ...btnStyle(it.p), paddingLeft: isMobile ? 40 : 34, fontSize: isMobile ? 14 : 12.5 }
-                },
-                  React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, it.icon),
-                  React.createElement('span', { style: { flex: 1 } }, it.label)
-                )));
-              }
+                React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, it.icon),
+                React.createElement('span', { style: { flex: 1 } }, it.label)
+              )));
             }
-            return; // les autres items "rap" sont deja traites via rapItems
+            return;
           }
           // Item normal (hors groupe)
           els.push(React.createElement('button', {
