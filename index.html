@@ -371,7 +371,7 @@ function App() {
   const [theme, setTheme] = useState(dsiGetTheme());
   const [groupsOpen, setGroupsOpen] = useState({});
   // Config des menus deroulants de la sidebar (ordre = position du 1er sous-item)
-  const NAV_GROUPS = { rap: { icon: "📁", label: "Rapports" }, sup: { icon: "🎧", label: "Support" } };
+  const NAV_GROUPS = { rap: { icon: "📁", label: "Rapports" }, sup: { icon: "🎧", label: "Support" }, adm: { icon: "🛡️", label: "Admin" } };
   const toggleTheme = () => { const m = theme === "dark" ? "light" : "dark"; dsiApplyTheme(m); setTheme(m); };
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -4090,14 +4090,15 @@ const nav = isAdmin
         items.unshift({ p: "accueil", icon: "🏠", label: "Accueil" });
         // Insère "Gérer les admins" juste après "Gérer les clients"
         if (isSuperAdmin) {
-          const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins" };
-          const logItem = { p: "login-logs", icon: "🕓", label: "Connexions" };
-          const secItem = { p: "securite", icon: "🔐", label: "Sécurité" };
+          // Menu Admin (super-admin) : regroupe admins, connexions, sécurité, suppression ticket
+          const adminItem = { p: "admins", icon: "👥", label: "Gérer les admins", grp: "adm" };
+          const logItem = { p: "login-logs", icon: "🕓", label: "Connexions", grp: "adm" };
+          const secItem = { p: "securite", icon: "🔐", label: "Sécurité", grp: "adm" };
+          const supprItem = { p: "suppr-ticket", icon: "🗑️", label: "Suppression ticket", grp: "adm" };
+          // Placé juste après "Gérer les clients" ; sinon en tête
           const idxClients = items.findIndex(i => i.p === "client-admin");
-          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem, logItem, secItem);
-          else { items.unshift(secItem); items.unshift(logItem); items.unshift(adminItem); }
-          // Action sensible : placée en bas du menu
-          items.push({ p: "suppr-ticket", icon: "🗑️", label: "Suppression ticket" });
+          if (idxClients >= 0) items.splice(idxClients + 1, 0, adminItem, logItem, secItem, supprItem);
+          else { items.unshift(supprItem); items.unshift(secItem); items.unshift(logItem); items.unshift(adminItem); }
         }
         return items;
       })()
