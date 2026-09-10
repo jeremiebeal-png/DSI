@@ -534,6 +534,28 @@ function App() {
   const [savingProc, setSavingProc] = useState(false);
 
   const [showClientForm, setShowClientForm] = useState(false);
+  const [clientStats, setClientStats] = useState(null); // { tickets, procedures, docs } | "loading" | null
+
+  // Compteurs récap d'un hôtel (tickets, procédures liées, fiches infrastructure).
+  // Requêtes "count" légères : on ne récupère que des nombres, pas les lignes.
+  const chargerClientStats = async (hotelId) => {
+    if (!hotelId) { setClientStats(null); return; }
+    setClientStats("loading");
+    try {
+      const [tk, pr, dc] = await Promise.all([
+        sb.from("tickets").select("id", { count: "exact", head: true }).eq("hotel_id", hotelId),
+        sb.from("procedure_hotels").select("procedure_id", { count: "exact", head: true }).eq("hotel_id", hotelId),
+        sb.from("hotel_docs").select("id", { count: "exact", head: true }).eq("hotel_id", hotelId),
+      ]);
+      setClientStats({
+        tickets: tk.count ?? 0,
+        procedures: pr.count ?? 0,
+        docs: dc.count ?? 0,
+      });
+    } catch (e) {
+      setClientStats(null); // en cas d'erreur, on n'affiche simplement pas les compteurs
+    }
+  };
 
   // ---------- GESTION DES ADMINS (super-admin uniquement) ----------
   const [admins, setAdmins] = useState([]);
@@ -1186,6 +1208,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "" });
     setClientLogoFile(null);
     setClientErr("");
+    setClientStats(null); // pas de récap pour un nouveau client
     setShowClientForm(true);
   };
   const openEditClientForm = (h) => {
@@ -1193,6 +1216,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: h.ninjaone_nom || "" });
     setClientLogoFile(null);
     setClientErr("");
+    chargerClientStats(h.id); // récap tickets / procédures / fiches infra
     setShowClientForm(true);
   };
 
@@ -4395,8 +4419,35 @@ const nav = isAdmin
       React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", marginBottom: 14 } },
         React.createElement('button', { onClick: openNewClientForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter un client")
       ),
-      showClientForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
-        React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e", marginBottom: 12 } }, editingClientId ? "Modifier le client" : "Nouveau client"),
+      showClientForm && React.createElement('div', { onClick: (e) => { if (e.target === e.currentTarget) setShowClientForm(false); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 80, overflowY: "auto" } },
+        React.createElement('div', { onClick: (e) => e.stopPropagation(), style: { background: "white", borderRadius: 12, border: `1px solid ${G}35`, padding: isMobile ? 18 : 24, width: 640, maxWidth: "100%", boxShadow: "0 12px 44px rgba(0,0,0,.3)", marginBottom: 30 } },
+        React.createElement('div', { style: { fontWeight: 500, fontSize: 15, color: "#1a1a3e", marginBottom: 12 } }, editingClientId ? "Modifier le client" : "Nouveau client"),
+        editingClientId && React.createElement('div', { style: { background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 9, padding: "12px 14px", marginBottom: 16 } },
+          React.createElement('div', { style: { fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8 } }, "Informations du client"),
+          (() => {
+            const h = hotels.find(x => x.id === editingClientId) || {};
+            const ligne = (label, val) => React.createElement('div', { style: { display: "flex", gap: 8, fontSize: 12, marginBottom: 4 } },
+              React.createElement('span', { style: { color: "#888", minWidth: 130, flexShrink: 0 } }, label),
+              React.createElement('span', { style: { color: "#333", fontWeight: 500, wordBreak: "break-all" } }, val || "—")
+            );
+            const dateCreation = h.created_at ? new Date(h.created_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }) : "—";
+            return React.createElement(React.Fragment, null,
+              ligne("Compte administrateur", h.account_email),
+              ligne("Compte standard", h.standard_email),
+              ligne("Client depuis", dateCreation),
+              React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, paddingTop: 10, borderTop: "1px solid #E8E8F0" } },
+                [
+                  { l: "Tickets", v: clientStats && clientStats !== "loading" ? clientStats.tickets : null, icon: "🎫" },
+                  { l: "Procédures", v: clientStats && clientStats !== "loading" ? clientStats.procedures : null, icon: "📚" },
+                  { l: "Fiches infra.", v: clientStats && clientStats !== "loading" ? clientStats.docs : null, icon: "🗂️" },
+                ].map((s, i) => React.createElement('div', { key: i, style: { flex: "1 1 120px", background: "white", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px" } },
+                  React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 3 } }, s.icon + " " + s.l),
+                  React.createElement('div', { style: { fontSize: 19, fontWeight: 700, color: "#1a1a3e" } }, clientStats === "loading" ? "…" : String(s.v))
+                ))
+              )
+            );
+          })()
+        ),
         React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Nom de l'hôtel *"),
@@ -4463,6 +4514,7 @@ const nav = isAdmin
         React.createElement('div', { style: { display: "flex", gap: 7, justifyContent: "flex-end" } },
           React.createElement('button', { onClick: () => setShowClientForm(false), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "6px 12px" } }, "Annuler"),
           React.createElement('button', { onClick: submitClientForm, disabled: savingClient, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingClient ? 0.6 : 1 } }, savingClient ? "Enregistrement..." : (editingClientId ? "Enregistrer" : "Créer le client"))
+        )
         )
       ),
             addAccountHotel && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
