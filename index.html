@@ -905,13 +905,46 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       });
   };
 
+  // Vrai si un rapport d'activité est en cours de saisie avec du contenu non
+  // enregistré. On ne se base QUE sur les champs remplis par le technicien
+  // (le nom, l'hôtel, les observations, ou au moins une ligne décrite), afin de
+  // ne pas déclencher l'avertissement sur un formulaire encore vide.
+  const rapportEnCours = () => {
+    if (page !== "rapports" || !rapForm) return false;
+    if ((rapForm.technicien || "").trim()) return true;
+    if (rapForm.hotel_id) return true;
+    if ((rapForm.observations || "").trim()) return true;
+    if ((rapForm.serveurs_note || "").trim()) return true;
+    if ((rapLignes || []).some(l => (l.description || "").trim() || (l.explication || "").trim())) return true;
+    return false;
+  };
+
   const go = (p, id = null) => {
+    // Garde-fou : si on quitte un rapport en cours de saisie, on confirme d'abord.
+    // Un clic involontaire sur un autre menu ne fait plus perdre la saisie.
+    if (p !== page && rapportEnCours()) {
+      const ok = window.confirm(
+        "Un rapport est en cours de saisie. Voulez-vous vraiment quitter cette page ?\n\n" +
+        "Les informations non enregistrées seront définitivement perdues."
+      );
+      if (!ok) return; // on reste sur le rapport
+    }
     setPage(p);
     setSelId(id);
     setShowProcForm(false);
     setMenuOpen(false); // referme le menu mobile après navigation
     if (id && p === "proc-detail") loadFilesFor(id);
   };
+
+  // Avertissement natif du navigateur au rafraîchissement / fermeture d'onglet
+  // pendant la saisie d'un rapport (le texte affiché est imposé par le navigateur).
+  useEffect(() => {
+    const handler = (e) => {
+      if (rapportEnCours()) { e.preventDefault(); e.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  });
 
   // ---------- LOGIN / LOGOUT ----------
   const doLogin = async () => {
@@ -4196,7 +4229,7 @@ const nav = isAdmin
       const mail = (profile && profile.email ? String(profile.email).trim() : "");
       return mail ? mail.split("@")[0] : "";
     })();
-    const goTo = (p) => setPage(p);
+    const goTo = (p) => go(p);
     const SLA_MS_ACC = 4 * 60 * 60 * 1000;
 
     if (isAdmin) {
