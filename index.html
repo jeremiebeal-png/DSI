@@ -46,6 +46,9 @@ function dsiApplyTheme(mode) {
   try { localStorage.setItem("dsi-theme", mode); } catch (e) {}
 }
 dsiApplyTheme(dsiGetTheme());
+// Préférence : notifications audio des nouveaux tickets/réponses. ON par défaut.
+function dsiGetSound() { try { return localStorage.getItem("dsi-sound") === "off" ? false : true; } catch (e) { return true; } }
+function dsiSetSound(on) { try { localStorage.setItem("dsi-sound", on ? "on" : "off"); } catch (e) {} }
 const SUPPORT_EMAIL = "support@dsihotel.com";
 const TEAM_EMAIL = "team@dsihotel.fr";
 const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
@@ -369,6 +372,8 @@ function App() {
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(dsiGetTheme());
+  const [soundOn, setSoundOn] = useState(dsiGetSound());
+  const toggleSound = () => { const v = !soundOn; setSoundOn(v); dsiSetSound(v); };
   const [groupsOpen, setGroupsOpen] = useState({});
   // Config des menus deroulants de la sidebar (ordre = position du 1er sous-item)
   const NAV_GROUPS = { rap: { icon: "📁", label: "Rapports" }, sup: { icon: "🎧", label: "Support" }, adm: { icon: "🛡️", label: "Admin" } };
@@ -1856,7 +1861,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // Joue un "bip-bip" à deux notes. Volume renforcé (gain crête ~0.55) pour être
   // bien audible en environnement de travail.
-  const jouerSonAlerte = () => {
+  // Si le paramètre force n'est pas true, on respecte la préférence utilisateur
+  // (bouton ON/OFF de la barre latérale) : son coupé => on ne joue rien.
+  const jouerSonAlerte = (force) => {
+    if (!force && !dsiGetSound()) return; // notifications audio désactivées
     try {
       const ctx = audioCtxRef.current;
       if (!ctx || !audioReadyRef.current) return;
@@ -5221,7 +5229,7 @@ const nav = isAdmin
               if (audioCtxRef.current && audioCtxRef.current.state === "suspended") audioCtxRef.current.resume();
               audioReadyRef.current = true;
             } catch (e) {}
-            jouerSonAlerte();
+            jouerSonAlerte(true);
           }, title: "Tester le son d'alerte des nouveaux tickets", style: { padding: "6px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔔 Tester le son"),
         React.createElement('span', { title: "État de la connexion temps réel (Supabase Realtime). 'SUBSCRIBED' = alertes actives.", style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: rtStatus === "SUBSCRIBED" ? "#2F855A" : "#C05621", background: rtStatus === "SUBSCRIBED" ? "#E9F6EE" : "#FFF7ED", border: "1px solid " + (rtStatus === "SUBSCRIBED" ? "#B7E0C6" : "#FBD38D"), borderRadius: 20, padding: "5px 10px", fontWeight: 600 } },
           React.createElement('span', { style: { width: 7, height: 7, borderRadius: "50%", background: rtStatus === "SUBSCRIBED" ? "#38A169" : "#DD6B20" } }),
@@ -6785,6 +6793,11 @@ const nav = isAdmin
         style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 10px", background: "rgba(255,255,255,.06)", border: `1px solid ${G}30`, color: "rgba(255,255,255,.75)", borderRadius: 8, fontSize: 12.5, fontWeight: 500, cursor: "pointer" } },
         React.createElement('span', { style: { fontSize: 15 } }, theme === "dark" ? "☀️" : "🌙"),
         React.createElement('span', null, theme === "dark" ? "Mode jour" : "Mode nuit")
+      ),
+      isAdmin && React.createElement('button', { onClick: toggleSound, title: soundOn ? "Couper les notifications sonores" : "Activer les notifications sonores",
+        style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 10px", marginTop: 8, background: "rgba(255,255,255,.06)", border: `1px solid ${soundOn ? G + "30" : "rgba(255,255,255,.14)"}`, color: soundOn ? "rgba(255,255,255,.75)" : "rgba(255,255,255,.45)", borderRadius: 8, fontSize: 12.5, fontWeight: 500, cursor: "pointer" } },
+        React.createElement('span', { style: { fontSize: 15 } }, soundOn ? "🔔" : "🔕"),
+        React.createElement('span', null, soundOn ? "Son : activé" : "Son : coupé")
       )
     ),
     !isAdmin && client?.logo_url && React.createElement('div', { style: { padding: "18px 16px", display: "flex", justifyContent: "center", borderBottom: "1px solid rgba(255,255,255,.06)" } },
