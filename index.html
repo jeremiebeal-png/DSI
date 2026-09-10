@@ -6519,6 +6519,12 @@ const nav = isAdmin
             React.createElement('button', { onClick: effacerBrouillon, style: { padding: "6px 12px", background: "none", border: "1px solid #DDD", color: "#777", borderRadius: 6, fontSize: 12, cursor: "pointer" } }, "Supprimer")
           ),
 
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", paddingBottom: 14, marginBottom: 18, borderBottom: "1px solid #EEE" } },
+            React.createElement('button', { onClick: enregistrerBrouillon, title: "Sauvegarder la saisie sur ce poste pour la reprendre plus tard", style: { padding: "8px 14px", background: "none", border: "1px solid #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "💾 Enregistrer le brouillon"),
+            React.createElement('button', { onClick: fermerRapModal, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: submitRapForm, disabled: savingRap, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: savingRap ? "default" : "pointer", opacity: savingRap ? 0.6 : 1 } }, savingRap ? "Enregistrement…" : (rapModal === "new" ? "Créer le rapport" : "Enregistrer"))
+          ),
+
           React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 } },
             React.createElement('div', null,
               React.createElement('label', { style: lbl }, "Date d'intervention"),
