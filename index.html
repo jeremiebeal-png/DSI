@@ -905,51 +905,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       });
   };
 
-  // Vrai si un rapport d'activité est en cours de saisie avec du contenu non
-  // enregistré. On ne se base QUE sur les champs remplis par le technicien
-  // (le nom, l'hôtel, les observations, ou au moins une ligne décrite), afin de
-  // ne pas déclencher l'avertissement sur un formulaire encore vide.
-  // NB : rapForm / rapLignes sont déclarés plus bas dans le composant ; ce garde
-  // (try/catch) évite une ReferenceError (zone morte temporelle) si la fonction
-  // est appelée avant leur initialisation.
-  const rapportEnCours = () => {
-    try {
-      if (page !== "rapports" || !rapForm) return false;
-      if ((rapForm.technicien || "").trim()) return true;
-      if (rapForm.hotel_id) return true;
-      if ((rapForm.observations || "").trim()) return true;
-      if ((rapForm.serveurs_note || "").trim()) return true;
-      if ((rapLignes || []).some(l => (l.description || "").trim() || (l.explication || "").trim())) return true;
-      return false;
-    } catch (e) { return false; }
-  };
-
   const go = (p, id = null) => {
-    // Garde-fou : si on quitte un rapport en cours de saisie, on confirme d'abord.
-    // Un clic involontaire sur un autre menu ne fait plus perdre la saisie.
-    if (p !== page && rapportEnCours()) {
-      const ok = window.confirm(
-        "Un rapport est en cours de saisie. Voulez-vous vraiment quitter cette page ?\n\n" +
-        "Les informations non enregistrées seront définitivement perdues."
-      );
-      if (!ok) return; // on reste sur le rapport
-    }
     setPage(p);
     setSelId(id);
     setShowProcForm(false);
     setMenuOpen(false); // referme le menu mobile après navigation
     if (id && p === "proc-detail") loadFilesFor(id);
   };
-
-  // Avertissement natif du navigateur au rafraîchissement / fermeture d'onglet
-  // pendant la saisie d'un rapport (le texte affiché est imposé par le navigateur).
-  useEffect(() => {
-    const handler = (e) => {
-      if (rapportEnCours()) { e.preventDefault(); e.returnValue = ""; }
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  });
 
   // ---------- LOGIN / LOGOUT ----------
   const doLogin = async () => {
@@ -3420,71 +3382,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setRapModal(r);
   };
 
-  // ---- BROUILLON DE RAPPORT (sauvegarde locale, navigateur) ----
-  // Le brouillon n'est enregistré QUE sur ce poste (localStorage), jamais en base.
-  // Il permet de ne pas perdre une saisie en cours si on ferme la fenêtre par erreur
-  // ou si on rafraîchit la page, avant d'avoir cliqué sur « Créer le rapport ».
-  const RAP_DRAFT_KEY = "dsi-rapport-brouillon";
-
-  // Vrai s'il y a du contenu saisi dans la modale en cours (pour l'avertissement).
-  const rapModalARempli = () => {
-    if (!rapForm) return false;
-    if ((rapForm.technicien || "").trim()) return true;
-    if (rapForm.hotel_id) return true;
-    if ((rapForm.observations || "").trim()) return true;
-    if ((rapForm.serveurs_note || "").trim()) return true;
-    if ((rapLignes || []).some(l => (l.description || "").trim() || (l.explication || "").trim())) return true;
-    if ((rapSrvLignes || []).some(s => (s.libelle || "").trim() || (s.note || "").trim())) return true;
-    return false;
-  };
-
-  const enregistrerBrouillon = () => {
-    try {
-      const draft = { form: rapForm, lignes: rapLignes, srv: rapSrvLignes, savedAt: new Date().toISOString() };
-      localStorage.setItem(RAP_DRAFT_KEY, JSON.stringify(draft));
-      setRapNote("💾 Brouillon enregistré sur ce poste. Il sera proposé à la prochaine ouverture.");
-    } catch (e) {
-      setRapNote("⚠️ Impossible d'enregistrer le brouillon sur ce navigateur.");
-    }
-  };
-
-  const effacerBrouillon = () => { try { localStorage.removeItem(RAP_DRAFT_KEY); } catch (e) {} };
-
-  const lireBrouillon = () => {
-    try {
-      const raw = localStorage.getItem(RAP_DRAFT_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  };
-
-  // Ouvre un nouveau rapport, en proposant de reprendre un éventuel brouillon.
-  const openNewRapportOuBrouillon = () => {
-    const draft = lireBrouillon();
-    if (draft && draft.form) {
-      const quand = draft.savedAt ? new Date(draft.savedAt).toLocaleString("fr-FR") : "";
-      if (window.confirm("Un brouillon de rapport a été trouvé sur ce poste" + (quand ? " (enregistré le " + quand + ")" : "") + ".\n\nOK = reprendre ce brouillon\nAnnuler = commencer un rapport vierge (le brouillon sera conservé)")) {
-        setRapForm(draft.form);
-        setRapLignes(Array.isArray(draft.lignes) && draft.lignes.length ? draft.lignes : [emptyLigne()]);
-        setRapSrvLignes(Array.isArray(draft.srv) && draft.srv.length ? draft.srv : [emptySrv()]);
-        setRapErr(""); setRapNote("Brouillon repris. Cliquez sur « Créer le rapport » pour l'enregistrer définitivement.");
-        setRapModal("new");
-        return;
-      }
-    }
-    openNewRapport();
-  };
-
-  // Fermeture sécurisée de la modale : avertit si du contenu non enregistré est présent.
-  const fermerRapModal = () => {
-    if (rapModalARempli()) {
-      if (!window.confirm(
-        "ATTENTION : si vous quittez cette fenêtre, tout ce que vous avez saisi sera perdu.\n\n" +
-        "Astuce : cliquez sur « Enregistrer le brouillon » avant de fermer pour le retrouver plus tard.\n\n" +
-        "Voulez-vous vraiment fermer sans enregistrer ?"
-      )) return;
-    }
-    setRapModal(null);
-  };
+  const toggleService = (svc) =>
     setRapForm(f => ({ ...f, services: f.services.includes(svc) ? f.services.filter(s => s !== svc) : [...f.services, svc] }));
 
   const setLigne = (i, field, val) =>
@@ -3571,7 +3469,6 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         if (error) throw error;
       }
       await loadRapports();
-      effacerBrouillon(); // le rapport est en base : le brouillon local n'a plus lieu d'être
       setRapModal(null);
     } catch (e) {
       setRapErr("Erreur : " + (e.message || e));
@@ -4299,7 +4196,7 @@ const nav = isAdmin
       const mail = (profile && profile.email ? String(profile.email).trim() : "");
       return mail ? mail.split("@")[0] : "";
     })();
-    const goTo = (p) => go(p);
+    const goTo = (p) => setPage(p);
     const SLA_MS_ACC = 4 * 60 * 60 * 1000;
 
     if (isAdmin) {
@@ -6419,7 +6316,7 @@ const nav = isAdmin
             React.createElement('option', { value: "all" }, "Tous les hôtels"),
             hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
           ),
-          React.createElement('button', { onClick: openNewRapportOuBrouillon, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "+ Nouveau rapport")
+          React.createElement('button', { onClick: openNewRapport, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "+ Nouveau rapport")
         )
       ),
 
@@ -6558,18 +6455,9 @@ const nav = isAdmin
       ),
 
       // ---- MODALE : création / édition ----
-      rapModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: (e) => { if (e.target === e.currentTarget) fermerRapModal(); } },
+      rapModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: () => setRapModal(null) },
         React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "#FFF", borderRadius: 12, padding: isMobile ? 18 : 26, width: "100%", maxWidth: 620, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
-          React.createElement('h3', { style: { margin: "0 0 10px", fontSize: 18, color: SB } }, rapModal === "new" ? "Nouveau rapport d'activité" : "Modifier le rapport"),
-          React.createElement('div', { style: { display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "10px 12px", marginBottom: 18 } },
-            React.createElement('span', { style: { fontSize: 16, flexShrink: 0, lineHeight: 1.2 } }, "⚠️"),
-            React.createElement('div', { style: { fontSize: 12, color: "#8A6D1F", lineHeight: 1.5 } },
-              React.createElement('strong', null, "ATTENTION : "),
-              "si vous quittez cette fenêtre sans enregistrer, tout ce que vous avez saisi sera perdu. Utilisez « ",
-              React.createElement('strong', null, "💾 Enregistrer le brouillon"),
-              " » en bas pour le conserver et le reprendre plus tard sur ce poste."
-            )
-          ),
+          React.createElement('h3', { style: { margin: "0 0 18px", fontSize: 18, color: SB } }, rapModal === "new" ? "Nouveau rapport d'activité" : "Modifier le rapport"),
 
           React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 } },
             React.createElement('div', null,
@@ -6686,8 +6574,7 @@ const nav = isAdmin
 
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
             rapModal !== "new" && React.createElement('button', { onClick: () => deleteRapport(rapModal), style: { marginRight: "auto", padding: "8px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🗑 Supprimer"),
-            React.createElement('button', { onClick: enregistrerBrouillon, title: "Sauvegarder la saisie sur ce poste pour la reprendre plus tard", style: { padding: "8px 14px", background: "none", border: "1px solid #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "💾 Enregistrer le brouillon"),
-            React.createElement('button', { onClick: fermerRapModal, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: () => setRapModal(null), style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
             React.createElement('button', { onClick: submitRapForm, disabled: savingRap, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: savingRap ? "default" : "pointer", opacity: savingRap ? 0.6 : 1 } }, savingRap ? "Enregistrement…" : (rapModal === "new" ? "Créer le rapport" : "Enregistrer"))
           )
         )
