@@ -6255,6 +6255,26 @@ const nav = isAdmin
   // ================= PAGE : RAPPORTS D'ACTIVITÉ =================
   if (page === "rapports" && isAdmin) {
     const hotelName = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "—"; };
+    // Vrai si la modale contient une saisie non enregistrée (défini ici, après les
+    // useState, pour éviter toute erreur d'ordre d'initialisation).
+    const rapModalARempli = () => {
+      if (!rapForm) return false;
+      if ((rapForm.technicien || "").trim()) return true;
+      if (rapForm.hotel_id) return true;
+      if ((rapForm.observations || "").trim()) return true;
+      if ((rapForm.serveurs_note || "").trim()) return true;
+      if ((rapLignes || []).some(l => (l.description || "").trim() || (l.explication || "").trim())) return true;
+      if ((rapSrvLignes || []).some(s => (s.libelle || "").trim() || (s.note || "").trim())) return true;
+      return false;
+    };
+    // Fermeture sécurisée : avertit avant de perdre une saisie en cours.
+    const fermerRapModal = () => {
+      if (rapModalARempli() && !window.confirm(
+        "ATTENTION : si vous quittez cette fenêtre, tout ce que vous avez saisi sera perdu.\n\n" +
+        "Voulez-vous vraiment fermer sans enregistrer le rapport ?"
+      )) return;
+      setRapModal(null);
+    };
     const visibles = rapports.filter(r => rapFilterHotel === "all" || r.hotel_id === rapFilterHotel);
     // Regroupement par mois (le plus récent en premier), et à l'intérieur de
     // chaque mois tri par nom d'hôtel (A→Z). Le regroupement est purement
@@ -6455,9 +6475,16 @@ const nav = isAdmin
       ),
 
       // ---- MODALE : création / édition ----
-      rapModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: () => setRapModal(null) },
+      rapModal && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 1000, overflowY: "auto" }, onClick: (e) => { if (e.target === e.currentTarget) fermerRapModal(); } },
         React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "#FFF", borderRadius: 12, padding: isMobile ? 18 : 26, width: "100%", maxWidth: 620, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
-          React.createElement('h3', { style: { margin: "0 0 18px", fontSize: 18, color: SB } }, rapModal === "new" ? "Nouveau rapport d'activité" : "Modifier le rapport"),
+          React.createElement('h3', { style: { margin: "0 0 10px", fontSize: 18, color: SB } }, rapModal === "new" ? "Nouveau rapport d'activité" : "Modifier le rapport"),
+          React.createElement('div', { style: { display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "10px 12px", marginBottom: 18 } },
+            React.createElement('span', { style: { fontSize: 16, flexShrink: 0, lineHeight: 1.2 } }, "⚠️"),
+            React.createElement('div', { style: { fontSize: 12, color: "#8A6D1F", lineHeight: 1.5 } },
+              React.createElement('strong', null, "ATTENTION : "),
+              "ne cliquez pas en dehors de cette fenêtre avant d'avoir cliqué sur « Créer le rapport ». Toute saisie non enregistrée serait perdue."
+            )
+          ),
 
           React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 } },
             React.createElement('div', null,
@@ -6574,7 +6601,7 @@ const nav = isAdmin
 
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
             rapModal !== "new" && React.createElement('button', { onClick: () => deleteRapport(rapModal), style: { marginRight: "auto", padding: "8px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🗑 Supprimer"),
-            React.createElement('button', { onClick: () => setRapModal(null), style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: fermerRapModal, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
             React.createElement('button', { onClick: submitRapForm, disabled: savingRap, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: savingRap ? "default" : "pointer", opacity: savingRap ? 0.6 : 1 } }, savingRap ? "Enregistrement…" : (rapModal === "new" ? "Créer le rapport" : "Enregistrer"))
           )
         )
