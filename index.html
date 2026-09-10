@@ -3649,7 +3649,25 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const openSendRapport = (r) => {
     const hotel = hotels.find(h => h.id === r.hotel_id);
-    setRapSendTo(hotel?.contact_email || hotel?.email || "");
+    // Mémoire des destinataires : on cherche le dernier envoi effectué pour un
+    // rapport DU MÊME HÔTEL et on pré-remplit avec ces adresses. Cela prime sur
+    // l'email de contact de la fiche hôtel. Repli : contact de la fiche, sinon vide.
+    let prefill = "";
+    try {
+      const idsHotel = new Set((rapports || []).filter(x => x.hotel_id === r.hotel_id).map(x => x.id));
+      let dernier = null; // { envoye_le, adresses:Set }
+      Object.keys(rapEnvois || {}).forEach(rid => {
+        if (!idsHotel.has(rid)) return;
+        (rapEnvois[rid] || []).forEach(e => {
+          if (!e || !e.envoye_a) return;
+          const t = e.envoye_le ? new Date(e.envoye_le).getTime() : 0;
+          if (!dernier || t > dernier.t) dernier = { t, envoye_le: e.envoye_le, adresses: new Set([e.envoye_a]) };
+          else if (t === dernier.t) dernier.adresses.add(e.envoye_a); // même envoi, plusieurs destinataires
+        });
+      });
+      if (dernier && dernier.adresses.size) prefill = Array.from(dernier.adresses).join(", ");
+    } catch (e) { /* silencieux : on retombe sur le contact de la fiche */ }
+    setRapSendTo(prefill || hotel?.contact_email || hotel?.email || "");
     setRapNote("");
     setRapSendModal(r);
   };
@@ -6988,4 +7006,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
- 
