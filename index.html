@@ -905,7 +905,22 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       });
   };
 
+  // Indique si un rapport d'activité est en cours de saisie non enregistrée.
+  // On passe par une ref (et non par les états rapForm/rapLignes directement) car
+  // go() est défini avant ces états : lire une ref est toujours sûr, la ref étant
+  // tenue à jour par un effet placé plus bas, après les déclarations d'état.
+  const rapDirtyRef = useRef(false);
+
   const go = (p, id = null) => {
+    // Garde-fou : quitter la page Rapports avec une saisie en cours demande confirmation.
+    if (p !== page && rapDirtyRef.current) {
+      if (!window.confirm(
+        "ATTENTION : un rapport est en cours de saisie.\n\n" +
+        "Si vous changez de page, tout ce que vous avez saisi sera perdu.\n" +
+        "(Vous pouvez d'abord cliquer sur « Enregistrer le brouillon » dans la fenêtre du rapport.)\n\n" +
+        "Voulez-vous vraiment quitter cette page ?"
+      )) return;
+    }
     setPage(p);
     setSelId(id);
     setShowProcForm(false);
@@ -3238,6 +3253,21 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [savingRap, setSavingRap] = useState(false);
   const [rapErr, setRapErr] = useState("");
   const [rapNote, setRapNote] = useState("");           // info envoi email
+
+  // Tient rapDirtyRef à jour : vrai si la modale rapport est ouverte avec une
+  // saisie non enregistrée. Lu par go() pour avertir avant un changement de page.
+  useEffect(() => {
+    const rempli =
+      !!rapModal && !!rapForm && (
+        (rapForm.technicien || "").trim() !== "" ||
+        !!rapForm.hotel_id ||
+        (rapForm.observations || "").trim() !== "" ||
+        (rapForm.serveurs_note || "").trim() !== "" ||
+        (rapLignes || []).some(l => (l.description || "").trim() || (l.explication || "").trim()) ||
+        (rapSrvLignes || []).some(s => (s.libelle || "").trim() || (s.note || "").trim())
+      );
+    rapDirtyRef.current = rempli;
+  });
   const [rapFilterHotel, setRapFilterHotel] = useState("all");
   const [rapSendModal, setRapSendModal] = useState(null); // rapport en cours d'envoi (saisie email)
   const [rapSendTo, setRapSendTo] = useState("");
@@ -4197,7 +4227,7 @@ const nav = isAdmin
       const mail = (profile && profile.email ? String(profile.email).trim() : "");
       return mail ? mail.split("@")[0] : "";
     })();
-    const goTo = (p) => setPage(p);
+    const goTo = (p) => go(p);
     const SLA_MS_ACC = 4 * 60 * 60 * 1000;
 
     if (isAdmin) {
@@ -6958,3 +6988,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
+ 
