@@ -3469,6 +3469,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         if (error) throw error;
       }
       await loadRapports();
+      try { localStorage.removeItem("dsi-rapport-brouillon"); } catch (e) {} // rapport en base : brouillon inutile
       setRapModal(null);
     } catch (e) {
       setRapErr("Erreur : " + (e.message || e));
@@ -6275,6 +6276,32 @@ const nav = isAdmin
       )) return;
       setRapModal(null);
     };
+
+    // ---- BROUILLON (sauvegarde locale sur ce poste, jamais en base) ----
+    const RAP_DRAFT_KEY = "dsi-rapport-brouillon";
+    const enregistrerBrouillon = () => {
+      try {
+        localStorage.setItem(RAP_DRAFT_KEY, JSON.stringify({ form: rapForm, lignes: rapLignes, srv: rapSrvLignes, savedAt: new Date().toISOString() }));
+        setRapNote("💾 Brouillon enregistré sur ce poste. Rouvrez « + Nouveau rapport » pour le reprendre.");
+      } catch (e) {
+        setRapNote("⚠️ Impossible d'enregistrer le brouillon sur ce navigateur.");
+      }
+    };
+    const brouillonExiste = () => { try { return !!localStorage.getItem(RAP_DRAFT_KEY); } catch (e) { return false; } };
+    const reprendreBrouillon = () => {
+      try {
+        const d = JSON.parse(localStorage.getItem(RAP_DRAFT_KEY) || "null");
+        if (!d || !d.form) { setRapNote("Aucun brouillon trouvé."); return; }
+        setRapForm(d.form);
+        setRapLignes(Array.isArray(d.lignes) && d.lignes.length ? d.lignes : [emptyLigne()]);
+        setRapSrvLignes(Array.isArray(d.srv) && d.srv.length ? d.srv : [emptySrv()]);
+        const quand = d.savedAt ? new Date(d.savedAt).toLocaleString("fr-FR") : "";
+        setRapNote("Brouillon repris" + (quand ? " (du " + quand + ")" : "") + ". Cliquez sur « Créer le rapport » pour l'enregistrer.");
+      } catch (e) { setRapNote("⚠️ Brouillon illisible."); }
+    };
+    const effacerBrouillon = () => {
+      try { localStorage.removeItem(RAP_DRAFT_KEY); setRapNote("Brouillon supprimé."); } catch (e) {}
+    };
     const visibles = rapports.filter(r => rapFilterHotel === "all" || r.hotel_id === rapFilterHotel);
     // Regroupement par mois (le plus récent en premier), et à l'intérieur de
     // chaque mois tri par nom d'hôtel (A→Z). Le regroupement est purement
@@ -6485,6 +6512,12 @@ const nav = isAdmin
               "ne cliquez pas en dehors de cette fenêtre avant d'avoir cliqué sur « Créer le rapport ». Toute saisie non enregistrée serait perdue."
             )
           ),
+          brouillonExiste() && React.createElement('div', { style: { display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap", background: "#F7F5EE", border: "1px solid #E6DFC8", borderRadius: 8, padding: "9px 12px", marginBottom: 18 } },
+            React.createElement('span', { style: { fontSize: 15, flexShrink: 0 } }, "💾"),
+            React.createElement('span', { style: { fontSize: 12, color: "#6B5A1E", flex: 1, minWidth: 140 } }, "Un brouillon est enregistré sur ce poste."),
+            React.createElement('button', { onClick: reprendreBrouillon, style: { padding: "6px 12px", background: G, border: "none", color: "#111", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Reprendre"),
+            React.createElement('button', { onClick: effacerBrouillon, style: { padding: "6px 12px", background: "none", border: "1px solid #DDD", color: "#777", borderRadius: 6, fontSize: 12, cursor: "pointer" } }, "Supprimer")
+          ),
 
           React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 } },
             React.createElement('div', null,
@@ -6601,6 +6634,7 @@ const nav = isAdmin
 
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
             rapModal !== "new" && React.createElement('button', { onClick: () => deleteRapport(rapModal), style: { marginRight: "auto", padding: "8px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🗑 Supprimer"),
+            React.createElement('button', { onClick: enregistrerBrouillon, title: "Sauvegarder la saisie sur ce poste pour la reprendre plus tard", style: { padding: "8px 14px", background: "none", border: "1px solid #C9A84C", color: G2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "💾 Enregistrer le brouillon"),
             React.createElement('button', { onClick: fermerRapModal, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
             React.createElement('button', { onClick: submitRapForm, disabled: savingRap, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: savingRap ? "default" : "pointer", opacity: savingRap ? 0.6 : 1 } }, savingRap ? "Enregistrement…" : (rapModal === "new" ? "Créer le rapport" : "Enregistrer"))
           )
