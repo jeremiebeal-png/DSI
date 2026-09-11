@@ -593,6 +593,8 @@ function App() {
   const [addAccountErr, setAddAccountErr] = useState("");
   const [savingAccount, setSavingAccount] = useState(false);
   const [clientLogoFile, setClientLogoFile] = useState(null);
+  const [clientNewFiles, setClientNewFiles] = useState([]);       // pièces jointes à uploader
+  const [clientExistingFiles, setClientExistingFiles] = useState([]); // pièces jointes déjà enregistrées
   const [clientErr, setClientErr] = useState("");
   const [savingClient, setSavingClient] = useState(false);
 
@@ -1221,16 +1223,29 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // ---------- HOTEL (CLIENT) CRUD ----------
   const openNewClientForm = () => {
     setEditingClientId(null);
-    setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "" });
+    setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "",
+      groupe: "", gmNom: "", gmPrenom: "", gmEmail: "", rhNom: "", rhPrenom: "", rhEmail: "", techNom: "", techPrenom: "", techEmail: "",
+      adrRue: "", adrCp: "", adrVille: "", adrPays: "" });
     setClientLogoFile(null);
+    setClientNewFiles([]);
+    setClientExistingFiles([]);
     setClientErr("");
     setClientStats(null); // pas de récap pour un nouveau client
     setShowClientForm(true);
   };
   const openEditClientForm = (h) => {
     setEditingClientId(h.id);
-    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: h.ninjaone_nom || "" });
+    setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: h.ninjaone_nom || "",
+      groupe: h.groupe_hotelier || "", gmNom: h.gm_nom || "", gmPrenom: h.gm_prenom || "", gmEmail: h.gm_email || "",
+      rhNom: h.rh_nom || "", rhPrenom: h.rh_prenom || "", rhEmail: h.rh_email || "",
+      techNom: h.tech_nom || "", techPrenom: h.tech_prenom || "", techEmail: h.tech_email || "",
+      adrRue: h.adresse_rue || "", adrCp: h.adresse_cp || "", adrVille: h.adresse_ville || "", adrPays: h.adresse_pays || "" });
     setClientLogoFile(null);
+    setClientNewFiles([]);
+    setClientExistingFiles([]);
+    // Charge les pièces jointes existantes de l'hôtel
+    sb.from("hotel_fichiers").select("*").eq("hotel_id", h.id).order("created_at")
+      .then(({ data }) => setClientExistingFiles(data || [])).catch(() => {});
     setClientErr("");
     chargerClientStats(h.id); // récap tickets / procédures / fiches infra
     setShowClientForm(true);
@@ -1346,8 +1361,18 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (clientLogoFile) {
         logoUrl = await uploadToStorage(clientLogoFile, "logos");
       }
+      // Champs enrichis communs (groupe, contacts, adresse)
+      const champsEnrichis = {
+        groupe_hotelier: (clientForm.groupe || "").trim() || null,
+        gm_nom: (clientForm.gmNom || "").trim() || null, gm_prenom: (clientForm.gmPrenom || "").trim() || null, gm_email: (clientForm.gmEmail || "").trim() || null,
+        rh_nom: (clientForm.rhNom || "").trim() || null, rh_prenom: (clientForm.rhPrenom || "").trim() || null, rh_email: (clientForm.rhEmail || "").trim() || null,
+        tech_nom: (clientForm.techNom || "").trim() || null, tech_prenom: (clientForm.techPrenom || "").trim() || null, tech_email: (clientForm.techEmail || "").trim() || null,
+        adresse_rue: (clientForm.adrRue || "").trim() || null, adresse_cp: (clientForm.adrCp || "").trim() || null,
+        adresse_ville: (clientForm.adrVille || "").trim() || null, adresse_pays: (clientForm.adrPays || "").trim() || null,
+      };
+      let hotelId = editingClientId;
       if (editingClientId) {
-        const update = { name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, ninjaone_nom: (clientForm.ninjaoneNom || "").trim() || null };
+        const update = { name: clientForm.name, city: clientForm.city, stars: clientForm.stars, phone: clientForm.phone, ninjaone_nom: (clientForm.ninjaoneNom || "").trim() || null, ...champsEnrichis };
         if (logoUrl) update.logo_url = logoUrl;
         const { error } = await sb.from("hotels").update(update).eq("id", editingClientId);
         if (error) throw error;
@@ -1361,8 +1386,22 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           standardEmail: (clientForm.stdEmail || "").trim() || null,
           standardPassword: (clientForm.stdPw || "").trim() || null
         });
-        setHotels(prev => [...prev, result.hotel]);
-        setEditCid(result.hotel.id);
+        hotelId = result.hotel.id;
+        // Les champs enrichis ne sont pas gérés par le worker : on les écrit ensuite.
+        try {
+          await sb.from("hotels").update(champsEnrichis).eq("id", hotelId);
+        } catch (e) { /* non bloquant */ }
+        setHotels(prev => [...prev, { ...result.hotel, ...champsEnrichis }]);
+        setEditCid(hotelId);
+      }
+      // Upload des nouvelles pièces jointes de l'hôtel
+      if (hotelId && clientNewFiles.length > 0) {
+        for (const file of clientNewFiles) {
+          try {
+            const url = await uploadToStorage(file, "hotels");
+            await sb.from("hotel_fichiers").insert({ hotel_id: hotelId, file_name: file.name, file_url: url });
+          } catch (e) { /* un fichier en échec ne bloque pas les autres */ }
+        }
       }
       setShowClientForm(false);
     } catch (e) {
@@ -1370,6 +1409,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } finally {
       setSavingClient(false);
     }
+  };
+
+  // Supprimer une pièce jointe déjà enregistrée d'un hôtel
+  const removeExistingClientFile = async (fileId) => {
+    await sb.from("hotel_fichiers").delete().eq("id", fileId);
+    setClientExistingFiles(prev => prev.filter(f => f.id !== fileId));
   };
 
   const deleteClient = async (h) => {
@@ -4648,6 +4693,56 @@ const nav = isAdmin
           React.createElement('input', { value: clientForm.ninjaoneNom, onChange: e => setClientForm({ ...clientForm, ninjaoneNom: e.target.value }), placeholder: "Nom exact de l\u0027organisation dans NinjaOne", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
           React.createElement('div', { style: { fontSize: 10.5, color: "#999", marginTop: 3 } }, "Laissez vide pour utiliser le rapprochement automatique par nom d\u0027hôtel.")
         ),
+        // ---- Groupe hôtelier ----
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Groupe hôtelier"),
+          React.createElement('input', { value: clientForm.groupe, onChange: e => setClientForm({ ...clientForm, groupe: e.target.value }), placeholder: "ex : Marriott, Accor, IHG…", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+        ),
+        // ---- Contacts clés (GM / RH / Technique) ----
+        React.createElement('div', { style: { marginBottom: 10, background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 8, padding: 12 } },
+          React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 8 } }, "👤 Contacts clés"),
+          [
+            { role: "GM (Directeur général)", nom: "gmNom", prenom: "gmPrenom", email: "gmEmail" },
+            { role: "RH", nom: "rhNom", prenom: "rhPrenom", email: "rhEmail" },
+            { role: "Technique", nom: "techNom", prenom: "techPrenom", email: "techEmail" },
+          ].map((c, i) => React.createElement('div', { key: i, style: { marginBottom: i < 2 ? 10 : 0 } },
+            React.createElement('div', { style: { fontSize: 10.5, fontWeight: 600, color: "#888", marginBottom: 4 } }, c.role),
+            React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1.4fr", gap: 8 } },
+              React.createElement('input', { value: clientForm[c.prenom], onChange: e => setClientForm({ ...clientForm, [c.prenom]: e.target.value }), placeholder: "Prénom", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+              React.createElement('input', { value: clientForm[c.nom], onChange: e => setClientForm({ ...clientForm, [c.nom]: e.target.value }), placeholder: "Nom", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+              React.createElement('input', { value: clientForm[c.email], onChange: e => setClientForm({ ...clientForm, [c.email]: e.target.value }), placeholder: "Email", type: "email", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+            )
+          ))
+        ),
+        // ---- Adresse détaillée ----
+        React.createElement('div', { style: { marginBottom: 10, background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 8, padding: 12 } },
+          React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 8 } }, "📍 Adresse"),
+          React.createElement('input', { value: clientForm.adrRue, onChange: e => setClientForm({ ...clientForm, adrRue: e.target.value }), placeholder: "Rue et numéro", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box", marginBottom: 8 } }),
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "0.8fr 1.4fr 1fr", gap: 8 } },
+            React.createElement('input', { value: clientForm.adrCp, onChange: e => setClientForm({ ...clientForm, adrCp: e.target.value }), placeholder: "Code postal", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+            React.createElement('input', { value: clientForm.adrVille, onChange: e => setClientForm({ ...clientForm, adrVille: e.target.value }), placeholder: "Ville", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+            React.createElement('input', { value: clientForm.adrPays, onChange: e => setClientForm({ ...clientForm, adrPays: e.target.value }), placeholder: "Pays", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+          )
+        ),
+        // ---- Pièces jointes ----
+        React.createElement('div', { style: { marginBottom: 10 } },
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Pièces jointes (PDF, Word, Excel, images)"),
+          clientExistingFiles.length > 0 && React.createElement('div', { style: { marginBottom: 6, display: "flex", flexDirection: "column", gap: 5 } },
+            clientExistingFiles.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              isImageFile(f.file_name) ? React.createElement('img', { src: f.file_url, style: { width: 24, height: 24, objectFit: "cover", borderRadius: 4 } }) : React.createElement('span', null, FILE_ICONS[fileExt(f.file_name)] || "📄"),
+              React.createElement('a', { href: f.file_url, target: "_blank", rel: "noreferrer", style: { flex: 1, color: "#333", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
+              React.createElement('button', { onClick: () => removeExistingClientFile(f.id), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+            ))
+          ),
+          React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => setClientNewFiles(prev => [...prev, ...Array.from(e.target.files)]), style: { fontSize: 12 } }),
+          clientNewFiles.length > 0 && React.createElement('div', { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
+            clientNewFiles.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F8F8FC", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
+              React.createElement('span', null, "🆕"),
+              React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
+              React.createElement('button', { onClick: () => setClientNewFiles(prev => prev.filter((_, idx) => idx !== i)), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
+            ))
+          )
+        ),
         !editingClientId && React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Email compte administrateur *"),
@@ -7400,3 +7495,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
+ 
