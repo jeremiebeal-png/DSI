@@ -164,6 +164,11 @@ const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
 // on ne garde que des balises sûres (mise en forme + images + liens).
 function sanitizeRichHtml(html) {
   if (!html) return "";
+  // Les images d'email intégrées en "cid:" (Content-ID) ne sont pas affichables
+  // dans un navigateur (elles n'existent que dans le mail). On retire ces <img>
+  // pour éviter des images cassées dans le portail. Les vraies images (URLs http)
+  // sont conservées.
+  html = String(html).replace(/<img[^>]*\ssrc=["']cid:[^"']*["'][^>]*>/gi, "");
   // Assainissement par DOMPurify (bibliothèque éprouvée). On autorise le HTML
   // d'email courant, sans scripts, iframes ni gestionnaires d'événements.
   if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
@@ -2965,14 +2970,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const historyForEmail = buildHistory([...initialMsg, ...priorMsgs]);
 
     // 1) Enregistrer le message dans le fil (toujours).
-    //    - Si une réponse type riche NON modifiée a été insérée, on garde son HTML complet.
-    //    - Sinon, si des images de réponse type sont présentes (texte retouché ou non),
-    //      on reconstruit un HTML : le texte tapé + les images intégrées en dessous.
-    //    Objectif : dans le fil du portail, le message s'affiche AVEC les images
-    //    intégrées, exactement comme le client les reçoit.
-    let msgHtml = replyHtmlOverride ? replyHtmlOverride.html : null;
-    if (!msgHtml && (replyImageUrls || []).length > 0) {
-      const imgsHtml = replyImageUrls
+    //    Le HTML affiché dans le fil est reconstruit à partir du texte tapé + des
+    //    VRAIES images (URLs Supabase dans replyImageUrls). On n'utilise jamais tel
+    //    quel un HTML de réponse type qui contiendrait des références "cid:" (images
+    //    d'email non affichables par un navigateur) : on les remplace par les URLs
+    //    réelles, sinon on les retire. Résultat : le fil montre les mêmes images que
+    //    le client, sans image cassée.
+    let msgHtml = null;
+    const imgsReponse = (replyImageUrls || []).filter(u => typeof u === "string" && /^https?:\/\//.test(u));
+    if (replyHtmlOverride && replyHtmlOverride.html) {
+      let h = replyHtmlOverride.html;
+      // Remplace chaque <img src="cid:..."> par la vraie image Supabase (dans l'ordre)
+      let i = 0;
+      h = h.replace(/<img[^>]*\ssrc=["']cid:[^"']*["'][^>]*>/gi, () => {
+        const u = imgsReponse[i++];
+        return u ? '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:4px;margin:6px 0;display:block;" />' : "";
+      });
+      // Filet de sécurité : supprime tout <img cid:...> résiduel non apparié
+      h = h.replace(/<img[^>]*\ssrc=["']cid:[^"']*["'][^>]*>/gi, "");
+      msgHtml = h;
+    } else if (imgsReponse.length > 0) {
+      const imgsHtml = imgsReponse
         .map(u => '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:4px;margin:6px 0;display:block;" />')
         .join("");
       msgHtml = '<div style="font-size:13px;color:#333;line-height:1.6;">' + textToHtml(body) + '<div style="margin-top:8px;">' + imgsHtml + '</div></div>';
