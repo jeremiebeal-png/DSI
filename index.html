@@ -5712,6 +5712,17 @@ const nav = isAdmin
               ),
               React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
+                (() => {
+                  // Le "À :" / "Cc :" de la demande initiale vient du 1er message du fil
+                  // (retiré de l'affichage du fil pour éviter le doublon, mais il porte
+                  // les destinataires stockés par le worker email).
+                  const prem = (ticketMsgs[t.id] || [])[0];
+                  if (!prem) return null;
+                  return React.createElement(React.Fragment, null,
+                    prem.destinataires && React.createElement('div', { style: { fontSize: 10, color: "#5A7DA0", marginBottom: 2, whiteSpace: "normal" } }, "À : " + prem.destinataires),
+                    prem.cc && React.createElement('div', { style: { fontSize: 10, color: "#5A7DA0", marginBottom: 5, whiteSpace: "normal" } }, "Cc : " + prem.cc)
+                  );
+                })(),
                 nettoyerSignature(t.message)
               ),
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
@@ -5788,6 +5799,14 @@ const nav = isAdmin
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
               React.createElement('div', { style: { background: "white", border: "1px solid #EEE", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
                 React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#999", marginBottom: 5 } }, "VOTRE DEMANDE"),
+                (() => {
+                  const prem = (ticketMsgs[t.id] || [])[0];
+                  if (!prem) return null;
+                  return React.createElement(React.Fragment, null,
+                    prem.destinataires && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 2, whiteSpace: "normal" } }, "À : " + prem.destinataires),
+                    prem.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 5, whiteSpace: "normal" } }, "Cc : " + prem.cc)
+                  );
+                })(),
                 nettoyerSignature(t.message)
               ),
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 VOS PIÈCES JOINTES", onOpenImage: openViewer }),
