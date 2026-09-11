@@ -257,6 +257,14 @@ function RichHtml(props) {
 function RichEditor(props) {
   const ref = useRef(null);
   const lastValue = useRef("");
+  // Au montage : injecte le contenu initial (nécessaire pour afficher les images
+  // d'une réponse type qu'on ouvre en modification).
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.innerHTML = props.value || "";
+      lastValue.current = props.value || "";
+    }
+  }, []);
   useEffect(() => {
     // Ne réécrit le contenu que si la valeur externe diffère vraiment
     if (ref.current && props.value !== lastValue.current && props.value !== ref.current.innerHTML) {
@@ -6950,6 +6958,7 @@ const nav = isAdmin
           React.createElement('div', { style: { marginBottom: 16 } },
             React.createElement('label', { style: lbl }, "Contenu de la réponse (texte et images)"),
             React.createElement(RichEditor, {
+              key: (rtModal && rtModal !== "new" && rtModal.id) ? rtModal.id : "new",
               value: rtForm.contenu_html,
               onChange: html => setRtForm(prev => ({ ...prev, contenu_html: html })),
               onInsertImage: triggerRtEditorImage,
