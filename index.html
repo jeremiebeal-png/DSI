@@ -5604,6 +5604,14 @@ const nav = isAdmin
                 React.createElement('div', null, "📧 " + (t.contact_email ? nettoyerEmail(t.contact_email) : "-") + "   📞 " + (t.contact_phone || "-")),
                 React.createElement('div', null, "Fonction : " + (t.contact_role || "-")),
                 (() => {
+                  // Destinataires (To) détectés dans les messages du fil
+                  const ms = ticketMsgs[t.id] || [];
+                  const set = new Set();
+                  ms.forEach(mm => { if (mm.destinataires) String(mm.destinataires).split(/[,;]/).forEach(a => { const adr = a.trim(); if (adr) set.add(adr); }); });
+                  const liste = Array.from(set);
+                  return liste.length > 0 ? React.createElement('div', { style: { marginTop: 2, color: "#5A7DA0" } }, "📩 À : " + liste.join(", ")) : null;
+                })(),
+                (() => {
                   // Personnes en copie détectées dans le fil du ticket
                   const ms = ticketMsgs[t.id] || [];
                   const set = new Set();
