@@ -548,6 +548,7 @@ function App() {
   const [savingProc, setSavingProc] = useState(false);
 
   const [showClientForm, setShowClientForm] = useState(false);
+  const [clientSearch, setClientSearch] = useState(""); // recherche dans la page Gérer les clients
   const [clientStats, setClientStats] = useState(null); // { tickets, procedures, docs } | "loading" | null
 
   // Compteurs récap d'un hôtel (tickets, procédures liées, fiches infrastructure).
@@ -4579,8 +4580,17 @@ const nav = isAdmin
   // ---------- ADMIN : GESTION CLIENTS ----------
   if (page === "client-admin" && isAdmin) {
     content = React.createElement('div', null,
-      React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", marginBottom: 14 } },
-        React.createElement('button', { onClick: openNewClientForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Ajouter un client")
+      React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
+        React.createElement('div', { style: { flex: "1 1 260px", position: "relative", minWidth: 180 } },
+          React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
+          React.createElement('input', {
+            type: "text", value: clientSearch, onChange: e => setClientSearch(e.target.value),
+            placeholder: "Rechercher un client (nom, ville, email…)",
+            style: { width: "100%", padding: "9px 32px 9px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }
+          }),
+          clientSearch && React.createElement('button', { onClick: () => setClientSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
+        ),
+        React.createElement('button', { onClick: openNewClientForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "9px 14px", whiteSpace: "nowrap" } }, "+ Ajouter un client")
       ),
       showClientForm && React.createElement('div', { onClick: (e) => { if (e.target === e.currentTarget) setShowClientForm(false); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 80, overflowY: "auto" } },
         React.createElement('div', { onClick: (e) => e.stopPropagation(), style: { background: "white", borderRadius: 12, border: `1px solid ${G}35`, padding: isMobile ? 18 : 24, width: 640, maxWidth: "100%", boxShadow: "0 12px 44px rgba(0,0,0,.3)", marginBottom: 30 } },
@@ -4725,7 +4735,12 @@ const nav = isAdmin
       ),
       hotelsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des clients..."),
       React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(260px,1fr))", gap: 14 } },
-        hotels.map(h => React.createElement('div', { key: h.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
+        hotels.filter(h => {
+          const q = clientSearch.trim().toLowerCase();
+          if (!q) return true;
+          const champs = [h.name, h.city, h.account_email, h.standard_email, h.phone, h.ninjaone_nom].filter(Boolean).join(" ").toLowerCase();
+          return q.split(/\s+/).every(mot => champs.includes(mot));
+        }).map(h => React.createElement('div', { key: h.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 16 } },
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 11, marginBottom: 12 } },
             h.logo_url
               ? React.createElement('img', { src: h.logo_url, alt: h.name, style: { width: 38, height: 38, objectFit: "contain", borderRadius: 9, border: "1px solid #E8E8F0", background: "#FAFAFA" } })
@@ -4754,7 +4769,8 @@ const nav = isAdmin
           h.account_email && React.createElement('button', { onClick: () => { setResetPwTarget(h); setResetPwValue(""); }, style: { width: "100%", padding: 6, background: "none", border: "1px solid #E8E8F0", color: "#888", borderRadius: 7, fontSize: 11, cursor: "pointer" } }, "🔑 Réinitialiser le mot de passe"),
           (!h.account_email || !h.standard_email) && React.createElement('button', { onClick: () => { setAddAccountHotel(h); setAddAccountForm({ email: "", pw: "", level: !h.account_email ? "supervisor" : "client" }); setAddAccountErr(""); }, style: { width: "100%", padding: 6, marginTop: 6, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 500 } }, "+ Ajouter un compte")
         )),
-        hotels.length === 0 && !hotelsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !")
+        hotels.length === 0 && !hotelsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !"),
+        hotels.length > 0 && clientSearch.trim() && hotels.filter(h => { const q = clientSearch.trim().toLowerCase(); const champs = [h.name, h.city, h.account_email, h.standard_email, h.phone, h.ninjaone_nom].filter(Boolean).join(" ").toLowerCase(); return q.split(/\s+/).every(mot => champs.includes(mot)); }).length === 0 && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client ne correspond à « " + clientSearch.trim() + " ».")
       )
     );
   }
