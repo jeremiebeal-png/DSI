@@ -2963,9 +2963,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       : [];
     const historyForEmail = buildHistory([...initialMsg, ...priorMsgs]);
 
-    // 1) Enregistrer le message dans le fil (toujours). Si la réponse vient d'une
-    //    réponse type riche non modifiée, on stocke aussi sa version HTML (images).
-    const msgHtml = replyHtmlOverride ? replyHtmlOverride.html : null;
+    // 1) Enregistrer le message dans le fil (toujours).
+    //    - Si une réponse type riche NON modifiée a été insérée, on garde son HTML complet.
+    //    - Sinon, si des images de réponse type sont présentes (texte retouché ou non),
+    //      on reconstruit un HTML : le texte tapé + les images intégrées en dessous.
+    //    Objectif : dans le fil du portail, le message s'affiche AVEC les images
+    //    intégrées, exactement comme le client les reçoit.
+    let msgHtml = replyHtmlOverride ? replyHtmlOverride.html : null;
+    if (!msgHtml && (replyImageUrls || []).length > 0) {
+      const imgsHtml = replyImageUrls
+        .map(u => '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:4px;margin:6px 0;display:block;" />')
+        .join("");
+      msgHtml = '<div style="font-size:13px;color:#333;line-height:1.6;">' + textToHtml(body) + '<div style="margin-top:8px;">' + imgsHtml + '</div></div>';
+    }
     const { data: inserted, error: insErr } = await sb.from("ticket_messages")
       .insert({ ticket_id: ticket.id, sender_role: senderRole, sender_name: senderName, body, body_html: msgHtml })
       .select().single();
@@ -5660,7 +5670,7 @@ const nav = isAdmin
                   React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_name || (m.sender_role === "admin" ? "Support" : "Client")) + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
-                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
+                  React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
@@ -5734,7 +5744,7 @@ const nav = isAdmin
                       React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: m.sender_role === "admin" ? G2 : "#666", marginBottom: 3 } }, (m.sender_role === "admin" ? "Support DSI Hotel" : "Vous") + " · " + new Date(m.created_at).toLocaleString("fr-FR")),
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                       m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
-                      React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id), onOpenImage: openViewer }),
+                      React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
                       m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                     ))
                   )
