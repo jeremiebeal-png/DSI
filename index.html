@@ -232,10 +232,11 @@ function RichHtml(props) {
     if (!ref.current) return;
     const imgs = ref.current.querySelectorAll('img');
     imgs.forEach((img) => {
-      const hide = () => { img.style.display = 'none'; };
-      // Si déjà chargée en erreur au moment du montage
-      if (img.complete && img.naturalWidth === 0) { hide(); return; }
-      img.addEventListener('error', hide, { once: true });
+      // On ne masque une image QUE si son chargement échoue réellement (événement
+      // error). On ne masque plus au montage sur la seule base de naturalWidth===0,
+      // car une image encore en cours de chargement passait à tort pour cassée
+      // (cas des captures Supabase dans les réponses types).
+      img.addEventListener('error', () => { img.style.display = 'none'; }, { once: true });
     });
   }, [props.html]);
   return React.createElement('div', {
