@@ -2732,6 +2732,25 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return Array.from(ccSet);
   };
 
+  // Toutes les adresses connues (pour l'autocomplétion du champ Cc) :
+  //  - les emails de contact de tous les tickets en mémoire,
+  //  - toutes les adresses déjà mises en copie dans les messages chargés.
+  // Nos adresses internes sont exclues. Résultat trié, dédupliqué.
+  const adressesConnues = () => {
+    const set = new Set();
+    const ajoute = (raw) => {
+      if (!raw) return;
+      String(raw).split(/[,;]/).forEach(a => {
+        const adr = a.trim().replace(/^.*<|>.*$/g, "").toLowerCase();
+        if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adr)) set.add(adr);
+      });
+    };
+    (tickets || []).forEach(t => ajoute(t.contact_email));
+    Object.values(ticketMsgs || {}).forEach(msgs => (msgs || []).forEach(m => ajoute(m.cc)));
+    ["support@dsihotel.com", "team@dsihotel.fr", SUPPORT_EMAIL].forEach(a => set.delete(String(a).toLowerCase()));
+    return Array.from(set).sort();
+  };
+
   const toggleTicket = (id) => {
     if (openTicketId === id) { setOpenTicketId(null); return; }
     setOpenTicketId(id);
@@ -5573,7 +5592,10 @@ const nav = isAdmin
                     ),
                     toutes.length === 0 && React.createElement('div', { style: { fontSize: 11, color: "#999", margin: "5px 0 8px" } }, "Aucune adresse en copie détectée. Vous pouvez en ajouter une ci-dessous."),
                     React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                      React.createElement('input', { value: replyCcManual, onChange: e => setReplyCcManual(e.target.value), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouterManuel(); } }, placeholder: "Ajouter une adresse en copie…", type: "email", style: { flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+                      React.createElement('input', { value: replyCcManual, onChange: e => setReplyCcManual(e.target.value), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouterManuel(); } }, placeholder: "Ajouter une adresse en copie…", type: "email", list: "dsi-cc-suggestions", autoComplete: "off", style: { flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+                      React.createElement('datalist', { id: "dsi-cc-suggestions" },
+                        adressesConnues().map(a => React.createElement('option', { key: a, value: a }))
+                      ),
                       React.createElement('button', { type: "button", onClick: ajouterManuel, style: { padding: "6px 12px", background: SB, border: "none", color: G, borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" } }, "+ Ajouter")
                     )
                   );
