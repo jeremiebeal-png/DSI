@@ -3986,6 +3986,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!r) return;
     const plain = r.contenu || "";
     const html = (r.contenu_html && r.contenu_html.trim()) ? sanitizeRichHtml(r.contenu_html) : null;
+    // Images de la réponse type : on les mémorise pour qu'elles soient jointes à
+    // l'email (et rattachées au ticket), même si le texte est ensuite retouché
+    // — dans ce cas l'override HTML saute, mais les images restent en pièces jointes.
+    const imgs = Array.isArray(r.images) ? r.images.filter(u => typeof u === "string" && /^https?:\/\//.test(u)) : [];
+    if (imgs.length) setReplyImageUrls(prev => Array.from(new Set([...(prev || []), ...imgs])));
     setReplyText(prev => {
       const p = (prev || "").trim();
       const nouveau = p ? (p + "\n\n" + plain) : plain;
