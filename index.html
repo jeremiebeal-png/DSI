@@ -611,7 +611,9 @@ function App() {
         { k: "nom", label: "Nom et prénom du collaborateur", req: true },
         { k: "poste", label: "Poste / service", req: true },
         { k: "dateArrivee", label: "Date d'arrivée", type: "date", req: true },
-        { k: "acces", label: "Accès souhaités (PMS, messagerie, dossiers partagés…)", type: "textarea", req: true },
+        { k: "services", label: "Accès souhaités (PMS, messagerie, dossiers partagés…)", type: "checkboxes", options: ["FO", "F&B", "Direction", "Technique", "Finance", "Achat", "Sales", "Revenu", "Marketing", "HK"], req: true },
+        { k: "creerMail", label: "Créer une adresse mail", type: "checkbox" },
+        { k: "mailACreer", label: "Adresse mail à créer", showIf: "creerMail", req: true },
         { k: "materiel", label: "Matériel à prévoir (PC, téléphone…)", type: "textarea" },
       ],
     },
@@ -683,12 +685,17 @@ function App() {
       y += 4;
       doc.setDrawColor(226, 226, 232); doc.line(mL, y, 194, y); y += 8;
       doc.setFontSize(11); doc.setTextColor(30, 30, 30);
-      tpl.champs.forEach((ch) => {
-        const val = (values[ch.k] || "—");
+      const fmt = (ch) => {
+        const v = values[ch.k];
+        if (ch.type === "checkboxes") return (Array.isArray(v) && v.length) ? v.join(", ") : "—";
+        if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
+        return (v === undefined || v === null || String(v).trim() === "") ? "—" : String(v);
+      };
+      tpl.champs.filter(ch => !ch.showIf || values[ch.showIf] === true).forEach((ch) => {
         doc.setTextColor(26, 26, 62); doc.setFont(undefined, "bold");
         doc.text(ch.label + " :", mL, y); y += 6;
         doc.setTextColor(40, 40, 40); doc.setFont(undefined, "normal");
-        const lignes = doc.splitTextToSize(String(val), 174);
+        const lignes = doc.splitTextToSize(fmt(ch), 174);
         lignes.forEach(l => { doc.text(l, mL, y); y += 6; if (y > 275) { doc.addPage(); y = 20; } });
         y += 2;
       });
@@ -702,11 +709,21 @@ function App() {
   const soumettreTemplate = async () => {
     if (!tplActif) return;
     setTplError(""); setTplOk("");
+    // Formatage lisible d'une valeur (texte, liste de cases, ou oui/non).
+    const formatVal = (ch) => {
+      const v = tplValues[ch.k];
+      if (ch.type === "checkboxes") return (Array.isArray(v) && v.length) ? v.join(", ") : "-";
+      if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
+      return (v === undefined || v === null || String(v).trim() === "") ? "-" : String(v);
+    };
+    // Champs réellement visibles (on ignore ceux masqués par showIf).
+    const champsVisibles = tplActif.champs.filter(ch => !ch.showIf || tplValues[ch.showIf] === true);
     // Validation des champs requis
-    for (const ch of tplActif.champs) {
-      if (ch.req && !String(tplValues[ch.k] || "").trim()) {
-        setTplError("Merci de renseigner : " + ch.label); return;
-      }
+    for (const ch of champsVisibles) {
+      if (!ch.req) continue;
+      const v = tplValues[ch.k];
+      const vide = ch.type === "checkboxes" ? !(Array.isArray(v) && v.length) : !String(v || "").trim();
+      if (vide) { setTplError("Merci de renseigner : " + ch.label); return; }
     }
     const emailClean = nettoyerEmail(tplDemandeur.email || "").trim();
     if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
@@ -715,7 +732,7 @@ function App() {
     setTplSending(true);
     try {
       // Corps du message reprenant tous les champs
-      const lignes = tplActif.champs.map(ch => `${ch.label} : ${tplValues[ch.k] || "-"}`).join("\n");
+      const lignes = champsVisibles.map(ch => `${ch.label} : ${formatVal(ch)}`).join("\n");
       const message = `[DEMANDE INTERNE] ${tplActif.titre}\n\n${lignes}`;
       const subject = `[${tplActif.prio}] ${client ? client.name : ""} — ${tplActif.titre}`;
 
@@ -5520,17 +5537,40 @@ const nav = isAdmin
             )
           ),
 
-          tplActif.champs.map(ch => React.createElement('div', { key: ch.k, style: { marginBottom: 14 } },
-            React.createElement('label', { style: labelStyle }, ch.label + (ch.req ? " *" : "")),
-            ch.type === "textarea"
-              ? React.createElement('textarea', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), rows: 3, style: { ...inputStyle, resize: "vertical" } })
-              : ch.type === "select"
-              ? React.createElement('select', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle },
-                  React.createElement('option', { value: "" }, "— Choisir —"),
-                  (ch.options || []).map(opt => React.createElement('option', { key: opt, value: opt }, opt))
+          tplActif.champs.filter(ch => !ch.showIf || tplValues[ch.showIf] === true).map(ch =>
+            ch.type === "checkbox"
+            ? React.createElement('div', { key: ch.k, style: { marginBottom: 14 } },
+                React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#333", cursor: "pointer" } },
+                  React.createElement('input', { type: "checkbox", checked: tplValues[ch.k] === true, onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.checked }) }),
+                  React.createElement('span', null, ch.label)
                 )
-              : React.createElement('input', { type: ch.type || "text", value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle })
-          )),
+              )
+            : React.createElement('div', { key: ch.k, style: { marginBottom: 14 } },
+              React.createElement('label', { style: labelStyle }, ch.label + (ch.req ? " *" : "")),
+              ch.type === "textarea"
+                ? React.createElement('textarea', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), rows: 3, style: { ...inputStyle, resize: "vertical" } })
+              : ch.type === "select"
+                ? React.createElement('select', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle },
+                    React.createElement('option', { value: "" }, "— Choisir —"),
+                    (ch.options || []).map(opt => React.createElement('option', { key: opt, value: opt }, opt))
+                  )
+              : ch.type === "checkboxes"
+                ? React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 8, marginTop: 4 } },
+                    (ch.options || []).map(opt => {
+                      const arr = Array.isArray(tplValues[ch.k]) ? tplValues[ch.k] : [];
+                      const coche = arr.includes(opt);
+                      return React.createElement('label', { key: opt, style: { display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#333", background: "#FAFAFC", border: "1px solid #E8E8F0", borderRadius: 7, padding: "7px 10px", cursor: "pointer" } },
+                        React.createElement('input', { type: "checkbox", checked: coche, onChange: e => {
+                          const next = e.target.checked ? [...arr, opt] : arr.filter(x => x !== opt);
+                          setTplValues({ ...tplValues, [ch.k]: next });
+                        } }),
+                        React.createElement('span', null, opt)
+                      );
+                    })
+                  )
+                : React.createElement('input', { type: ch.type || "text", value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle })
+            )
+          ),
 
           tplError && React.createElement('div', { style: { fontSize: 12.5, color: "#C53030", background: "#FDECEC", border: "1px solid #F5B5B5", borderRadius: 7, padding: "9px 12px", marginBottom: 12 } }, tplError),
           tplOk && React.createElement('div', { style: { fontSize: 12.5, color: "#256029", background: "#EAF6EC", border: "1px solid #B5DBB9", borderRadius: 7, padding: "9px 12px", marginBottom: 12 } }, tplOk),
