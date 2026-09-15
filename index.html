@@ -873,6 +873,7 @@ function App() {
 
   // ---------- TICKETS ----------
   const [tickets, setTickets] = useState([]);
+  const [validations, setValidations] = useState({}); // { reference: {status, validated_at, validateur_email} }
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all
   const [openTicketId, setOpenTicketId] = useState(null);
@@ -1976,7 +1977,34 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         computeTicketStates(data);
       }
       setTicketsLoading(false);
+      loadValidations();
     })();
+  };
+
+  // Charge le statut des demandes de validation (via le Worker) et l'indexe par référence.
+  const loadValidations = async () => {
+    try {
+      const res = await fetch(ADMIN_API_URL + "/validations-hotel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isAdmin ? { all: true } : { hotelId: myHotelId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const map = {};
+      (data.validations || []).forEach(v => { if (v.reference) map[v.reference] = v; });
+      setValidations(map);
+    } catch (e) { /* silencieux : l'absence de statut ne bloque pas l'affichage */ }
+  };
+
+  // Renvoie un badge de statut de validation pour une référence de ticket, ou null.
+  const badgeValidation = (ref) => {
+    const v = ref && validations[ref];
+    if (!v) return null;
+    const valide = v.status === "validated";
+    return React.createElement('span', {
+      title: valide ? ("Validé par " + (v.validateur_email || "") + (v.validated_at ? " le " + new Date(v.validated_at).toLocaleString("fr-FR") : "")) : ("En attente de " + (v.validateur_email || "")),
+      style: { fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", color: valide ? "#256029" : "#8A6D1F", background: valide ? "#EAF6EC" : "#FFF8E6", border: "1px solid " + (valide ? "#B5DBB9" : "#E8C34A") }
+    }, valide ? "\u2705 Validé" : "\u23F3 À valider");
   };
 
   // ====== SUPPRESSION DÉFINITIVE D'UN TICKET (super-admin) ======
@@ -5995,7 +6023,10 @@ const nav = isAdmin
                       React.createElement('span', { style: { minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel)
                     ),
                     React.createElement('span', { style: { width: "15%", minWidth: 0, fontSize: 12.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.contact_name || "—"),
-                    React.createElement('span', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.subject || t.message || "(sans objet)"),
+                    React.createElement('span', { style: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 7, overflow: "hidden" } },
+                      React.createElement('span', { style: { minWidth: 0, fontSize: 12.5, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.subject || t.message || "(sans objet)"),
+                      badgeValidation(t.reference)
+                    ),
                     React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id], t.status)),
                     React.createElement('span', { style: { fontSize: 15, flexShrink: 0 }, title: t.source === "email" ? "Email" : "Formulaire" }, t.source === "email" ? "📧" : "📝"),
                     React.createElement('span', { style: { width: 70, textAlign: "center", fontSize: 10, fontWeight: 600, color: prioColor(t.priority), flexShrink: 0 } }, t.priority),
@@ -6260,7 +6291,8 @@ const nav = isAdmin
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" } },
                   React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
                   React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prioColor(t.priority), background: prioColor(t.priority) + "18", padding: "2px 8px", borderRadius: 20 } }, t.priority),
-                  React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status))
+                  React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status)),
+                  badgeValidation(t.reference)
                 ),
                 React.createElement('div', { style: { fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.message || ""),
                 React.createElement('div', { style: { fontSize: 10, color: "#AAA", marginTop: 3 } }, new Date(t.created_at).toLocaleString("fr-FR"))
