@@ -757,8 +757,9 @@ function App() {
       doc.setFontSize(8); doc.setTextColor(150, 150, 150);
       doc.text("Document confidentiel — DSI Hotel • www.dsihotel.com", mL, 288);
       const nomFichier = "Demande_" + tpl.key + "_" + (client ? client.name.replace(/[^a-zA-Z0-9]/g, "_") : "hotel") + ".pdf";
-      doc.save(nomFichier);
-    } catch (e) { /* le PDF est un bonus : ne bloque pas l'envoi du ticket */ }
+      const blob = doc.output("blob");
+      return { blob, nom: nomFichier };
+    } catch (e) { return null; /* le PDF est un bonus : ne bloque pas l'envoi du ticket */ }
   };
 
   const soumettreTemplate = async () => {
@@ -797,10 +798,8 @@ function App() {
       const message = `${enTete}\n${lignes}`;
       const subject = `${nomHotel} — ${tplActif.titre} [${tplActif.prio}]`;
 
-      // 0) Génère le PDF récapitulatif TOUT DE SUITE (avant les appels réseau) :
-      //    ça garantit que le téléchargement reste rattaché à l'action de l'utilisateur
-      //    et n'est pas bloqué par le navigateur.
-      await genererTemplatePdf(tplActif, tplValues, null);
+      // 0) Génère le PDF récapitulatif (en mémoire) pour le joindre au ticket.
+      const pdf = await genererTemplatePdf(tplActif, tplValues, null);
 
       // 1) Enregistre le ticket (trace / backup)
       let reference = null, ticketId = null;
@@ -818,6 +817,21 @@ function App() {
         }).select().single();
         if (data) { reference = data.reference || null; ticketId = data.id || null; }
       } catch (e) {}
+
+      // 1b) Joint le PDF récapitulatif au ticket (visible côté DSI et côté client).
+      if (pdf && pdf.blob && ticketId) {
+        try {
+          const pdfFile = new File([pdf.blob], pdf.nom, { type: "application/pdf" });
+          const urlPdf = await uploadToStorage(pdfFile, "tickets");
+          await sb.from("ticket_fichiers").insert({
+            ticket_id: ticketId,
+            message_id: null,
+            file_name: pdf.nom,
+            file_url: urlPdf,
+            uploaded_by: "client"
+          });
+        } catch (e) { /* si l'upload échoue, le ticket reste créé */ }
+      }
 
       // 2) Notifie l'équipe DSI par email
       const refPrefix = reference ? `[${reference}] ` : "";
@@ -878,7 +892,7 @@ function App() {
         } catch (e) {}
       }
 
-      setTplOk("\u2713 Demande envoyée au support" + (reference ? " (réf. " + reference + ")" : "") + ". Le PDF récapitulatif a été téléchargé." + (validationEnvoyee ? " Une demande de validation a été envoyée à " + validateur + "." : ""));
+      setTplOk("\u2713 Demande envoyée au support" + (reference ? " (réf. " + reference + ")" : "") + ". Le PDF récapitulatif est joint à la demande." + (validationEnvoyee ? " Une demande de validation a été envoyée à " + validateur + "." : ""));
       setTplValues({});
     } catch (e) {
       setTplError("Erreur lors de l'envoi : " + (e.message || e));
