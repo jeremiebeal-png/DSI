@@ -617,8 +617,7 @@ function App() {
         { k: "mailACreer", label: "Adresse mail à créer", showIf: "creerMail", req: true },
         { k: "creerVpn", label: "Créer un VPN", type: "checkbox" },
         { k: "materiel", label: "Matériel à prévoir (PC, téléphone…)", type: "textarea" },
-        { k: "demanderValidation", label: "Demander une validation par email", type: "checkbox" },
-        { k: "validateurEmail", label: "Email du validateur (responsable / direction)", showIf: "demanderValidation", req: true },
+        { k: "validateurEmail", label: "Email du validateur (RH / direction)", type: "validation", req: true },
       ],
     },
     {
@@ -796,7 +795,7 @@ function App() {
       // 3) Validation par email (optionnelle) : crée le lien à token et l'envoie au validateur.
       let validationEnvoyee = false;
       const validateur = nettoyerEmail(tplValues.validateurEmail || "").trim();
-      if (tplValues.demanderValidation === true && validateur) {
+      if (validateur) {
         try {
           const rv = await fetch(ADMIN_API_URL + "/creer-validation", {
             method: "POST",
@@ -5605,7 +5604,17 @@ const nav = isAdmin
           ),
 
           tplActif.champs.filter(ch => !ch.showIf || tplValues[ch.showIf] === true).map(ch =>
-            ch.type === "checkbox"
+            ch.type === "validation"
+            ? React.createElement('div', { key: ch.k, style: { marginBottom: 14, marginTop: 6, background: "#FFF8E6", border: "2px solid #E8C34A", borderRadius: 10, padding: "14px 16px" } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+                  React.createElement('span', { style: { fontSize: 18 } }, "\u2705"),
+                  React.createElement('span', { style: { fontSize: 14, fontWeight: 700, color: "#8A6D1F" } }, "Validation requise")
+                ),
+                React.createElement('div', { style: { fontSize: 12.5, color: "#6B5A1F", marginBottom: 10, lineHeight: 1.5 } }, "Cette demande doit être validée. Indiquez l'adresse email du validateur : il recevra un email avec un bouton pour valider en un clic."),
+                React.createElement('label', { style: { display: "block", fontSize: 12, fontWeight: 600, color: "#6B5A1F", marginBottom: 5 } }, ch.label + " *"),
+                React.createElement('input', { type: "email", value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), placeholder: "validateur@hotel.com", style: { ...inputStyle, border: "1px solid #E8C34A", background: "white" } })
+              )
+            : ch.type === "checkbox"
             ? React.createElement('div', { key: ch.k, style: { marginBottom: 14 } },
                 React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#333", cursor: "pointer" } },
                   React.createElement('input', { type: "checkbox", checked: tplValues[ch.k] === true, onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.checked }) }),
