@@ -872,8 +872,9 @@ function App() {
               (reference ? ` (référence <b>${reference}</b>)` : "") + ` et requiert votre validation.</p>` +
               `<pre style="background:#F7F7FB;border:1px solid #ECECF3;border-radius:8px;padding:12px;white-space:pre-wrap;font-family:inherit;font-size:13px">${message.replace(/</g, "&lt;")}</pre>` +
               `<p style="text-align:center;margin:24px 0">` +
-              `<a href="${rvData.lien}" style="display:inline-block;background:#A8872E;color:#fff;text-decoration:none;font-weight:600;padding:12px 26px;border-radius:8px">\u2705 Valider la demande</a></p>` +
-              `<p style="font-size:12px;color:#888">Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br>${rvData.lien}</p>` +
+              `<a href="${rvData.lien}" style="display:inline-block;background:#2E7D32;color:#fff;text-decoration:none;font-weight:600;padding:12px 26px;border-radius:8px;margin:0 6px">\u2705 Valider la demande</a>` +
+              `<a href="${(rvData.lien || "").replace("/valider", "/refuser")}" style="display:inline-block;background:#B03A2E;color:#fff;text-decoration:none;font-weight:600;padding:12px 26px;border-radius:8px;margin:0 6px">\u26D4 Refuser</a></p>` +
+              `<p style="font-size:12px;color:#888">Si les boutons ne fonctionnent pas, copiez ce lien pour valider :<br>${rvData.lien}<br>Ou pour refuser :<br>${(rvData.lien || "").replace("/valider", "/refuser")}</p>` +
               `</div></div>`;
             await fetch(EMAIL_API_URL, {
               method: "POST",
@@ -2056,6 +2057,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const badgeValidation = (ref) => {
     const v = ref && validations[ref];
     if (!v) return null;
+    if (v.status === "refused") {
+      return React.createElement('span', {
+        title: "Refusé par " + (v.validateur_email || "") + (v.validated_at ? " le " + new Date(v.validated_at).toLocaleString("fr-FR") : ""),
+        style: { fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap", color: "#B03A2E", background: "#FDECEC", border: "1px solid #F5B5B5" }
+      }, "\u26D4 Refusé");
+    }
     const valide = v.status === "validated";
     return React.createElement('span', {
       title: valide ? ("Validé par " + (v.validateur_email || "") + (v.validated_at ? " le " + new Date(v.validated_at).toLocaleString("fr-FR") : "")) : ("En attente de " + (v.validateur_email || "")),
