@@ -599,6 +599,168 @@ function App() {
   const [savingClient, setSavingClient] = useState(false);
 
   const [supportForm, setSupportForm] = useState({ name: "", role: "Front Office", contactEmail: "", phone: "", cat: CATS[0], prio: "Moyenne", message: "", files: [] });
+
+  // ---------- TEMPLATES (demandes RH/IT prédéfinies) ----------
+  // Chaque template génère un ticket au support (trace + email) ET un PDF récapitulatif.
+  const TEMPLATES = [
+    {
+      key: "arrivee", icon: "\uD83D\uDC64", titre: "Arrivée collaborateur (codes réseau)",
+      desc: "Demande d'accès réseau et de codes pour un nouvel arrivant.",
+      cat: "Création de compte", prio: "Moyenne",
+      champs: [
+        { k: "nom", label: "Nom et prénom du collaborateur", req: true },
+        { k: "poste", label: "Poste / service", req: true },
+        { k: "dateArrivee", label: "Date d'arrivée", type: "date", req: true },
+        { k: "acces", label: "Accès souhaités (PMS, messagerie, dossiers partagés…)", type: "textarea", req: true },
+        { k: "materiel", label: "Matériel à prévoir (PC, téléphone…)", type: "textarea" },
+      ],
+    },
+    {
+      key: "creation", icon: "\u2795", titre: "Création de compte",
+      desc: "Demande de création d'un compte utilisateur.",
+      cat: "Création de compte", prio: "Moyenne",
+      champs: [
+        { k: "nom", label: "Nom et prénom", req: true },
+        { k: "poste", label: "Poste / service", req: true },
+        { k: "typeCompte", label: "Type de compte (messagerie, PMS, Windows…)", req: true },
+        { k: "droits", label: "Droits / groupes souhaités", type: "textarea" },
+        { k: "modele", label: "Calquer sur le compte de (collègue référent)", },
+      ],
+    },
+    {
+      key: "vpn", icon: "\uD83D\uDD10", titre: "Demande de VPN",
+      desc: "Demande d'accès VPN pour un collaborateur.",
+      cat: "Problème Réseau", prio: "Moyenne",
+      champs: [
+        { k: "nom", label: "Nom et prénom", req: true },
+        { k: "poste", label: "Poste / service", req: true },
+        { k: "usage", label: "Usage / justification du VPN", type: "textarea", req: true },
+        { k: "duree", label: "Durée (permanent, temporaire jusqu'au…)", },
+        { k: "appareil", label: "Appareil concerné (PC pro, perso…)", },
+      ],
+    },
+    {
+      key: "suppression", icon: "\uD83D\uDDD1\uFE0F", titre: "Suppression de compte",
+      desc: "Demande de désactivation / suppression d'un compte (départ).",
+      cat: "Création de compte", prio: "Haute",
+      champs: [
+        { k: "nom", label: "Nom et prénom du collaborateur", req: true },
+        { k: "poste", label: "Poste / service", },
+        { k: "dateDepart", label: "Date de départ / d'effet", type: "date", req: true },
+        { k: "comptes", label: "Comptes à supprimer (messagerie, PMS, VPN…)", type: "textarea", req: true },
+        { k: "donnees", label: "Que faire des données / emails ?", type: "textarea" },
+      ],
+    },
+  ];
+  const [tplActif, setTplActif] = useState(null);        // template en cours de remplissage
+  const [tplValues, setTplValues] = useState({});        // valeurs saisies
+  const [tplDemandeur, setTplDemandeur] = useState({ name: "", email: "" });
+  const [tplSending, setTplSending] = useState(false);
+  const [tplError, setTplError] = useState("");
+  const [tplOk, setTplOk] = useState("");
+
+  const ouvrirTemplate = (tpl) => {
+    setTplActif(tpl); setTplValues({}); setTplError(""); setTplOk("");
+    setTplDemandeur({ name: (profile && profile.email) || "", email: (profile && profile.email) || "" });
+  };
+
+  // Génère un PDF récapitulatif du template rempli et le télécharge.
+  const genererTemplatePdf = (tpl, values, ref) => {
+    try {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const mL = 16; let y = 20;
+      doc.setFontSize(16); doc.setTextColor(26, 26, 62);
+      doc.text("DSI Hotel — Demande interne", mL, y); y += 8;
+      doc.setFontSize(13); doc.setTextColor(168, 135, 46);
+      doc.text(tpl.titre, mL, y); y += 10;
+      doc.setFontSize(10); doc.setTextColor(80, 80, 80);
+      doc.text("Établissement : " + (client ? client.name : "—"), mL, y); y += 6;
+      doc.text("Demandé par : " + (tplDemandeur.name || "—") + "  (" + (tplDemandeur.email || "—") + ")", mL, y); y += 6;
+      doc.text("Date : " + new Date().toLocaleString("fr-FR"), mL, y); y += 6;
+      if (ref) { doc.text("Référence ticket : " + ref, mL, y); y += 6; }
+      y += 4;
+      doc.setDrawColor(226, 226, 232); doc.line(mL, y, 194, y); y += 8;
+      doc.setFontSize(11); doc.setTextColor(30, 30, 30);
+      tpl.champs.forEach((ch) => {
+        const val = (values[ch.k] || "—");
+        doc.setTextColor(26, 26, 62); doc.setFont(undefined, "bold");
+        doc.text(ch.label + " :", mL, y); y += 6;
+        doc.setTextColor(40, 40, 40); doc.setFont(undefined, "normal");
+        const lignes = doc.splitTextToSize(String(val), 174);
+        lignes.forEach(l => { doc.text(l, mL, y); y += 6; if (y > 275) { doc.addPage(); y = 20; } });
+        y += 2;
+      });
+      doc.setFontSize(8); doc.setTextColor(150, 150, 150);
+      doc.text("Document confidentiel — DSI Hotel • www.dsihotel.com", mL, 288);
+      const nomFichier = "Demande_" + tpl.key + "_" + (client ? client.name.replace(/[^a-zA-Z0-9]/g, "_") : "hotel") + ".pdf";
+      doc.save(nomFichier);
+    } catch (e) { /* le PDF est un bonus : ne bloque pas l'envoi du ticket */ }
+  };
+
+  const soumettreTemplate = async () => {
+    if (!tplActif) return;
+    setTplError(""); setTplOk("");
+    // Validation des champs requis
+    for (const ch of tplActif.champs) {
+      if (ch.req && !String(tplValues[ch.k] || "").trim()) {
+        setTplError("Merci de renseigner : " + ch.label); return;
+      }
+    }
+    const emailClean = nettoyerEmail(tplDemandeur.email || "").trim();
+    if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
+      setTplError("Merci d'indiquer un email valide : c'est à cette adresse que le support répondra."); return;
+    }
+    setTplSending(true);
+    try {
+      // Corps du message reprenant tous les champs
+      const lignes = tplActif.champs.map(ch => `${ch.label} : ${tplValues[ch.k] || "-"}`).join("\n");
+      const message = `[DEMANDE INTERNE] ${tplActif.titre}\n\n${lignes}`;
+      const subject = `[${tplActif.prio}] ${client ? client.name : ""} — ${tplActif.titre}`;
+
+      // 1) Enregistre le ticket (trace / backup)
+      let reference = null, ticketId = null;
+      try {
+        const { data } = await sb.from("tickets").insert({
+          hotel_id: myHotelId,
+          contact_name: tplDemandeur.name || emailClean,
+          contact_role: "Demande interne",
+          contact_email: emailClean,
+          category: tplActif.cat,
+          priority: tplActif.prio,
+          message,
+          status: "open"
+        }).select().single();
+        if (data) { reference = data.reference || null; ticketId = data.id || null; }
+      } catch (e) {}
+
+      // 2) Notifie l'équipe DSI par email
+      const refPrefix = reference ? `[${reference}] ` : "";
+      const lienTicket = reference ? `https://portail.dsihotel.com/?ticket=${encodeURIComponent(reference)}` : "https://portail.dsihotel.com/";
+      const bodyTeam = message +
+        "\n\n—————————————————————\n" +
+        (reference ? `\uD83D\uDC49 Accéder au ticket ${reference} : ${lienTicket}\n` : "") +
+        `Répondre à cet email répond directement au demandeur (${emailClean}).`;
+      try {
+        await fetch(EMAIL_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject: refPrefix + subject, text: bodyTeam, replyTo: emailClean || undefined, fromName: (client ? client.name : "Client") })
+        });
+      } catch (e) {}
+
+      // 3) Génère le PDF récapitulatif
+      genererTemplatePdf(tplActif, tplValues, reference);
+
+      setTplOk("\u2713 Demande envoyée au support" + (reference ? " (réf. " + reference + ")" : "") + ". Le PDF récapitulatif a été téléchargé.");
+      setTplValues({});
+    } catch (e) {
+      setTplError("Erreur lors de l'envoi : " + (e.message || e));
+    } finally {
+      setTplSending(false);
+    }
+  };
+
   const [procSearch, setProcSearch] = useState("");
   // Procédures suggérées en temps réel selon les mots-clés (formulaire de contact)
   const suggestedProcs = (() => {
@@ -4410,6 +4572,7 @@ const nav = isAdmin
         { p: "knowledge", icon: "📖", label: "Procédures" },
         { p: "mon-installation", icon: "🗂️", label: "Infrastructure" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
+        ...(isSupervisor ? [{ p: "templates", icon: "📋", label: "Template" }] : []),
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
         ...(isSupervisor ? [{ p: "rapport-tickets", icon: "📈", label: "Rapport Tickets" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
@@ -5314,6 +5477,64 @@ const nav = isAdmin
   }
 
   // ---------- CONTACT ----------
+  if (page === "templates" && isSupervisor) {
+    const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit", boxSizing: "border-box" };
+    const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
+
+    if (!tplActif) {
+      content = React.createElement('div', null,
+        React.createElement('div', { style: { fontSize: 13, color: "#777", marginBottom: 18, lineHeight: 1.6 } },
+          "Choisissez un modèle de demande. Une fois rempli, il est envoyé au support DSI Hotel (vous en gardez une trace dans vos demandes) et un PDF récapitulatif est téléchargé."),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 } },
+          TEMPLATES.map(tpl => React.createElement('button', {
+            key: tpl.key, onClick: () => ouvrirTemplate(tpl),
+            style: { textAlign: "left", background: "white", border: "1px solid #E8E8F0", borderRadius: 12, padding: 18, cursor: "pointer", display: "flex", gap: 14, alignItems: "flex-start" }
+          },
+            React.createElement('div', { style: { fontSize: 26 } }, tpl.icon),
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 15, fontWeight: 600, color: "#1a1a3e", marginBottom: 4 } }, tpl.titre),
+              React.createElement('div', { style: { fontSize: 12.5, color: "#888", lineHeight: 1.5 } }, tpl.desc)
+            )
+          ))
+        )
+      );
+    } else {
+      content = React.createElement('div', { style: { maxWidth: 720 } },
+        React.createElement('button', { onClick: () => setTplActif(null), style: { background: "none", border: "none", color: G2, fontSize: 13, cursor: "pointer", marginBottom: 14, padding: 0 } }, "\u2190 Retour aux modèles"),
+        React.createElement('div', { style: { background: "white", borderRadius: 12, border: "1px solid #E8E8F0", padding: 26 } },
+          React.createElement('div', { style: { display: "flex", gap: 12, alignItems: "center", marginBottom: 6 } },
+            React.createElement('div', { style: { fontSize: 24 } }, tplActif.icon),
+            React.createElement('h3', { style: { margin: 0, fontSize: 19, fontWeight: 600, color: "#1a1a3e" } }, tplActif.titre)
+          ),
+          React.createElement('div', { style: { fontSize: 13, color: "#777", marginBottom: 20, lineHeight: 1.6 } }, tplActif.desc),
+
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14 } },
+            React.createElement('div', null,
+              React.createElement('label', { style: labelStyle }, "Votre nom"),
+              React.createElement('input', { value: tplDemandeur.name, onChange: e => setTplDemandeur({ ...tplDemandeur, name: e.target.value }), style: inputStyle })
+            ),
+            React.createElement('div', null,
+              React.createElement('label', { style: labelStyle }, "Votre email *"),
+              React.createElement('input', { value: tplDemandeur.email, onChange: e => setTplDemandeur({ ...tplDemandeur, email: e.target.value }), placeholder: "vous@hotel.com", style: inputStyle })
+            )
+          ),
+
+          tplActif.champs.map(ch => React.createElement('div', { key: ch.k, style: { marginBottom: 14 } },
+            React.createElement('label', { style: labelStyle }, ch.label + (ch.req ? " *" : "")),
+            ch.type === "textarea"
+              ? React.createElement('textarea', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), rows: 3, style: { ...inputStyle, resize: "vertical" } })
+              : React.createElement('input', { type: ch.type || "text", value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle })
+          )),
+
+          tplError && React.createElement('div', { style: { fontSize: 12.5, color: "#C53030", background: "#FDECEC", border: "1px solid #F5B5B5", borderRadius: 7, padding: "9px 12px", marginBottom: 12 } }, tplError),
+          tplOk && React.createElement('div', { style: { fontSize: 12.5, color: "#256029", background: "#EAF6EC", border: "1px solid #B5DBB9", borderRadius: 7, padding: "9px 12px", marginBottom: 12 } }, tplOk),
+
+          React.createElement('button', { onClick: soumettreTemplate, disabled: tplSending, style: { background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "10px 18px", opacity: tplSending ? 0.6 : 1 } }, tplSending ? "Envoi..." : "Envoyer la demande + PDF")
+        )
+      );
+    }
+  }
+
   if (page === "contact" && !isAdmin) {
     const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit" };
     const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
@@ -7265,7 +7486,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
