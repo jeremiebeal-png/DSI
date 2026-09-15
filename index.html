@@ -589,7 +589,7 @@ function App() {
   const [editingClientId, setEditingClientId] = useState(null);
   const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "" });
   const [addAccountHotel, setAddAccountHotel] = useState(null);
-  const [addAccountForm, setAddAccountForm] = useState({ email: "", pw: "", level: "supervisor" });
+  const [addAccountForm, setAddAccountForm] = useState({ email: "", pw: "", level: "supervisor", mode: "add", oldEmail: "" });
   const [addAccountErr, setAddAccountErr] = useState("");
   const [savingAccount, setSavingAccount] = useState(false);
   const [clientLogoFile, setClientLogoFile] = useState(null);
@@ -1334,19 +1334,32 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const submitAddAccount = async () => {
     setAddAccountErr("");
-    if (!addAccountForm.email.trim() || !addAccountForm.pw.trim()) { setAddAccountErr("Email et mot de passe requis."); return; }
+    const estEdition = addAccountForm.mode === "edit";
+    if (!addAccountForm.email.trim()) { setAddAccountErr("Email requis."); return; }
+    if (!estEdition && !addAccountForm.pw.trim()) { setAddAccountErr("Email et mot de passe requis."); return; }
     setSavingAccount(true);
     try {
-      await callAdminApi("/admin/add-hotel-account", {
-        hotelId: addAccountHotel.id,
-        email: addAccountForm.email.trim(),
-        password: addAccountForm.pw,
-        level: addAccountForm.level,
-      });
+      if (estEdition) {
+        // Modification d'un compte existant : change l'email (et le mot de passe si saisi).
+        await callAdminApi("/admin/update-account-email", {
+          hotelId: addAccountHotel.id,
+          level: addAccountForm.level,
+          oldEmail: addAccountForm.oldEmail,
+          newEmail: addAccountForm.email.trim(),
+          newPassword: addAccountForm.pw ? addAccountForm.pw : undefined,
+        });
+      } else {
+        await callAdminApi("/admin/add-hotel-account", {
+          hotelId: addAccountHotel.id,
+          email: addAccountForm.email.trim(),
+          password: addAccountForm.pw,
+          level: addAccountForm.level,
+        });
+      }
       setAddAccountHotel(null);
       await loadHotels();
     } catch (e) {
-      setAddAccountErr(e.message || "Erreur lors de la création du compte.");
+      setAddAccountErr(e.message || "Erreur lors de l'opération sur le compte.");
     } finally {
       setSavingAccount(false);
     }
@@ -4787,17 +4800,22 @@ const nav = isAdmin
       ),
             addAccountHotel && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
         React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: "90%", maxWidth: 420 } },
-          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, "Ajouter un compte"),
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, addAccountForm.mode === "edit" ? "Modifier le compte" : "Ajouter un compte"),
           React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, addAccountHotel.name),
           React.createElement('div', { style: { marginBottom: 10 } },
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 6 } }, "Niveau du compte"),
             React.createElement('div', { style: { display: "flex", gap: 8 } },
               [{ v: "supervisor", l: "Administrateur", d: "Suivi + tickets + doc" }, { v: "client", l: "Standard", d: "Procédures + tickets + doc" }].map(opt => {
-                const disabled = (opt.v === "supervisor" && addAccountHotel.account_email) || (opt.v === "client" && addAccountHotel.standard_email);
+                const emailNiveau = opt.v === "supervisor" ? addAccountHotel.account_email : addAccountHotel.standard_email;
+                const existe = !!emailNiveau;
                 const active = addAccountForm.level === opt.v;
-                return React.createElement('button', { key: opt.v, disabled: disabled, onClick: () => setAddAccountForm({ ...addAccountForm, level: opt.v }), style: { flex: 1, padding: "8px 10px", background: active ? G + "18" : "#F8F8FC", border: "1px solid " + (active ? G + "66" : "#E8E8F0"), borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1, textAlign: "left" } },
+                // Clic : si le compte existe -> mode édition (pré-remplit l'email actuel) ; sinon -> mode ajout.
+                const onPick = () => existe
+                  ? setAddAccountForm({ email: emailNiveau, pw: "", level: opt.v, mode: "edit", oldEmail: emailNiveau })
+                  : setAddAccountForm({ email: "", pw: "", level: opt.v, mode: "add", oldEmail: "" });
+                return React.createElement('button', { key: opt.v, onClick: onPick, style: { flex: 1, padding: "8px 10px", background: active ? G + "18" : "#F8F8FC", border: "1px solid " + (active ? G + "66" : "#E8E8F0"), borderRadius: 8, cursor: "pointer", textAlign: "left" } },
                   React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#1a1a3e" } }, opt.l),
-                  React.createElement('div', { style: { fontSize: 10, color: "#888", marginTop: 2 } }, disabled ? "Déjà existant" : opt.d)
+                  React.createElement('div', { style: { fontSize: 10, color: existe ? G2 : "#888", marginTop: 2 } }, existe ? "Existant — cliquer pour modifier" : opt.d)
                 );
               })
             )
@@ -4808,12 +4826,12 @@ const nav = isAdmin
           ),
           React.createElement('div', { style: { marginBottom: 12 } },
             React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Mot de passe"),
-            React.createElement('input', { value: addAccountForm.pw, onChange: e => setAddAccountForm({ ...addAccountForm, pw: e.target.value }), placeholder: "Mot de passe initial", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+            React.createElement('input', { type: "text", value: addAccountForm.pw, onChange: e => setAddAccountForm({ ...addAccountForm, pw: e.target.value }), placeholder: addAccountForm.mode === "edit" ? "Laisser vide pour ne pas changer" : "Mot de passe initial", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
           ),
           addAccountErr && React.createElement('div', { style: { color: "#E53E3E", fontSize: 12, marginBottom: 10 } }, addAccountErr),
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
             React.createElement('button', { onClick: () => setAddAccountHotel(null), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "7px 14px" } }, "Annuler"),
-            React.createElement('button', { onClick: submitAddAccount, disabled: savingAccount, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px", opacity: savingAccount ? 0.6 : 1 } }, savingAccount ? "Création..." : "Créer le compte")
+            React.createElement('button', { onClick: submitAddAccount, disabled: savingAccount, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px", opacity: savingAccount ? 0.6 : 1 } }, savingAccount ? "..." : (addAccountForm.mode === "edit" ? "Enregistrer" : "Créer le compte"))
           )
         )
       ),
@@ -4862,7 +4880,7 @@ const nav = isAdmin
             React.createElement('button', { onClick: () => deleteClient(h), style: { padding: "7px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✕")
           ),
           h.account_email && React.createElement('button', { onClick: () => { setResetPwTarget(h); setResetPwValue(""); }, style: { width: "100%", padding: 6, background: "none", border: "1px solid #E8E8F0", color: "#888", borderRadius: 7, fontSize: 11, cursor: "pointer" } }, "🔑 Réinitialiser le mot de passe"),
-          (!h.account_email || !h.standard_email) && React.createElement('button', { onClick: () => { setAddAccountHotel(h); setAddAccountForm({ email: "", pw: "", level: !h.account_email ? "supervisor" : "client" }); setAddAccountErr(""); }, style: { width: "100%", padding: 6, marginTop: 6, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 500 } }, "+ Ajouter un compte")
+          React.createElement('button', { onClick: () => { setAddAccountHotel(h); const niveauInit = !h.account_email ? "supervisor" : (!h.standard_email ? "client" : "supervisor"); const existeInit = niveauInit === "supervisor" ? h.account_email : h.standard_email; setAddAccountForm(existeInit ? { email: existeInit, pw: "", level: niveauInit, mode: "edit", oldEmail: existeInit } : { email: "", pw: "", level: niveauInit, mode: "add", oldEmail: "" }); setAddAccountErr(""); }, style: { width: "100%", padding: 6, marginTop: 6, background: SB, border: "none", color: G, borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 500 } }, (h.account_email && h.standard_email) ? "Gérer les comptes" : "+ Ajouter / gérer un compte")
         )),
         hotels.length === 0 && !hotelsLoading && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client. Créez-en un !"),
         hotels.length > 0 && clientSearch.trim() && hotels.filter(h => { const q = clientSearch.trim().toLowerCase(); const champs = [h.name, h.city, h.account_email, h.standard_email, h.phone, h.ninjaone_nom].filter(Boolean).join(" ").toLowerCase(); return q.split(/\s+/).every(mot => champs.includes(mot)); }).length === 0 && React.createElement('div', { style: { gridColumn: "1/-1", padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun client ne correspond à « " + clientSearch.trim() + " ».")
@@ -7495,4 +7513,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
- 
