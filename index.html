@@ -669,8 +669,27 @@ function App() {
     setTplDemandeur({ name: (profile && profile.email) || "", email: (profile && profile.email) || "" });
   };
 
+  // Charge une image (URL) en dataURL base64 pour l'insérer dans le PDF.
+  const chargerImageBase64 = (url) => new Promise((resolve) => {
+    if (!url) { resolve(null); return; }
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+          canvas.getContext("2d").drawImage(img, 0, 0);
+          resolve({ data: canvas.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight });
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    } catch (e) { resolve(null); }
+  });
+
   // Génère un PDF récapitulatif du template rempli et le télécharge.
-  const genererTemplatePdf = (tpl, values, ref) => {
+  const genererTemplatePdf = async (tpl, values, ref) => {
     try {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -678,10 +697,18 @@ function App() {
       const nomHotel = client ? client.name : "—";
       // Bandeau avec le nom de l'hôtel bien en évidence
       doc.setFillColor(26, 26, 62); doc.rect(0, 0, 210, 24, "F");
+      // Logo de l'hôtel (si disponible), à droite du bandeau
+      const logo = await chargerImageBase64(client && client.logo_url);
+      if (logo) {
+        try {
+          const hMax = 16, ratio = logo.w / logo.h;
+          const wLogo = Math.min(hMax * ratio, 40);
+          doc.addImage(logo.data, "PNG", 210 - wLogo - 12, 4, wLogo, hMax);
+        } catch (e) {}
+      }
       doc.setFontSize(15); doc.setTextColor(255, 255, 255);
       doc.text(nomHotel, mL, 15);
-      doc.setFontSize(9); doc.setTextColor(210, 200, 160);
-      doc.text("DSI Hotel — Demande interne", 194, 15, { align: "right" });
+      if (!logo) { doc.setFontSize(9); doc.setTextColor(210, 200, 160); doc.text("DSI Hotel — Demande interne", 194, 15, { align: "right" }); }
       y = 34;
       doc.setFontSize(14); doc.setTextColor(168, 135, 46);
       doc.text(tpl.titre, mL, y); y += 10;
@@ -783,7 +810,7 @@ function App() {
       } catch (e) {}
 
       // 3) Génère le PDF récapitulatif
-      genererTemplatePdf(tplActif, tplValues, reference);
+      await genererTemplatePdf(tplActif, tplValues, reference);
 
       setTplOk("\u2713 Demande envoyée au support" + (reference ? " (réf. " + reference + ")" : "") + ". Le PDF récapitulatif a été téléchargé.");
       setTplValues({});
@@ -5875,13 +5902,13 @@ const nav = isAdmin
       !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, rechercheActive ? ("Aucun ticket ne correspond à « " + ticketSearch.trim() + " ».") : "Aucun ticket dans cette catégorie."),
       tableView && !ticketsLoading && list.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.03em" } },
         React.createElement('span', { style: { width: 4, flexShrink: 0 } }),
-        React.createElement('span', { style: { width: "19%" } }, "Hôtel"),
-        React.createElement('span', { style: { width: "16%" } }, "Contact"),
+        React.createElement('span', { style: { width: 95, flexShrink: 0 } }, "N° ticket"),
+        React.createElement('span', { style: { width: "17%" } }, "Hôtel"),
+        React.createElement('span', { style: { width: "15%" } }, "Contact"),
         React.createElement('span', { style: { flex: 1 } }, "Objet"),
         React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, "État"),
         React.createElement('span', { style: { width: 25, flexShrink: 0 } }, ""),
         React.createElement('span', { style: { width: 70, textAlign: "center", flexShrink: 0 } }, "Priorité"),
-        React.createElement('span', { style: { width: 60, textAlign: "center", flexShrink: 0 } }, "Statut"),
         React.createElement('span', { style: { width: 100, textAlign: "right", flexShrink: 0 } }, "Date")
       ),
       React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: tableView ? 3 : 10 } },
@@ -5928,13 +5955,13 @@ const nav = isAdmin
               tableView
                 ? React.createElement(React.Fragment, null,
                     React.createElement('span', { style: { width: 4, height: 28, borderRadius: 3, background: prioColor(t.priority), flexShrink: 0 } }),
-                    React.createElement('span', { style: { width: "19%", minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel),
-                    React.createElement('span', { style: { width: "16%", minWidth: 0, fontSize: 12.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.contact_name || "—"),
+                    React.createElement('span', { style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.reference || "—"),
+                    React.createElement('span', { style: { width: "17%", minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel),
+                    React.createElement('span', { style: { width: "15%", minWidth: 0, fontSize: 12.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.contact_name || "—"),
                     React.createElement('span', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.subject || t.message || "(sans objet)"),
                     React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id], t.status)),
                     React.createElement('span', { style: { fontSize: 15, flexShrink: 0 }, title: t.source === "email" ? "Email" : "Formulaire" }, t.source === "email" ? "📧" : "📝"),
                     React.createElement('span', { style: { width: 70, textAlign: "center", fontSize: 10, fontWeight: 600, color: prioColor(t.priority), flexShrink: 0 } }, t.priority),
-                    React.createElement('span', { style: { width: 60, textAlign: "center", fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20, flexShrink: 0 } }, statusLabel(t.status)),
                     React.createElement('span', { style: { width: 100, textAlign: "right", fontSize: 10, color: "#AAA", flexShrink: 0 } }, new Date(t.created_at).toLocaleDateString("fr-FR") + " " + new Date(t.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }))
                   )
                 : React.createElement('div', { style: { flex: 1, minWidth: 0 } },
