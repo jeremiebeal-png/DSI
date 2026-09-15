@@ -616,15 +616,16 @@ function App() {
       ],
     },
     {
-      key: "creation", icon: "\u2795", titre: "Création de compte",
-      desc: "Demande de création d'un compte utilisateur.",
+      key: "email", icon: "\u2709\uFE0F", titre: "Création d'une adresse mail",
+      desc: "Demande de création d'une boîte mail (nominative ou partagée).",
       cat: "Création de compte", prio: "Moyenne",
       champs: [
-        { k: "nom", label: "Nom et prénom", req: true },
-        { k: "poste", label: "Poste / service", req: true },
-        { k: "typeCompte", label: "Type de compte (messagerie, PMS, Windows…)", req: true },
-        { k: "droits", label: "Droits / groupes souhaités", type: "textarea" },
-        { k: "modele", label: "Calquer sur le compte de (collègue référent)", },
+        { k: "typeBoite", label: "Type de boîte", type: "select", options: ["Nominative (une personne)", "Partagée / générique (resa@, compta@…)"], req: true },
+        { k: "adresse", label: "Adresse souhaitée (ex. prenom.nom@… ou resa@…)", req: true },
+        { k: "titulaire", label: "Titulaire / personne rattachée (nom et prénom)", req: true },
+        { k: "poste", label: "Poste / service", },
+        { k: "acces", label: "Personnes ayant accès (pour une boîte partagée)", type: "textarea" },
+        { k: "redirection", label: "Redirection / alias souhaité(s)", type: "textarea" },
       ],
     },
     {
@@ -5523,6 +5524,11 @@ const nav = isAdmin
             React.createElement('label', { style: labelStyle }, ch.label + (ch.req ? " *" : "")),
             ch.type === "textarea"
               ? React.createElement('textarea', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), rows: 3, style: { ...inputStyle, resize: "vertical" } })
+              : ch.type === "select"
+              ? React.createElement('select', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle },
+                  React.createElement('option', { value: "" }, "— Choisir —"),
+                  (ch.options || []).map(opt => React.createElement('option', { key: opt, value: opt }, opt))
+                )
               : React.createElement('input', { type: ch.type || "text", value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle })
           )),
 
