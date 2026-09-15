@@ -620,31 +620,6 @@ function App() {
       ],
     },
     {
-      key: "email", icon: "\u2709\uFE0F", titre: "Création d'une adresse mail",
-      desc: "Demande de création d'une boîte mail (nominative ou partagée).",
-      cat: "Création de compte", prio: "Moyenne",
-      champs: [
-        { k: "typeBoite", label: "Type de boîte", type: "select", options: ["Nominative (une personne)", "Partagée / générique (resa@, compta@…)"], req: true },
-        { k: "adresse", label: "Adresse souhaitée (ex. prenom.nom@… ou resa@…)", req: true },
-        { k: "titulaire", label: "Titulaire / personne rattachée (nom et prénom)", req: true },
-        { k: "poste", label: "Poste / service", },
-        { k: "acces", label: "Personnes ayant accès (pour une boîte partagée)", type: "textarea" },
-        { k: "redirection", label: "Redirection / alias souhaité(s)", type: "textarea" },
-      ],
-    },
-    {
-      key: "vpn", icon: "\uD83D\uDD10", titre: "Demande de VPN",
-      desc: "Demande d'accès VPN pour un collaborateur.",
-      cat: "Problème Réseau", prio: "Moyenne",
-      champs: [
-        { k: "nom", label: "Nom et prénom", req: true },
-        { k: "poste", label: "Poste / service", req: true },
-        { k: "usage", label: "Usage / justification du VPN", type: "textarea", req: true },
-        { k: "duree", label: "Durée (permanent, temporaire jusqu'au…)", },
-        { k: "appareil", label: "Appareil concerné (PC pro, perso…)", },
-      ],
-    },
-    {
       key: "suppression", icon: "\uD83D\uDDD1\uFE0F", titre: "Suppression de compte",
       desc: "Demande de désactivation / suppression d'un compte (départ).",
       cat: "Création de compte", prio: "Haute",
@@ -672,6 +647,9 @@ function App() {
   // Charge une image (URL) en dataURL base64 pour l'insérer dans le PDF.
   const chargerImageBase64 = (url) => new Promise((resolve) => {
     if (!url) { resolve(null); return; }
+    let fini = false;
+    const done = (v) => { if (!fini) { fini = true; resolve(v); } };
+    setTimeout(() => done(null), 2500); // ne jamais bloquer le PDF au-delà de 2,5 s
     try {
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -680,12 +658,12 @@ function App() {
           const canvas = document.createElement("canvas");
           canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
           canvas.getContext("2d").drawImage(img, 0, 0);
-          resolve({ data: canvas.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight });
-        } catch (e) { resolve(null); }
+          done({ data: canvas.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight });
+        } catch (e) { done(null); }
       };
-      img.onerror = () => resolve(null);
+      img.onerror = () => done(null);
       img.src = url;
-    } catch (e) { resolve(null); }
+    } catch (e) { done(null); }
   });
 
   // Génère un PDF récapitulatif du template rempli et le télécharge.
@@ -769,14 +747,17 @@ function App() {
       const lignes = champsVisibles.map(ch => `${ch.label} : ${formatVal(ch)}`).join("\n");
       const nomHotel = client ? client.name : "Établissement inconnu";
       const enTete =
-        `==============================\n` +
         `\uD83C\uDFE8  ${nomHotel.toUpperCase()}\n` +
-        `==============================\n` +
         `Demande interne : ${tplActif.titre}\n` +
         `Demandé par : ${tplDemandeur.name || emailClean} (${emailClean})\n` +
         `Date : ${new Date().toLocaleString("fr-FR")}\n`;
       const message = `${enTete}\n${lignes}`;
       const subject = `${nomHotel} — ${tplActif.titre} [${tplActif.prio}]`;
+
+      // 0) Génère le PDF récapitulatif TOUT DE SUITE (avant les appels réseau) :
+      //    ça garantit que le téléchargement reste rattaché à l'action de l'utilisateur
+      //    et n'est pas bloqué par le navigateur.
+      await genererTemplatePdf(tplActif, tplValues, null);
 
       // 1) Enregistre le ticket (trace / backup)
       let reference = null, ticketId = null;
@@ -788,6 +769,7 @@ function App() {
           contact_email: emailClean,
           category: tplActif.cat,
           priority: tplActif.prio,
+          subject: `[Demande interne] ${tplActif.titre}`,
           message,
           status: "open"
         }).select().single();
@@ -808,9 +790,6 @@ function App() {
           body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject: refPrefix + subject, text: bodyTeam, replyTo: emailClean || undefined, fromName: (client ? client.name : "Client") })
         });
       } catch (e) {}
-
-      // 3) Génère le PDF récapitulatif
-      await genererTemplatePdf(tplActif, tplValues, reference);
 
       setTplOk("\u2713 Demande envoyée au support" + (reference ? " (réf. " + reference + ")" : "") + ". Le PDF récapitulatif a été téléchargé.");
       setTplValues({});
@@ -5956,7 +5935,10 @@ const nav = isAdmin
                 ? React.createElement(React.Fragment, null,
                     React.createElement('span', { style: { width: 4, height: 28, borderRadius: 3, background: prioColor(t.priority), flexShrink: 0 } }),
                     React.createElement('span', { style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.reference || "—"),
-                    React.createElement('span', { style: { width: "17%", minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel),
+                    React.createElement('span', { style: { width: "17%", minWidth: 0, display: "flex", alignItems: "center", gap: 7, overflow: "hidden" } },
+                      (h && h.logo_url) ? React.createElement('img', { src: h.logo_url, alt: "", style: { width: 22, height: 22, borderRadius: 4, objectFit: "contain", background: "white", border: "1px solid #EEE", flexShrink: 0 } }) : null,
+                      React.createElement('span', { style: { minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel)
+                    ),
                     React.createElement('span', { style: { width: "15%", minWidth: 0, fontSize: 12.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.contact_name || "—"),
                     React.createElement('span', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.subject || t.message || "(sans objet)"),
                     React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id], t.status)),
