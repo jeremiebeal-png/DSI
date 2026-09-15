@@ -668,6 +668,48 @@ function App() {
   });
 
   // Génère un PDF récapitulatif du template rempli et le télécharge.
+  // Génère une ATTESTATION DE VALIDATION (PDF) pour un ticket validé.
+  const genererAttestation = async (t) => {
+    const v = t && t.reference && validations[t.reference];
+    if (!v || v.status !== "validated") { alert("Cette demande n'est pas encore validée."); return; }
+    try {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const mL = 18; let y = 20;
+      const h = hotels.find(x => x.id === t.hotel_id);
+      const nomHotel = h ? h.name : (v.hotel_name || "—");
+      doc.setFillColor(26, 26, 62); doc.rect(0, 0, 210, 26, "F");
+      const logo = await chargerImageBase64(h && h.logo_url);
+      if (logo) { try { const hMax = 17, wLogo = Math.min(hMax * (logo.w / logo.h), 42); doc.addImage(logo.data, "PNG", 210 - wLogo - 12, 4.5, wLogo, hMax); } catch (e) {} }
+      doc.setFontSize(16); doc.setTextColor(255, 255, 255);
+      doc.text("ATTESTATION DE VALIDATION", mL, 16);
+      y = 40;
+      doc.setFontSize(11); doc.setTextColor(40, 40, 40);
+      const ligne = (label, val) => {
+        doc.setFont(undefined, "bold"); doc.setTextColor(26, 26, 62); doc.text(label, mL, y);
+        doc.setFont(undefined, "normal"); doc.setTextColor(40, 40, 40);
+        const lignes = doc.splitTextToSize(String(val || "—"), 120);
+        lignes.forEach((l, i) => { doc.text(l, mL + 55, y + i * 6); });
+        y += Math.max(6, lignes.length * 6) + 2;
+      };
+      ligne("Établissement :", nomHotel);
+      ligne("Référence du ticket :", v.reference);
+      ligne("Demande :", v.titre);
+      ligne("Validée par :", v.validateur_email);
+      ligne("Date de validation :", v.validated_at ? new Date(v.validated_at).toLocaleString("fr-FR") : "—");
+      y += 4; doc.setDrawColor(226, 226, 232); doc.line(mL, y, 192, y); y += 8;
+      doc.setFont(undefined, "bold"); doc.setTextColor(26, 26, 62); doc.setFontSize(11);
+      doc.text("Récapitulatif de la demande", mL, y); y += 7;
+      doc.setFont(undefined, "normal"); doc.setTextColor(50, 50, 50); doc.setFontSize(10);
+      const recap = doc.splitTextToSize(String(t.message || v.recap || "—"), 174);
+      recap.forEach(l => { doc.text(l, mL, y); y += 5.5; if (y > 270) { doc.addPage(); y = 20; } });
+      y += 6;
+      doc.setFontSize(9); doc.setTextColor(120, 120, 120);
+      doc.text("Document généré automatiquement par le portail DSI Hotel — cette attestation constitue une preuve de validation.", mL, 284, { maxWidth: 174 });
+      doc.save("Attestation_validation_" + (v.reference || "demande") + ".pdf");
+    } catch (e) { alert("Erreur lors de la génération de l'attestation."); }
+  };
+
   const genererTemplatePdf = async (tpl, values, ref) => {
     try {
       const { jsPDF } = window.jspdf;
@@ -6051,6 +6093,7 @@ const nav = isAdmin
               React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center", marginBottom: 14, paddingBottom: 12, borderBottom: "1px dashed #E2E2EA" } },
                 React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
+                (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && React.createElement('button', { onClick: () => genererAttestation(t), title: "Télécharger l'attestation de validation (PDF)", style: { padding: "7px 13px", background: "#EAF6EC", border: "1px solid #B5DBB9", color: "#256029", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "\uD83D\uDCC4 Attestation"),
                 t.status === "closed"
                   ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
                   : React.createElement(React.Fragment, null,
