@@ -674,13 +674,18 @@ function App() {
     try {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit: "mm", format: "a4" });
-      const mL = 16; let y = 20;
-      doc.setFontSize(16); doc.setTextColor(26, 26, 62);
-      doc.text("DSI Hotel — Demande interne", mL, y); y += 8;
-      doc.setFontSize(13); doc.setTextColor(168, 135, 46);
+      const mL = 16; let y = 18;
+      const nomHotel = client ? client.name : "—";
+      // Bandeau avec le nom de l'hôtel bien en évidence
+      doc.setFillColor(26, 26, 62); doc.rect(0, 0, 210, 24, "F");
+      doc.setFontSize(15); doc.setTextColor(255, 255, 255);
+      doc.text(nomHotel, mL, 15);
+      doc.setFontSize(9); doc.setTextColor(210, 200, 160);
+      doc.text("DSI Hotel — Demande interne", 194, 15, { align: "right" });
+      y = 34;
+      doc.setFontSize(14); doc.setTextColor(168, 135, 46);
       doc.text(tpl.titre, mL, y); y += 10;
       doc.setFontSize(10); doc.setTextColor(80, 80, 80);
-      doc.text("Établissement : " + (client ? client.name : "—"), mL, y); y += 6;
       doc.text("Demandé par : " + (tplDemandeur.name || "—") + "  (" + (tplDemandeur.email || "—") + ")", mL, y); y += 6;
       doc.text("Date : " + new Date().toLocaleString("fr-FR"), mL, y); y += 6;
       if (ref) { doc.text("Référence ticket : " + ref, mL, y); y += 6; }
@@ -735,8 +740,16 @@ function App() {
     try {
       // Corps du message reprenant tous les champs
       const lignes = champsVisibles.map(ch => `${ch.label} : ${formatVal(ch)}`).join("\n");
-      const message = `[DEMANDE INTERNE] ${tplActif.titre}\n\n${lignes}`;
-      const subject = `[${tplActif.prio}] ${client ? client.name : ""} — ${tplActif.titre}`;
+      const nomHotel = client ? client.name : "Établissement inconnu";
+      const enTete =
+        `==============================\n` +
+        `\uD83C\uDFE8  ${nomHotel.toUpperCase()}\n` +
+        `==============================\n` +
+        `Demande interne : ${tplActif.titre}\n` +
+        `Demandé par : ${tplDemandeur.name || emailClean} (${emailClean})\n` +
+        `Date : ${new Date().toLocaleString("fr-FR")}\n`;
+      const message = `${enTete}\n${lignes}`;
+      const subject = `${nomHotel} — ${tplActif.titre} [${tplActif.prio}]`;
 
       // 1) Enregistre le ticket (trace / backup)
       let reference = null, ticketId = null;
