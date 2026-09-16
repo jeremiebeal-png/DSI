@@ -608,6 +608,8 @@ function App() {
       desc: "Demande d'accès réseau et de codes pour un nouvel arrivant.",
       cat: "Création de compte", prio: "Moyenne",
       champs: [
+        { k: "typeDemande", label: "Type de demande", type: "radio", options: ["Nouveau compte", "Modification"], req: true },
+        { k: "compteAModifier", label: "Compte à modifier (nom / identifiant concerné)", showIfEquals: { typeDemande: "Modification" }, req: true },
         { k: "nom", label: "Nom et prénom du collaborateur", req: true },
         { k: "poste", label: "Poste / service", req: true },
         { k: "dateArrivee", label: "Date d'arrivée", type: "date", req: true },
@@ -615,8 +617,10 @@ function App() {
         { k: "apps", label: "Accès applicatifs (PMS / logiciels)", type: "checkboxes", options: ["Opera", "PEP", "ONQ", "Protel", "Micros", "Agilysys"] },
         { k: "creerMail", label: "Créer une adresse mail", type: "checkbox" },
         { k: "mailACreer", label: "Adresse mail à créer", showIf: "creerMail", req: true },
+        { k: "telMfa", label: "Numéro de téléphone pour le MFA", type: "tel", showIf: "creerMail" },
+        { k: "groupesMail", label: "Groupes de distribution et boîtes partagées à inclure", type: "textarea", showIf: "creerMail" },
         { k: "creerVpn", label: "Créer un VPN", type: "checkbox" },
-        { k: "materiel", label: "Matériel à prévoir (PC, téléphone…)", type: "textarea" },
+        { k: "materiel", label: "Autre remarque", type: "textarea" },
         { k: "validateurEmail", label: "Email du validateur (RH / direction)", type: "validation", req: true },
       ],
     },
@@ -633,6 +637,18 @@ function App() {
       ],
     },
   ];
+  // Détermine si un champ doit être affiché, selon ses conditions :
+  //  - showIf: "cle"            -> visible si la case "cle" est cochée (=== true)
+  //  - showIfEquals: { cle: v } -> visible si la valeur de "cle" vaut v
+  const champVisible = (ch, values) => {
+    if (ch.showIf && values[ch.showIf] !== true) return false;
+    if (ch.showIfEquals) {
+      for (const cle in ch.showIfEquals) {
+        if (values[cle] !== ch.showIfEquals[cle]) return false;
+      }
+    }
+    return true;
+  };
   const [tplActif, setTplActif] = useState(null);        // template en cours de remplissage
   const [tplValues, setTplValues] = useState({});        // valeurs saisies
   const [tplDemandeur, setTplDemandeur] = useState({ name: "", email: "" });
@@ -642,7 +658,7 @@ function App() {
 
   const ouvrirTemplate = (tpl) => {
     setTplActif(tpl); setTplValues({}); setTplError(""); setTplOk("");
-    setTplDemandeur({ name: (profile && profile.email) || "", email: (profile && profile.email) || "" });
+    setTplDemandeur({ name: "", email: "" });
   };
 
   // Charge une image (URL) en dataURL base64 pour l'insérer dans le PDF.
@@ -746,7 +762,7 @@ function App() {
         if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
         return (v === undefined || v === null || String(v).trim() === "") ? "—" : String(v);
       };
-      tpl.champs.filter(ch => !ch.showIf || values[ch.showIf] === true).forEach((ch) => {
+      tpl.champs.filter(ch => champVisible(ch, values)).forEach((ch) => {
         doc.setTextColor(26, 26, 62); doc.setFont(undefined, "bold");
         doc.text(ch.label + " :", mL, y); y += 6;
         doc.setTextColor(40, 40, 40); doc.setFont(undefined, "normal");
@@ -773,7 +789,7 @@ function App() {
       return (v === undefined || v === null || String(v).trim() === "") ? "-" : String(v);
     };
     // Champs réellement visibles (on ignore ceux masqués par showIf).
-    const champsVisibles = tplActif.champs.filter(ch => !ch.showIf || tplValues[ch.showIf] === true);
+    const champsVisibles = tplActif.champs.filter(ch => champVisible(ch, tplValues));
     // Validation des champs requis
     for (const ch of champsVisibles) {
       if (!ch.req) continue;
@@ -781,9 +797,34 @@ function App() {
       const vide = ch.type === "checkboxes" ? !(Array.isArray(v) && v.length) : !String(v || "").trim();
       if (vide) { setTplError("Merci de renseigner : " + ch.label); return; }
     }
+    if (!String(tplDemandeur.name || "").trim()) {
+      setTplError("Merci d'indiquer votre nom."); return;
+    }
     const emailClean = nettoyerEmail(tplDemandeur.email || "").trim();
     if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
       setTplError("Merci d'indiquer un email valide : c'est à cette adresse que le support répondra."); return;
+    }
+    // Côté administrateur DSI (non rattaché à un hôtel) : on ne crée pas de ticket,
+    // on génère seulement le PDF récapitulatif à télécharger.
+    if (isAdmin && !isSupervisor) {
+      setTplSending(true);
+      try {
+        const pdf = await genererTemplatePdf(tplActif, tplValues, null);
+        if (pdf && pdf.blob) {
+          const url = URL.createObjectURL(pdf.blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = pdf.nom; document.body.appendChild(a); a.click();
+          document.body.removeChild(a); URL.revokeObjectURL(url);
+          setTplOk("\u2713 PDF récapitulatif généré et téléchargé.");
+        } else {
+          setTplError("Impossible de générer le PDF.");
+        }
+      } catch (e) {
+        setTplError("Erreur lors de la génération du PDF : " + (e.message || e));
+      } finally {
+        setTplSending(false);
+      }
+      return;
     }
     setTplSending(true);
     try {
@@ -4728,6 +4769,8 @@ const nav = isAdmin
         const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
         // Onglet Accueil en tête de menu
         items.unshift({ p: "accueil", icon: "🏠", label: "Accueil" });
+        // Onglet Template (modèles de demandes internes) — côté admin, génère un PDF récapitulatif
+        items.push({ p: "templates", icon: "📋", label: "Template" });
         // Insère "Gérer les admins" juste après "Gérer les clients"
         if (isSuperAdmin) {
           // Menu Admin (super-admin) : regroupe admins, connexions, sécurité, suppression ticket
@@ -5652,7 +5695,7 @@ const nav = isAdmin
   }
 
   // ---------- CONTACT ----------
-  if (page === "templates" && isSupervisor) {
+  if (page === "templates" && (isSupervisor || isAdmin)) {
     const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit", boxSizing: "border-box" };
     const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
 
@@ -5685,8 +5728,8 @@ const nav = isAdmin
 
           React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14 } },
             React.createElement('div', null,
-              React.createElement('label', { style: labelStyle }, "Votre nom"),
-              React.createElement('input', { value: tplDemandeur.name, onChange: e => setTplDemandeur({ ...tplDemandeur, name: e.target.value }), style: inputStyle })
+              React.createElement('label', { style: labelStyle }, "Votre nom *"),
+              React.createElement('input', { value: tplDemandeur.name, onChange: e => setTplDemandeur({ ...tplDemandeur, name: e.target.value }), placeholder: "Prénom NOM", style: inputStyle })
             ),
             React.createElement('div', null,
               React.createElement('label', { style: labelStyle }, "Votre email *"),
@@ -5694,7 +5737,7 @@ const nav = isAdmin
             )
           ),
 
-          tplActif.champs.filter(ch => !ch.showIf || tplValues[ch.showIf] === true).map(ch =>
+          tplActif.champs.filter(ch => champVisible(ch, tplValues)).map(ch =>
             ch.type === "validation"
             ? React.createElement('div', { key: ch.k, style: { marginBottom: 14, marginTop: 6, background: "#FFF8E6", border: "2px solid #E8C34A", borderRadius: 10, padding: "14px 16px" } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
@@ -5720,6 +5763,13 @@ const nav = isAdmin
                 ? React.createElement('select', { value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle },
                     React.createElement('option', { value: "" }, "— Choisir —"),
                     (ch.options || []).map(opt => React.createElement('option', { key: opt, value: opt }, opt))
+                  )
+              : ch.type === "radio"
+                ? React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 10, marginTop: 4 } },
+                    (ch.options || []).map(opt => React.createElement('label', { key: opt, style: { display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#333", background: tplValues[ch.k] === opt ? "#F3EFDA" : "#FAFAFC", border: "1px solid " + (tplValues[ch.k] === opt ? "#E8C34A" : "#E8E8F0"), borderRadius: 7, padding: "8px 14px", cursor: "pointer" } },
+                      React.createElement('input', { type: "radio", name: ch.k, checked: tplValues[ch.k] === opt, onChange: () => setTplValues({ ...tplValues, [ch.k]: opt }) }),
+                      React.createElement('span', null, opt)
+                    ))
                   )
               : ch.type === "checkboxes"
                 ? React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 8, marginTop: 4 } },
@@ -7707,7 +7757,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : page === "templates" ? "Template — Demandes internes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
