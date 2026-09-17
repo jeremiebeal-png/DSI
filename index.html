@@ -384,8 +384,6 @@ function App() {
       return p ? p.toUpperCase() : null;
     } catch (e) { return null; }
   });
-  const [focusMode] = useState(() => { try { return new URLSearchParams(window.location.search).get("focus") === "1"; } catch (e) { return false; } });
-  const [focusRef] = useState(() => { try { const p = new URLSearchParams(window.location.search).get("ticket"); return p ? p.toUpperCase() : null; } catch (e) { return null; } });
 
   // ---------- RESPONSIVE / MOBILE ----------
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
@@ -6035,10 +6033,11 @@ const nav = isAdmin
     }
 
     if (tkSortPresta) list = list.slice().sort((a, b) => (a.prestataire ? 0 : 1) - (b.prestataire ? 0 : 1) || String(a.prestataire || "").localeCompare(String(b.prestataire || "")));
-    if (focusMode && focusRef) list = tickets.filter(t => (t.reference || "").toUpperCase() === focusRef);
+    if (openTicketId) list = tickets.filter(t => t.id === openTicketId);
 
     content = React.createElement('div', null,
-      !focusMode && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
+      openTicketId && React.createElement('button', { onClick: () => setOpenTicketId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux tickets"),
+      !openTicketId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
         [["open", "Ouverts"], ["waiting", "En projet"], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
         ),
@@ -6086,7 +6085,7 @@ const nav = isAdmin
       ),
       ticketsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des tickets..."),
       !ticketsLoading && list.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, rechercheActive ? ("Aucun ticket ne correspond à « " + ticketSearch.trim() + " ».") : "Aucun ticket dans cette catégorie."),
-      !focusMode && tableView && !ticketsLoading && list.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.03em" } },
+      !openTicketId && tableView && !ticketsLoading && list.length > 0 && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "6px 14px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.03em" } },
         React.createElement('span', { style: { width: 4, flexShrink: 0 } }),
         React.createElement('span', { style: { width: 95, flexShrink: 0 } }, "N° ticket"),
         React.createElement('span', { style: { width: "17%" } }, "Hôtel"),
@@ -6126,7 +6125,7 @@ const nav = isAdmin
         list.map(t => {
           const h = hotels.find(x => x.id === t.hotel_id);
           const hotelLabel = h ? h.name : (t.hotel_id ? "Hôtel inconnu" : "⚠️ Non assigné");
-          const isOpen = focusMode || openTicketId === t.id;
+          const isOpen = openTicketId === t.id;
           const msgs = ticketMsgs[t.id] || [];
           // Ticket "à traiter" = le dernier message vient du client (nouveau ticket
           // jamais répondu, OU nouvelle réponse client). On teinte la ligne en orange
@@ -6137,7 +6136,7 @@ const nav = isAdmin
           const bgLigne = aTraiter ? "#FFF7ED" : (t.en_attente ? "#FBF3E2" : (t.prestataire ? prestaColor(t.prestataire) + "0E" : "white"));
           const bordLigne = aTraiter ? "1px solid #FCD9A8" : (t.en_attente ? "1px solid #EBCF94" : (t.prestataire ? "1px solid " + prestaColor(t.prestataire) + "44" : "1px solid #E8E8F0"));
           return React.createElement('div', { key: t.id, style: { background: bgLigne, borderRadius: 10, border: bordLigne, overflow: "hidden" } },
-            React.createElement('div', { onClick: () => focusMode ? null : (closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : (t.reference ? window.open(window.location.pathname + "?ticket=" + encodeURIComponent(t.reference) + "&focus=1", "_blank", "width=1200,height=850,left=90,top=60") : toggleTicket(t.id)))), onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
+            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
               closeMode && React.createElement('input', { type: "checkbox", checked: closeSel.includes(t.id), onChange: () => toggleCloseSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer", accentColor: "#E53E3E" } }),
               tableView
@@ -7988,17 +7987,17 @@ const nav = isAdmin
         )
       )
     ),
-    !focusMode && sidebar,
+    sidebar,
     // Overlay sombre derrière le menu sur mobile
     isMobile && menuOpen && React.createElement('div', { onClick: () => setMenuOpen(false), style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 55 } }),
     React.createElement('div', { style: { flex: 1, padding: isMobile ? "0 0 18px" : "0 0 24px", overflowX: "hidden", width: "100%", minWidth: 0 } },
       // Barre supérieure mobile avec bouton hamburger
-      isMobile && !focusMode && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", marginBottom: 16 } },
+      isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", marginBottom: 16 } },
         React.createElement('button', { onClick: () => setMenuOpen(true), style: { background: "none", border: "none", cursor: "pointer", color: G, fontSize: 24, lineHeight: 1, padding: 0 } }, "☰"),
         React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 22 } })
       ),
       // Barre supérieure desktop : titre à gauche, compte et déconnexion à droite
-      !isMobile && !focusMode && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: "rgba(240,242,248,.92)", backdropFilter: "blur(6px)", borderBottom: "1px solid #E2E4EE", display: "flex", alignItems: "center", gap: 16, padding: "13px 22px", marginBottom: 18 } },
+      !isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: "rgba(240,242,248,.92)", backdropFilter: "blur(6px)", borderBottom: "1px solid #E2E4EE", display: "flex", alignItems: "center", gap: 16, padding: "13px 22px", marginBottom: 18 } },
         React.createElement('div', { style: { flex: 1, minWidth: 0 } },
           React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
           page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
@@ -8020,7 +8019,7 @@ const nav = isAdmin
       ),
       React.createElement('div', { style: { padding: isMobile ? "0 16px" : "0 22px" } },
         // Titre : uniquement sur mobile (sur desktop il est dans la barre supérieure)
-        !focusMode && isMobile && React.createElement('div', { style: { marginBottom: 16 } },
+        isMobile && React.createElement('div', { style: { marginBottom: 16 } },
           React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
           page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
         ),
