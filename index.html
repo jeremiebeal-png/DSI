@@ -40,7 +40,7 @@ const { useState, useEffect, useRef } = React;
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const PRESTATAIRES = ["Oracle","Micros","Support Hilton","Dormakaba","Support IHG","Hospitality","FreedomPay","Shiji","Bartech","Axians"];
 const PRESTA_COLOR = { "Oracle":"#185FA5","Micros":"#0F6E56","Support Hilton":"#BA7517","Dormakaba":"#534AB7","Support IHG":"#3B6D11","Hospitality":"#993C1D","FreedomPay":"#993556","Shiji":"#0C447C","Bartech":"#5F5E5A","Axians":"#A32D2D" };
-const prestaColor = (p) => PRESTA_COLOR[p] || "#888";
+const prestaColor = (p) => "#534AB7"; // couleur unique pour tous les prestataires
 // ====== MODE NUIT : preference par utilisateur ======
 function dsiGetTheme() { try { return localStorage.getItem("dsi-theme") === "dark" ? "dark" : "light"; } catch (e) { return "light"; } }
 function dsiApplyTheme(mode) {
