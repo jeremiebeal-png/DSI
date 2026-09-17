@@ -622,6 +622,7 @@ function App() {
         { k: "creerVpn", label: "Créer un VPN", type: "checkbox" },
         { k: "materiel", label: "Autre remarque", type: "textarea" },
         { k: "validateurEmail", label: "Email du validateur (RH / direction)", type: "validation", req: true },
+        { k: "rdvCreneaux", label: "Prendre rendez-vous avec le support DSI", type: "creneaux" },
       ],
     },
     {
@@ -759,6 +760,7 @@ function App() {
       const fmt = (ch) => {
         const v = values[ch.k];
         if (ch.type === "checkboxes") return (Array.isArray(v) && v.length) ? v.join(", ") : "—";
+        if (ch.type === "creneaux") { const _a = Array.isArray(v) ? v.filter(Boolean) : []; return _a.length ? _a.map(formatCreneau).join("  |  ") : "—"; }
         if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
         return (v === undefined || v === null || String(v).trim() === "") ? "—" : String(v);
       };
@@ -785,6 +787,7 @@ function App() {
     const formatVal = (ch) => {
       const v = tplValues[ch.k];
       if (ch.type === "checkboxes") return (Array.isArray(v) && v.length) ? v.join(", ") : "-";
+      if (ch.type === "creneaux") { const _a = Array.isArray(v) ? v.filter(Boolean) : []; return _a.length ? _a.map(formatCreneau).join("  |  ") : "-"; }
       if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
       return (v === undefined || v === null || String(v).trim() === "") ? "-" : String(v);
     };
@@ -887,6 +890,19 @@ function App() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ to: TEAM_EMAIL, cc: [SUPPORT_EMAIL], subject: refPrefix + subject, text: bodyTeam, replyTo: emailClean || undefined, fromName: (client ? client.name : "Client") })
         });
+      } catch (e) {}
+
+      // 3bis) Demande de rendez-vous : enregistre les créneaux proposés côté DSI (validation manuelle ensuite).
+      try {
+        const chRdv = tplActif.champs.find(c => c.type === "creneaux");
+        const creneauxProposes = chRdv ? ((tplValues[chRdv.k] || []).filter(Boolean)) : [];
+        if (creneauxProposes.length) {
+          await sb.rpc("creer_rdv", {
+            p_ticket_id: ticketId, p_reference: reference, p_hotel_id: myHotelId, p_hotel_name: nomHotel,
+            p_demandeur_nom: tplDemandeur.name || emailClean, p_demandeur_email: emailClean,
+            p_titre: tplActif.titre, p_creneaux: creneauxProposes
+          });
+        }
       } catch (e) {}
 
       // 3) Validation par email (optionnelle) : crée le lien à token et l'envoie au validateur.
@@ -1043,6 +1059,7 @@ function App() {
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention", grp: "rap" },
     { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité", grp: "rap" },
     { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types", grp: "sup" },
+    { key: "tickets",    page: "rdv-admin",       icon: "📅", label: "Rendez-vous", grp: "sup" },
     { key: "tickets",    page: "aide-interne",    icon: "📖", label: "Aide - Procédures Internes", grp: "sup" },
     { key: "docs",       page: "backups",          icon: "💾", label: "Backups" },
   ];
@@ -4274,6 +4291,37 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ================= RÉPONSES TYPES (macros) =================
   const [reponsesTypes, setReponsesTypes] = useState([]);
+  // ---------- RENDEZ-VOUS (créneaux proposés → validation DSI) ----------
+  const [rdvList, setRdvList] = useState([]);
+  const [rdvLoading, setRdvLoading] = useState(false);
+  const [rdvBusy, setRdvBusy] = useState(null);
+  const formatCreneau = (v) => { const d = new Date(v); return isNaN(d.getTime()) ? String(v || "") : d.toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }); };
+  const loadRdv = async () => {
+    setRdvLoading(true);
+    try { const { data, error } = await sb.rpc("lister_rdv_en_attente"); if (!error && Array.isArray(data)) setRdvList(data); } catch (e) {}
+    setRdvLoading(false);
+  };
+  const validerCreneau = async (row, creneau) => {
+    if (!creneau) return;
+    setRdvBusy(row.id);
+    try {
+      const { error } = await sb.rpc("confirmer_rdv", { p_id: row.id, p_creneau: creneau });
+      if (error) throw error;
+      const quand = formatCreneau(creneau);
+      const html =
+        '<div style="font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:auto;color:#333">' +
+        '<div style="background:#1a1a3e;color:#fff;padding:16px 20px;border-radius:10px 10px 0 0"><b>' + (row.hotel_name || "DSI Hotel") + '</b> — Rendez-vous confirmé</div>' +
+        '<div style="border:1px solid #E8E8F0;border-top:none;border-radius:0 0 10px 10px;padding:20px">' +
+        '<p>Bonjour ' + (row.demandeur_nom || "") + ',</p>' +
+        '<p>Votre demande de rendez-vous' + (row.reference ? ' (référence <b>' + row.reference + '</b>)' : "") + ' est confirmée :</p>' +
+        '<p style="text-align:center;margin:22px 0"><span style="display:inline-block;background:#F3EFDA;border:1px solid #E8C34A;border-radius:10px;padding:14px 22px;font-size:16px;font-weight:700;color:#1a1a3e">📅 ' + quand + '</span></p>' +
+        '<p style="font-size:13px;color:#555">Un technicien DSI Hotel vous contactera à ce créneau. Pour toute modification, répondez simplement à cet email.</p>' +
+        '</div></div>';
+      await fetch(EMAIL_API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: row.demandeur_email, subject: (row.reference ? "[" + row.reference + "] " : "") + "Rendez-vous confirmé — " + quand, text: "Votre rendez-vous est confirmé : " + quand + ". Un technicien DSI Hotel vous contactera à ce créneau.", html: html, fromName: "DSI Hotel" }) });
+      setRdvList(prev => prev.filter(x => x.id !== row.id));
+    } catch (e) { alert("Erreur lors de la validation : " + (e.message || e)); }
+    finally { setRdvBusy(null); }
+  };
   const [rtLoading, setRtLoading] = useState(false);
   const [rtModal, setRtModal] = useState(null);      // null | "new" | reponse object
   const [rtForm, setRtForm] = useState(null);        // { titre, contenu, images: [url] }
@@ -4311,6 +4359,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   useEffect(() => {
     if ((page === "reponses-types" || page === "tickets-admin") && isAdmin) loadReponsesTypes();
+    if (page === "rdv-admin" && isAdmin) loadRdv();
     if (page === "aide-interne" && isAdmin) loadAideProcs();
   }, [page, profile]);
 
@@ -5738,7 +5787,22 @@ const nav = isAdmin
           ),
 
           tplActif.champs.filter(ch => champVisible(ch, tplValues)).map(ch =>
-            ch.type === "validation"
+            ch.type === "creneaux"
+            ? React.createElement('div', { key: ch.k, style: { marginBottom: 14, marginTop: 6, background: "#FBF7EA", border: "1px solid " + G, borderRadius: 10, padding: "14px 16px" } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+                  React.createElement('span', { style: { fontSize: 18 } }, "📅"),
+                  React.createElement('span', { style: { fontSize: 14, fontWeight: 700, color: "#8A6D1F" } }, ch.label)
+                ),
+                React.createElement('div', { style: { fontSize: 12.5, color: "#6B5A1F", marginBottom: 10, lineHeight: 1.5 } }, "Proposez un ou plusieurs créneaux (date et heure). Le support DSI Hotel en validera un et vous recevrez la confirmation par email."),
+                ((Array.isArray(tplValues[ch.k]) && tplValues[ch.k].length) ? tplValues[ch.k] : [""]).map((val, i, arr) =>
+                  React.createElement('div', { key: i, style: { display: "flex", gap: 8, marginBottom: 8, alignItems: "center" } },
+                    React.createElement('input', { type: "datetime-local", value: val || "", onChange: e => { const base = ((Array.isArray(tplValues[ch.k]) && tplValues[ch.k].length) ? [...tplValues[ch.k]] : [""]); base[i] = e.target.value; setTplValues({ ...tplValues, [ch.k]: base }); }, style: { ...inputStyle, border: "1px solid #E8C34A", background: "white", flex: 1 } }),
+                    arr.length > 1 && React.createElement('button', { type: "button", onClick: () => { const base = [...((tplValues[ch.k]) || [])]; base.splice(i, 1); setTplValues({ ...tplValues, [ch.k]: (base.length ? base : [""]) }); }, style: { background: "none", border: "none", color: "#B03A2E", fontSize: 20, cursor: "pointer", padding: "0 6px", lineHeight: 1 } }, "×")
+                  )
+                ),
+                (((tplValues[ch.k] || [""]).length) < 3) && React.createElement('button', { type: "button", onClick: () => { const base = ((Array.isArray(tplValues[ch.k]) && tplValues[ch.k].length) ? [...tplValues[ch.k]] : [""]); setTplValues({ ...tplValues, [ch.k]: [...base, ""] }); }, style: { background: "none", border: "1px dashed " + G, color: G2, borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: "7px 12px" } }, "+ Ajouter un créneau")
+              )
+            : ch.type === "validation"
             ? React.createElement('div', { key: ch.k, style: { marginBottom: 14, marginTop: 6, background: "#FFF8E6", border: "2px solid #E8C34A", borderRadius: 10, padding: "14px 16px" } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
                   React.createElement('span', { style: { fontSize: 18 } }, "\u2705"),
@@ -7641,6 +7705,37 @@ const nav = isAdmin
     );
   }
 
+  if (page === "rdv-admin" && isAdmin) {
+    content = React.createElement('div', null,
+      React.createElement('p', { style: { margin: "0 0 18px", fontSize: 13, color: "#777" } }, "Demandes de rendez-vous en attente. Choisissez un créneau proposé : le client recevra automatiquement un email de confirmation."),
+      rdvLoading
+        ? React.createElement('div', { style: { textAlign: "center", padding: 40, color: "#999" } }, "Chargement…")
+        : rdvList.length === 0
+          ? React.createElement('div', { style: { textAlign: "center", padding: 48, background: "#FAFAFC", border: "1px dashed #DDD", borderRadius: 10, color: "#999" } }, "Aucune demande de rendez-vous en attente.")
+          : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 12 } },
+              rdvList.map(row =>
+                React.createElement('div', { key: row.id, style: { background: "#FFF", border: "1px solid #ECECF2", borderRadius: 10, padding: 16 } },
+                  React.createElement('div', { style: { display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 4 } },
+                    React.createElement('span', { style: { fontSize: 14, fontWeight: 700, color: SB } }, "🏨 " + (row.hotel_name || "—")),
+                    row.reference && React.createElement('span', { style: { fontSize: 12, color: "#999" } }, row.reference)
+                  ),
+                  React.createElement('div', { style: { fontSize: 12.5, color: "#666", marginBottom: 12 } }, (row.titre || "Demande") + " — " + (row.demandeur_nom || "") + " (" + (row.demandeur_email || "") + ")"),
+                  React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#8A6D1F", marginBottom: 8 } }, "Créneaux proposés :"),
+                  React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
+                    (Array.isArray(row.creneaux) ? row.creneaux : []).filter(Boolean).map((c, i) =>
+                      React.createElement('button', {
+                        key: i, disabled: rdvBusy === row.id,
+                        onClick: () => { if (window.confirm("Valider ce créneau ?\n\n" + formatCreneau(c) + "\n\nUn email de confirmation sera envoyé à " + (row.demandeur_email || "") + ".")) validerCreneau(row, c); },
+                        style: { background: "#F3EFDA", border: "1px solid " + G, color: "#1a1a3e", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: rdvBusy === row.id ? "default" : "pointer", padding: "10px 14px", opacity: rdvBusy === row.id ? 0.6 : 1 }
+                      }, "✓ " + formatCreneau(c))
+                    )
+                  )
+                )
+              )
+            )
+    );
+  }
+
   // ================= AIDE — PROCÉDURES INTERNES (admin) =================
   if (page === "aide-interne" && isAdmin) {
     const inp = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
@@ -7757,7 +7852,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : page === "templates" ? "Template — Demandes internes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "rdv-admin" ? "Rendez-vous" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : page === "templates" ? "Template — Demandes internes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
