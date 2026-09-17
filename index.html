@@ -6036,7 +6036,7 @@ const nav = isAdmin
 
     content = React.createElement('div', null,
       React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        [["open", "Ouverts"], ["waiting", "En attente"], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
+        [["open", "Ouverts"], ["waiting", "En projet"], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
         ),
         React.createElement('div', { style: { flex: "1 1 240px", position: "relative", minWidth: 180 } },
@@ -6134,7 +6134,7 @@ const nav = isAdmin
           const bgLigne = aTraiter ? "#FFF7ED" : (t.en_attente ? "#FBF3E2" : (t.prestataire ? prestaColor(t.prestataire) + "0E" : "white"));
           const bordLigne = aTraiter ? "1px solid #FCD9A8" : (t.en_attente ? "1px solid #EBCF94" : (t.prestataire ? "1px solid " + prestaColor(t.prestataire) + "44" : "1px solid #E8E8F0"));
           return React.createElement('div', { key: t.id, style: { background: bgLigne, borderRadius: 10, border: bordLigne, overflow: "hidden" } },
-            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
+            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : (t.reference ? window.open(window.location.pathname + "?ticket=" + encodeURIComponent(t.reference), "_blank", "width=1200,height=850,left=90,top=60") : toggleTicket(t.id))), onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
               closeMode && React.createElement('input', { type: "checkbox", checked: closeSel.includes(t.id), onChange: () => toggleCloseSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer", accentColor: "#E53E3E" } }),
               tableView
@@ -6165,7 +6165,7 @@ const nav = isAdmin
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status)),
                       ticketStateBadge(ticketState[t.id], t.status),
                       t.prestataire && React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prestaColor(t.prestataire), background: prestaColor(t.prestataire) + "1C", padding: "2px 8px", borderRadius: 20 } }, "🔗 " + t.prestataire),
-                      t.en_attente && React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: "#854F0B", background: "#FAEEDA", padding: "2px 8px", borderRadius: 20 } }, "⏸ En attente" + (t.date_attente ? " · " + new Date(t.date_attente).toLocaleDateString("fr-FR") : "")),
+                      t.en_attente && React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: "#854F0B", background: "#FAEEDA", padding: "2px 8px", borderRadius: 20 } }, "⏸ En projet" + (t.date_attente ? " · " + new Date(t.date_attente).toLocaleDateString("fr-FR") : "")),
                     ),
                     t.subject && React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "Objet : " + t.subject),
                     React.createElement('div', { style: { fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.contact_name || "?") + " — " + (t.message || "")),
@@ -6176,7 +6176,6 @@ const nav = isAdmin
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
               React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center", marginBottom: 14, paddingBottom: 12, borderBottom: "1px dashed #E2E2EA" } },
                 React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
-                t.reference && React.createElement('button', { onClick: (e) => { e.stopPropagation(); window.open(window.location.pathname + "?ticket=" + encodeURIComponent(t.reference), "_blank"); }, title: "Ouvrir ce ticket dans un nouvel onglet", style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "↗ Onglet"),
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && React.createElement('button', { onClick: () => genererAttestation(t), title: "Télécharger l'attestation de validation (PDF)", style: { padding: "7px 13px", background: "#EAF6EC", border: "1px solid #B5DBB9", color: "#256029", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "\uD83D\uDCC4 Attestation"),
                 t.status === "closed"
@@ -6242,7 +6241,7 @@ const nav = isAdmin
                 React.createElement('span', { style: { width: 1, height: 18, background: "#E0E0E8" } }),
                 React.createElement('label', { style: { fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
                   React.createElement('input', { type: "checkbox", checked: !!t.en_attente, onChange: async (e) => { const val = e.target.checked; const { error } = await sb.from("tickets").update({ en_attente: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, en_attente: val } : x)); else alert("Erreur : " + error.message); }, style: { width: 15, height: 15, cursor: "pointer" } }),
-                  "⏸ Projet en attente"
+                  "⏸ En projet"
                 ),
                 t.en_attente && React.createElement('input', { type: "date", value: t.date_attente || "", onChange: async (e) => { const val = e.target.value || null; const { error } = await sb.from("tickets").update({ date_attente: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, date_attente: val } : x)); else alert("Erreur : " + error.message); }, style: { padding: "4px 8px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
               ),
