@@ -1018,6 +1018,7 @@ function App() {
   // ---------- DOCUMENTATION TECHNIQUE (admin uniquement) ----------
   const [docs, setDocs] = useState([]);
   const [rappelsDus, setRappelsDus] = useState([]); // fiches dont le rappel est échu ou proche (accueil admin)
+  const [ticketsProjetsDus, setTicketsProjetsDus] = useState([]); // tickets "En projet" dont la date prévue est échue ou proche (accueil admin)
   const [docsLoading, setDocsLoading] = useState(false);
   const [docFiles, setDocFiles] = useState({});       // { docId: [fichiers] }
   const [docHotelId, setDocHotelId] = useState(null); // hôtel sélectionné dans l'onglet
@@ -3923,10 +3924,25 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!error && data) setRappelsDus(data);
   };
 
+  const loadTicketsProjetsDus = async () => {
+    // Tickets "En projet" (en_attente) dont la date prévue est échue ou arrive dans les 30 jours, tous hôtels.
+    const limite = new Date(); limite.setHours(0,0,0,0); limite.setDate(limite.getDate() + 30);
+    const limiteStr = limite.toISOString().slice(0, 10);
+    const { data, error } = await sb.from("tickets")
+      .select("id, subject, hotel_id, date_attente")
+      .eq("en_attente", true)
+      .neq("status", "closed")
+      .not("date_attente", "is", null)
+      .lte("date_attente", limiteStr)
+      .order("date_attente", { ascending: true });
+    if (!error && data) setTicketsProjetsDus(data);
+  };
+
   useEffect(() => {
     if (page === "rapports" && isAdmin) { loadRapports(); loadRapportEnvois(); }
     if ((page === "backups" || page === "accueil") && isAdmin) loadBackups();
     if (page === "accueil" && isAdmin) loadRappelsDus();
+    if (page === "accueil" && isAdmin) loadTicketsProjetsDus();
   }, [page, profile]);
 
   const openNewRapport = () => {
@@ -4936,6 +4952,20 @@ const nav = isAdmin
       const rappelsProches = (rappelsDus || []).filter(r => { const j = new Date(r.rappel_date + "T00:00:00"); const t = new Date(); t.setHours(0,0,0,0); return j.getTime() > t.getTime(); });
       if (rappelsEchus.length > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "⏰", rappelsEchus.length + " rappel" + (rappelsEchus.length > 1 ? "s" : "") + " à échéance", "Fiche" + (rappelsEchus.length > 1 ? "s" : "") + " à revoir (Care Pack, contrat, licence…)", "docs-techniques"));
       if (rappelsProches.length > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "⏰", rappelsProches.length + " rappel" + (rappelsProches.length > 1 ? "s" : "") + " à venir", "Échéance dans les 30 jours", "docs-techniques"));
+      // Tickets "En projet" dont la date prévue est échue ou proche. Clic → onglet Tickets filtré "En projet".
+      const projEchus = (ticketsProjetsDus || []).filter(r => { const j = new Date(r.date_attente + "T00:00:00"); const t = new Date(); t.setHours(0,0,0,0); return j.getTime() <= t.getTime(); });
+      const projProches = (ticketsProjetsDus || []).filter(r => { const j = new Date(r.date_attente + "T00:00:00"); const t = new Date(); t.setHours(0,0,0,0); return j.getTime() > t.getTime(); });
+      const alerteProjet = (couleur, bg, bord, titre, sousTitre) =>
+        React.createElement('div', { onClick: () => { setTicketFilter("waiting"); goTo("tickets-admin"); }, style: { flex: "1 1 260px", cursor: "pointer", background: bg, border: "1px solid " + bord, borderRadius: 12, padding: "16px 18px", display: "flex", alignItems: "center", gap: 14, transition: "transform .1s" } },
+          React.createElement('span', { style: { fontSize: 26, flexShrink: 0 } }, "🗂️"),
+          React.createElement('div', { style: { flex: 1 } },
+            React.createElement('div', { style: { fontSize: 22, fontWeight: 800, color: couleur, lineHeight: 1.1 } }, titre),
+            React.createElement('div', { style: { fontSize: 12.5, color: "#666", marginTop: 3 } }, sousTitre)
+          ),
+          React.createElement('span', { style: { fontSize: 16, color: couleur } }, "→")
+        );
+      if (projEchus.length > 0) alertes.push(alerteProjet("#C53030", "#FDECEC", "#F5B5B5", projEchus.length + " ticket" + (projEchus.length > 1 ? "s" : "") + " en projet à traiter", "Date prévue atteinte ou dépassée"));
+      if (projProches.length > 0) alertes.push(alerteProjet("#B7791F", "#FFFBEB", "#F0D98A", projProches.length + " ticket" + (projProches.length > 1 ? "s" : "") + " en projet à venir", "Date prévue dans les 30 jours"));
 
       content = React.createElement('div', null,
         // Bandeau de bienvenue
