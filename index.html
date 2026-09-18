@@ -5743,6 +5743,12 @@ const nav = isAdmin
           ),
           React.createElement('button', { onClick: openNewProcForm, style: { display: "flex", alignItems: "center", gap: 6, background: G, border: "none", color: "#111", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "10px 16px" } }, "＋ Nouvelle procédure")
         ),
+        React.createElement('div', { style: { background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 9, padding: "10px 14px", marginBottom: 10, fontSize: 12.5, color: "#7A5C0A", display: "flex", alignItems: "center", gap: 9 } },
+          React.createElement('span', { style: { fontSize: 16 } }, "📄"),
+          "Les procédures doivent être rédigées en texte et les pièces jointes en format ",
+          React.createElement('strong', null, "PDF uniquement"),
+          " (pas de Word, Excel ou image isolée)."
+        ),
         React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, background: "white", border: "1px solid #E8E8F0", borderRadius: 11, padding: "11px 15px", marginBottom: 18 } },
           React.createElement('span', { style: { opacity: .6 } }, "🔍"),
           React.createElement('input', { value: procAdminSearch, onChange: e => setProcAdminSearch(e.target.value), placeholder: "Rechercher une procédure, un mot-clé, un contenu…", style: { border: "none", outline: "none", background: "transparent", fontSize: 14, color: "#333", width: "100%" } })
