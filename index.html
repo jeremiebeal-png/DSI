@@ -42,6 +42,8 @@ const PRESTATAIRES = ["Oracle","Micros","Support Hilton","Dormakaba","Support IH
 const PRESTA_COLOR = { "Oracle":"#185FA5","Micros":"#0F6E56","Support Hilton":"#BA7517","Dormakaba":"#534AB7","Support IHG":"#3B6D11","Hospitality":"#993C1D","FreedomPay":"#993556","Shiji":"#0C447C","Bartech":"#5F5E5A","Axians":"#A32D2D" };
 const prestaColor = (p) => "#534AB7"; // couleur unique pour tous les prestataires
 const RDV_CRENEAUX = ["09h30 - 10h30", "10h30 - 11h30", "12h30 - 13h30", "14h30 - 15h30", "15h30 - 16h30", "16h30 - 17h30"];
+const semaineOuvree = (dateStr) => { const d = new Date(dateStr + "T00:00:00"); if (isNaN(d.getTime())) return []; const dow = (d.getDay() + 6) % 7; const monday = new Date(d); monday.setDate(d.getDate() - dow); const noms = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]; const out = []; for (let i = 0; i < 5; i++) { const x = new Date(monday); x.setDate(monday.getDate() + i); const iso = x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); out.push({ iso: iso, label: noms[i] + " " + String(x.getDate()).padStart(2, "0") + "/" + String(x.getMonth() + 1).padStart(2, "0") }); } return out; };
+const formatJourRdv = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d.getTime()) ? iso : d.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" }); };
 // ====== MODE NUIT : preference par utilisateur ======
 function dsiGetTheme() { try { return localStorage.getItem("dsi-theme") === "dark" ? "dark" : "light"; } catch (e) { return "light"; } }
 function dsiApplyTheme(mode) {
@@ -661,10 +663,10 @@ function App() {
   const [creneauxPris, setCreneauxPris] = useState([]); // créneaux déjà réservés pour la date d'arrivée
   useEffect(() => {
     const chC = tplActif && tplActif.champs.find(c => c.type === "creneau");
-    const d = tplValues.dateArrivee;
+    const d = tplValues.rdvJour;
     if (chC && d) { sb.rpc("creneaux_pris", { p_date: d }).then(({ data, error }) => { setCreneauxPris((!error && Array.isArray(data)) ? data : []); }); }
     else { setCreneauxPris([]); }
-  }, [tplActif, tplValues.dateArrivee]);
+  }, [tplActif, tplValues.rdvJour]);
   const [tplError, setTplError] = useState("");
   const [tplOk, setTplOk] = useState("");
 
@@ -771,7 +773,7 @@ function App() {
       const fmt = (ch) => {
         const v = values[ch.k];
         if (ch.type === "checkboxes") return (Array.isArray(v) && v.length) ? v.join(", ") : "—";
-        if (ch.type === "creneau") return v ? v : "—";
+        if (ch.type === "creneau") return v ? ((values.rdvJour ? formatJourRdv(values.rdvJour) + " · " : "") + v) : "—";
         if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
         return (v === undefined || v === null || String(v).trim() === "") ? "—" : String(v);
       };
@@ -798,7 +800,7 @@ function App() {
     const formatVal = (ch) => {
       const v = tplValues[ch.k];
       if (ch.type === "checkboxes") return (Array.isArray(v) && v.length) ? v.join(", ") : "-";
-      if (ch.type === "creneau") return v ? v : "-";
+      if (ch.type === "creneau") return v ? ((tplValues.rdvJour ? formatJourRdv(tplValues.rdvJour) + " · " : "") + v) : "-";
       if (ch.type === "checkbox") return v === true ? "Oui" : "Non";
       return (v === undefined || v === null || String(v).trim() === "") ? "-" : String(v);
     };
@@ -907,7 +909,7 @@ function App() {
       try {
         const chCr = tplActif.champs.find(c => c.type === "creneau");
         const creneauChoisi = chCr ? tplValues[chCr.k] : null;
-        const dateCr = tplValues.dateArrivee;
+        const dateCr = tplValues.rdvJour;
         if (creneauChoisi && dateCr) {
           const { data: okCr } = await sb.rpc("reserver_creneau", { p_date: dateCr, p_creneau: creneauChoisi, p_ticket_id: ticketId, p_reference: reference, p_hotel_id: myHotelId, p_hotel_name: nomHotel, p_demandeur_nom: tplDemandeur.name || emailClean, p_demandeur_email: emailClean, p_collaborateur: tplValues.nom || "" });
           if (okCr === false) { alert("Le créneau " + creneauChoisi + " vient d'être réservé par quelqu'un d'autre pour cette date. Votre demande est bien enregistrée ; nous vous recontacterons pour convenir d'un autre horaire."); }
@@ -5779,13 +5781,27 @@ const nav = isAdmin
                 ),
                 !tplValues.dateArrivee
                 ? React.createElement('div', { style: { fontSize: 12.5, color: "#9A7B2F" } }, "Renseignez d'abord la « Date d'arrivée » ci-dessus pour voir les créneaux disponibles.")
-                : React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
-                    RDV_CRENEAUX.map(cr => {
-                      const pris = creneauxPris.includes(cr);
-                      const sel = tplValues[ch.k] === cr;
-                      return React.createElement('button', { key: cr, type: "button", disabled: pris, onClick: () => setTplValues({ ...tplValues, [ch.k]: sel ? "" : cr }), style: { padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: pris ? "not-allowed" : "pointer", border: sel ? "2px solid " + G2 : "1px solid #E0D6B0", background: pris ? "#EEE" : (sel ? G : "white"), color: pris ? "#AAA" : (sel ? "#111" : "#6B5A1F"), textDecoration: pris ? "line-through" : "none" } }, pris ? (cr + " · complet") : cr);
-                    })
-                  )
+                : (() => {
+                    const jours = semaineOuvree(tplValues.dateArrivee);
+                    const jourOk = jours.some(j => j.iso === tplValues.rdvJour);
+                    return React.createElement('div', null,
+                      React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginBottom: 6 } }, "Jour (semaine de l'arrivée) :"),
+                      React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 } },
+                        jours.map(j =>
+                          React.createElement('button', { key: j.iso, type: "button", onClick: () => setTplValues({ ...tplValues, rdvJour: j.iso, [ch.k]: "" }), style: { padding: "7px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: tplValues.rdvJour === j.iso ? "2px solid " + G2 : "1px solid #E0D6B0", background: tplValues.rdvJour === j.iso ? G : "white", color: tplValues.rdvJour === j.iso ? "#111" : "#6B5A1F" } }, j.label)
+                        )
+                      ),
+                      !jourOk
+                      ? React.createElement('div', { style: { fontSize: 12.5, color: "#9A7B2F" } }, "Choisissez un jour ci-dessus pour voir les créneaux.")
+                      : React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
+                          RDV_CRENEAUX.map(cr => {
+                            const pris = creneauxPris.includes(cr);
+                            const sel = tplValues[ch.k] === cr;
+                            return React.createElement('button', { key: cr, type: "button", disabled: pris, onClick: () => setTplValues({ ...tplValues, [ch.k]: sel ? "" : cr }), style: { padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: pris ? "not-allowed" : "pointer", border: sel ? "2px solid " + G2 : "1px solid #E0D6B0", background: pris ? "#EEE" : (sel ? G : "white"), color: pris ? "#AAA" : (sel ? "#111" : "#6B5A1F"), textDecoration: pris ? "line-through" : "none" } }, pris ? (cr + " · complet") : cr);
+                          })
+                        )
+                    );
+                  })()
               )
             : ch.type === "validation"
             ? React.createElement('div', { key: ch.k, style: { marginBottom: 14, marginTop: 6, background: "#FFF8E6", border: "2px solid #E8C34A", borderRadius: 10, padding: "14px 16px" } },
