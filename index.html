@@ -545,6 +545,7 @@ function App() {
   const [selId, setSelId] = useState(null);
   const [editCid, setEditCid] = useState(null);
   const [procq, setProcq] = useState(""); // barre de recherche unifiée (hôtels + procédures)
+  const [showHotelPick, setShowHotelPick] = useState(false); // menu "changer d'hôtel"
 
   const [showProcForm, setShowProcForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -5687,9 +5688,16 @@ const nav = isAdmin
       // Ligne de contexte : hôtel courant + compteur (masquée quand une procédure est ouverte)
       !selId && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap", fontSize: 13, color: "#555" } },
         React.createElement('span', null, "Procédures de :"),
-        React.createElement('span', { style: { display: "inline-flex", alignItems: "center", gap: 8, background: "white", border: "1px solid #E8E8F0", borderRadius: 20, padding: "6px 8px 6px 12px", fontWeight: 600, color: "#1a1a3e" } },
+        React.createElement('span', { style: { display: "inline-flex", alignItems: "center", gap: 8, background: "white", border: "1px solid #E8E8F0", borderRadius: 20, padding: "6px 8px 6px 12px", fontWeight: 600, color: "#1a1a3e", position: "relative" } },
           hotels.find(h => h.id === editCid)?.name || "—",
-          React.createElement('button', { onClick: () => { const el = document.getElementById("procUniSearch"); if (el) el.focus(); }, style: { border: "none", background: G + "26", color: G2, borderRadius: 14, fontSize: 11, padding: "3px 9px", cursor: "pointer", fontWeight: 600 } }, "changer")
+          React.createElement('button', { onClick: () => setShowHotelPick(v => !v), style: { border: "none", background: G + "26", color: G2, borderRadius: 14, fontSize: 11, padding: "3px 9px", cursor: "pointer", fontWeight: 600 } }, showHotelPick ? "fermer ✕" : "changer"),
+          showHotelPick && React.createElement('div', { style: { position: "absolute", top: "calc(100% + 6px)", left: 0, minWidth: 260, maxHeight: "50vh", overflowY: "auto", background: "white", border: "1px solid #E8E8F0", borderRadius: 12, boxShadow: "0 18px 50px rgba(20,20,50,.16)", padding: 6, zIndex: 50 } },
+            hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('div', { key: h.id, onClick: () => { setEditCid(h.id); setSelId(null); setKbCat("all"); setProcq(""); setShowHotelPick(false); }, style: { display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: h.id === editCid ? 700 : 500, color: h.id === editCid ? G2 : "#333", background: h.id === editCid ? G + "14" : "transparent" }, onMouseEnter: e => { if (h.id !== editCid) e.currentTarget.style.background = "#f5f5fb"; }, onMouseLeave: e => { if (h.id !== editCid) e.currentTarget.style.background = "transparent"; } },
+              React.createElement('span', { style: { fontSize: 15 } }, "🏨"),
+              React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, h.name),
+              h.id === editCid && React.createElement('span', { style: { fontSize: 12, color: G2 } }, "✓")
+            ))
+          )
         ),
         React.createElement('span', { style: { marginLeft: "auto", fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, procedures.length + (procedures.length > 1 ? " procédures" : " procédure"))
       ),
@@ -5756,21 +5764,36 @@ const nav = isAdmin
   if (page === "knowledge" && !isAdmin) {
     const cats = [...new Set(procedures.map(p => p.category))];
     let liste = kbCat === "all" ? procedures : procedures.filter(p => p.category === kbCat);
-    if (search.trim()) {
-      const s = search.trim().toLowerCase();
-      liste = liste.filter(p => (p.title || "").toLowerCase().includes(s) || (p.content || "").toLowerCase().includes(s) || (p.mots_cles || "").toLowerCase().includes(s));
-    }
     liste = liste.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
     if (selId) liste = procedures.filter(p => p.id === selId);
     content = React.createElement('div', null,
       procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
       selId && React.createElement('button', { onClick: () => setSelId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux procédures"),
-      !selId && React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
-        React.createElement('div', { style: { flex: "1 1 220px", position: "relative", minWidth: 180 } },
-          React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
-          React.createElement('input', { type: "text", value: search, onChange: e => setSearch(e.target.value), placeholder: "Rechercher une procédure…", style: { width: "100%", padding: "8px 32px", borderRadius: 20, border: "1px solid #DDD", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" } }),
-          search && React.createElement('button', { onClick: () => setSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
-        )
+      // ===== BARRE DE RECHERCHE (même style que l'admin) =====
+      !selId && React.createElement('div', { style: { position: "relative", marginBottom: 16 } },
+        React.createElement('div', { style: { position: "relative" } },
+          React.createElement('span', { style: { position: "absolute", left: 15, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "#b3b3c4", pointerEvents: "none" } }, "🔍"),
+          React.createElement('input', { id: "procUniSearchClient", type: "text", autoComplete: "off", value: procq, onChange: e => setProcq(e.target.value), placeholder: "Rechercher une procédure…", style: { width: "100%", padding: "13px 42px", border: `1.5px solid ${procq ? G : "#dcdce6"}`, borderRadius: 13, fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit", background: "white" } }),
+          procq && React.createElement('button', { onClick: () => setProcq(""), title: "Effacer", style: { position: "absolute", right: 13, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#aaa", fontSize: 16, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
+        ),
+        procq.trim() && (() => {
+          const nq = procq.trim().toLowerCase();
+          const inc = (v) => (v || "").toLowerCase().includes(nq);
+          const pres = procedures.filter(p => inc(p.title) || inc(p.content) || inc(p.mots_cles)).slice(0, 10);
+          const resStyle = { display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, cursor: "pointer" };
+          const icStyle = { width: 34, height: 34, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0, background: G + "24" };
+          const items = pres.length
+            ? pres.map(p => React.createElement('div', { key: "p" + p.id, onClick: () => { setSelId(p.id); loadFilesFor(p.id); setProcq(""); }, onMouseDown: e => e.preventDefault(), style: resStyle, onMouseEnter: e => e.currentTarget.style.background = "#f5f5fb", onMouseLeave: e => e.currentTarget.style.background = "transparent" },
+                React.createElement('div', { style: icStyle }, CAT_ICONS[p.category] || "📄"),
+                React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.title),
+                  React.createElement('div', { style: { fontSize: 11.5, color: "#8a8aa0" } }, p.category)
+                ),
+                React.createElement('span', { style: { fontSize: 11, color: G2, fontWeight: 600, whiteSpace: "nowrap" } }, "ouvrir →")
+              ))
+            : [React.createElement('div', { key: "empty", style: { padding: "16px 12px", color: "#999", fontSize: 13 } }, "Aucune procédure pour « " + procq.trim() + " ».")];
+          return React.createElement('div', { style: { position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, background: "white", border: "1px solid #E8E8F0", borderRadius: 14, boxShadow: "0 18px 50px rgba(20,20,50,.16)", padding: 8, zIndex: 40, maxHeight: "60vh", overflowY: "auto" } }, items);
+        })()
       ),
       !selId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
