@@ -9,6 +9,11 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
@@ -31,6 +36,11 @@
   html.dsi-dark #root svg, html.dsi-dark #root iframe,
   html.dsi-dark #root [data-no-invert], html.dsi-dark #root .dsi-no-invert { filter: invert(1) hue-rotate(180deg); }
   [contenteditable][data-ph]:empty:before { content: attr(data-ph); color: #b3b3c4; pointer-events: none; display: block; }
+  .pin-red{width:20px;height:20px;border-radius:50% 50% 50% 0;background:#E5484D;border:2.5px solid #fff;transform:rotate(-45deg);box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .leaflet-tooltip.htip{background:#1a1a3e;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:12.5px;padding:5px 9px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .leaflet-tooltip.htip::before{border-top-color:#1a1a3e}
+  .marker-cluster-small,.marker-cluster-medium,.marker-cluster-large{background:rgba(229,72,77,.25)}
+  .marker-cluster-small div,.marker-cluster-medium div,.marker-cluster-large div{background:#E5484D;color:#fff;font-weight:700}
 </style>
 </head>
 <body>
@@ -585,6 +595,51 @@ function App() {
 
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientSearch, setClientSearch] = useState(""); // recherche dans la page Gérer les clients
+  const [showClientMap, setShowClientMap] = useState(false); // modale carte des clients
+  const [mapGeoStatus, setMapGeoStatus] = useState(""); // état du géocodage
+  // Carte des clients (Leaflet) : géocodage des adresses via Nominatim, cache navigateur.
+  useEffect(() => {
+    if (!showClientMap) return;
+    let cancelled = false, mapObj = null;
+    const t = setTimeout(() => {
+      const el = document.getElementById("clientMap");
+      if (!el || !window.L) { setMapGeoStatus("Carte indisponible (librairie non chargée)."); return; }
+      mapObj = window.L.map(el).setView([46.6, 2.4], 6);
+      window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(mapObj);
+      const cluster = window.L.markerClusterGroup ? window.L.markerClusterGroup({ maxClusterRadius: 44, showCoverageOnHover: false }) : null;
+      if (cluster) mapObj.addLayer(cluster);
+      const icon = window.L.divIcon({ className: "", html: '<div class="pin-red"></div>', iconSize: [20, 20], iconAnchor: [10, 18] });
+      let cache = {}; try { cache = JSON.parse(localStorage.getItem("geoCache") || "{}"); } catch (e) {}
+      const avecAdresse = (hotels || []).filter(h => (h.adresse_ville || h.adresse_rue));
+      setMapGeoStatus("Localisation des clients… (0/" + avecAdresse.length + ")");
+      let done = 0, placed = 0;
+      (async () => {
+        for (const h of avecAdresse) {
+          if (cancelled) break;
+          const q = [h.adresse_rue, h.adresse_cp, h.adresse_ville, h.adresse_pays || "France"].filter(Boolean).join(", ");
+          let ll = cache[q];
+          if (!ll) {
+            try {
+              const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q));
+              const j = await r.json();
+              if (j && j[0]) { ll = [parseFloat(j[0].lat), parseFloat(j[0].lon)]; cache[q] = ll; try { localStorage.setItem("geoCache", JSON.stringify(cache)); } catch (e) {} }
+            } catch (e) {}
+            await new Promise(res => setTimeout(res, 1100)); // respecte la limite Nominatim (1 req/s)
+          }
+          done++;
+          if (ll && !cancelled) {
+            const mk = window.L.marker(ll, { icon }).bindTooltip(h.name, { direction: "top", offset: [0, -16], className: "htip" });
+            mk.on("click", () => { setShowClientMap(false); openEditClientForm(h); });
+            if (cluster) cluster.addLayer(mk); else mk.addTo(mapObj);
+            placed++;
+          }
+          if (!cancelled) setMapGeoStatus("Localisation des clients… (" + done + "/" + avecAdresse.length + ")");
+        }
+        if (!cancelled) setMapGeoStatus(placed + " client(s) placé(s) / " + avecAdresse.length + " avec adresse.");
+      })();
+    }, 80);
+    return () => { cancelled = true; clearTimeout(t); if (mapObj) { try { mapObj.remove(); } catch (e) {} } };
+  }, [showClientMap]);
   const [clientStats, setClientStats] = useState(null); // { tickets, procedures, docs } | "loading" | null
 
   // Compteurs récap d'un hôtel (tickets, procédures liées, fiches infrastructure).
@@ -5143,7 +5198,20 @@ const nav = isAdmin
           }),
           clientSearch && React.createElement('button', { onClick: () => setClientSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
         ),
+        React.createElement('button', { onClick: () => setShowClientMap(true), title: "Voir les clients sur la carte", style: { display: "flex", alignItems: "center", gap: 6, background: "white", border: "1px solid #DDD", color: "#444", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: "9px 15px", whiteSpace: "nowrap" } }, "🗺️ Carte"),
         React.createElement('button', { onClick: openNewClientForm, style: { display: "flex", alignItems: "center", gap: 5, background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "9px 14px", whiteSpace: "nowrap" } }, "+ Ajouter un client")
+      ),
+      showClientMap && React.createElement('div', { onClick: (e) => { if (e.target === e.currentTarget) setShowClientMap(false); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "10px" : "30px", zIndex: 90 } },
+        React.createElement('div', { onClick: (e) => e.stopPropagation(), style: { background: "white", borderRadius: 16, width: "min(1100px,96vw)", height: "min(88vh,860px)", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,.4)" } },
+          React.createElement('div', { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", borderBottom: "1px solid #E8E8F0" } },
+            React.createElement('div', null,
+              React.createElement('b', { style: { fontSize: 16 } }, "🗺️ Carte des clients"),
+              React.createElement('span', { style: { fontSize: 12, color: "#888", marginLeft: 10 } }, mapGeoStatus)
+            ),
+            React.createElement('button', { onClick: () => setShowClientMap(false), style: { border: "none", background: "#F0F0F5", width: 34, height: 34, borderRadius: "50%", fontSize: 16, cursor: "pointer", color: "#555" } }, "✕")
+          ),
+          React.createElement('div', { id: "clientMap", style: { flex: 1, width: "100%" } })
+        )
       ),
       showClientForm && React.createElement('div', { onClick: (e) => { if (e.target === e.currentTarget) setShowClientForm(false); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? "12px" : "40px 20px", zIndex: 80, overflowY: "auto" } },
         React.createElement('div', { onClick: (e) => e.stopPropagation(), style: { background: "white", borderRadius: 12, border: `1px solid ${G}35`, padding: isMobile ? 18 : 24, width: 640, maxWidth: "100%", boxShadow: "0 12px 44px rgba(0,0,0,.3)", marginBottom: 30 } },
