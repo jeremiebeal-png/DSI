@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carte clients</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.min.css"/>
+<style>
+  :root{ --gold:#C9A84C; --gold2:#A8872E; --navy:#1a1a3e; --line:#E8E8F0; --red:#E5484D; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#F4F4F8;color:var(--navy)}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px 16px 40px}
+  h1{font-size:22px;margin:0 0 4px}.sub{color:#777;font-size:13px;margin-bottom:16px}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  .b{padding:8px 15px;border:1.5px solid #dcdce6;background:#fff;border-radius:22px;font-size:13px;cursor:pointer;font-weight:600;color:#555}
+  .b:hover{border-color:var(--gold);color:var(--gold2)}
+  .b.red{background:var(--red);border:none;color:#fff;box-shadow:0 3px 10px rgba(229,72,77,.3)}
+  #map{height:70vh;min-height:460px;border-radius:16px;border:1px solid var(--line);box-shadow:0 4px 18px rgba(20,20,50,.06);z-index:0}
+  .pin{width:20px;height:20px;border-radius:50% 50% 50% 0;background:var(--red);border:2.5px solid #fff;transform:rotate(-45deg);box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .leaflet-tooltip.htip{background:var(--navy);color:#fff;border:none;border-radius:8px;font-weight:600;font-size:12.5px;padding:5px 9px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .leaflet-tooltip.htip::before{border-top-color:var(--navy)}
+  .marker-cluster-small,.marker-cluster-medium,.marker-cluster-large{background:rgba(229,72,77,.25)}
+  .marker-cluster-small div,.marker-cluster-medium div,.marker-cluster-large div{background:var(--red);color:#fff;font-weight:700}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--navy);color:#fff;padding:12px 18px;border-radius:12px;font-size:13.5px;box-shadow:0 10px 34px rgba(0,0,0,.3);opacity:0;transition:.25s;z-index:9999;display:flex;gap:10px}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.toast b{color:var(--gold)}
+  .foot{margin-top:12px;font-size:12px;color:#999;line-height:1.6;border-top:1px dashed #d8d8e2;padding-top:12px}
+</style></head>
+<body><div class="wrap">
+  <h1>Carte des clients — France</h1>
+  <div class="sub">Maquette (données d'exemple). Carte type Google Maps : zoom molette / +−, glisser, points de taille fixe, regroupement automatique à Paris. Clic sur un client → sa fiche.</div>
+  <div class="bar">
+    <button class="b red" id="bAll">🇫🇷 Toute la France</button>
+    <button class="b" id="bParis">🗼 Zoom Paris</button>
+    <span style="font-size:12px;color:#888">Les points proches se regroupent (bulle rouge) ; en zoomant ils s'éclatent.</span>
+  </div>
+  <div id="map"></div>
+  <div class="foot">Fond de carte OpenStreetMap/Carto (nécessite Internet). Survol d'un point = nom de l'hôtel ; clic = ouverture de la fiche (simulée ici par le message en bas). Une fois intégré au portail, ce sera la vraie fiche client.</div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script>
+const CLIENTS = [{"name": "Aloft - Strasbourg", "city": "Strasbourg", "lat": 48.5734, "lng": 7.7521}, {"name": "BW - Mulhouse", "city": "Mulhouse", "lat": 47.7508, "lng": 7.3359}, {"name": "Best Western Mulhouse Salvator", "city": "Metz", "lat": 49.1193, "lng": 6.1757}, {"name": "Cézanne - Aix", "city": "Aix-en-Provence", "lat": 43.5297, "lng": 5.4474}, {"name": "Courchevel - Six Senses", "city": "Courchevel", "lat": 45.4154, "lng": 6.6349}, {"name": "Dolia", "city": "Dijon", "lat": 47.322, "lng": 5.0415}, {"name": "DijonHIE", "city": "Dijon", "lat": 47.3167, "lng": 5.05}, {"name": "Sheraton", "city": "Lyon", "lat": 45.764, "lng": 4.8357}, {"name": "République (Lyon)", "city": "Lyon", "lat": 45.7578, "lng": 4.832}, {"name": "Grand Hôtel de Bordeaux", "city": "Bordeaux", "lat": 44.8378, "lng": -0.5792}, {"name": "Radisson - Nantes", "city": "Nantes", "lat": 47.2184, "lng": -1.5536}, {"name": "Novotel - Lille", "city": "Lille", "lat": 50.6292, "lng": 3.0573}, {"name": "Ibis - Rennes", "city": "Rennes", "lat": 48.1173, "lng": -1.6778}, {"name": "Mercure - Toulouse", "city": "Toulouse", "lat": 43.6047, "lng": 1.4442}, {"name": "AC - Le Bourget", "city": "Le Bourget", "lat": 48.9366, "lng": 2.425}, {"name": "DT - Boulogne", "city": "Boulogne-Billancourt", "lat": 48.8352, "lng": 2.2409}, {"name": "Sheraton CDG", "city": "Roissy", "lat": 49.0097, "lng": 2.5479}, {"name": "Canopy - Trocadéro", "city": "Paris 16", "lat": 48.863, "lng": 2.287}, {"name": "CP - République", "city": "Paris 3", "lat": 48.867, "lng": 2.363}, {"name": "CT - Gare du Nord", "city": "Paris 10", "lat": 48.88, "lng": 2.357}, {"name": "Grand Hôtel Du Palais Royal", "city": "Paris 1", "lat": 48.8637, "lng": 2.337}, {"name": "Grand Powers", "city": "Paris 8", "lat": 48.87, "lng": 2.301}, {"name": "HDDA - Dame des Arts", "city": "Paris 6", "lat": 48.853, "lng": 2.343}, {"name": "HGI - La Villette", "city": "Paris 19", "lat": 48.895, "lng": 2.386}, {"name": "Lumen", "city": "Paris 1", "lat": 48.866, "lng": 2.331}, {"name": "Bastille", "city": "Paris 11", "lat": 48.853, "lng": 2.369}, {"name": "Cezanne Boutique", "city": "Paris 8", "lat": 48.874, "lng": 2.312}, {"name": "Canopy - Bercy", "city": "Paris 12", "lat": 48.839, "lng": 2.383}, {"name": "Novotel - Montparnasse", "city": "Paris 14", "lat": 48.842, "lng": 2.323}];
+const map = L.map('map', { zoomControl:true, scrollWheelZoom:true }).setView([46.6,2.4],6);
+// Fond principal : OpenStreetMap. Repli automatique sur Carto si besoin.
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'© OpenStreetMap', maxZoom:19
+});
+const carto = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:19
+});
+osm.addTo(map);
+let switched=false;
+osm.on('tileerror', ()=>{ if(!switched){ switched=true; map.removeLayer(osm); carto.addTo(map); } });
+
+const toast=document.getElementById('toast');let tT=null;
+function openFiche(n){toast.innerHTML='➡️ Ouverture de la fiche : <b>'+n.replace(/</g,'&lt;')+'</b>';toast.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>toast.classList.remove('show'),2200);}
+
+const icon = L.divIcon({ className:'', html:'<div class="pin"></div>', iconSize:[20,20], iconAnchor:[10,18] });
+const cluster = L.markerClusterGroup({ maxClusterRadius:44, spiderfyOnMaxZoom:true, showCoverageOnHover:false });
+const markers=[];
+CLIENTS.forEach(c=>{
+  const mk=L.marker([c.lat,c.lng],{icon}).bindTooltip(c.name,{className:'htip',direction:'top',offset:[0,-16]});
+  mk.on('click',()=>openFiche(c.name));
+  cluster.addLayer(mk); markers.push(mk);
+});
+map.addLayer(cluster);
+const grp=L.featureGroup(markers);
+document.getElementById('bAll').onclick=()=>map.setView([46.6,2.4],6);
+document.getElementById('bParis').onclick=()=>map.setView([48.862,2.345],12);
+setTimeout(()=>map.invalidateSize(),200);
+</script>
+</body></html>
