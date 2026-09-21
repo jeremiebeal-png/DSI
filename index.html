@@ -30,6 +30,7 @@
   html.dsi-dark #root img, html.dsi-dark #root video, html.dsi-dark #root canvas,
   html.dsi-dark #root svg, html.dsi-dark #root iframe,
   html.dsi-dark #root [data-no-invert], html.dsi-dark #root .dsi-no-invert { filter: invert(1) hue-rotate(180deg); }
+  [contenteditable][data-ph]:empty:before { content: attr(data-ph); color: #b3b3c4; pointer-events: none; display: block; }
 </style>
 </head>
 <body>
@@ -263,6 +264,8 @@ function RichHtml(props) {
 function RichEditor(props) {
   const ref = useRef(null);
   const lastValue = useRef("");
+  const fileRef = useRef(null);
+  const [busyImg, setBusyImg] = useState(false);
   // Au montage : injecte le contenu initial (nécessaire pour afficher les images
   // d'une réponse type qu'on ouvre en modification).
   useEffect(() => {
@@ -285,6 +288,30 @@ function RichEditor(props) {
     props.onChange && props.onChange(html);
   };
   const cmd = (command) => { document.execCommand(command, false, null); emit(); if (ref.current) ref.current.focus(); };
+  // Insère une image À L'EMPLACEMENT DU CURSEUR (sinon en fin de contenu).
+  const insertImgAtCaret = (url) => {
+    if (!url) return;
+    if (ref.current) ref.current.focus();
+    const imgHtml = '<img src="' + url + '" style="max-width:100%;height:auto;border-radius:6px;margin:6px 0;" />';
+    let ok = false;
+    try { ok = document.execCommand("insertHTML", false, imgHtml); } catch (e) { ok = false; }
+    if (!ok && ref.current) ref.current.innerHTML = ref.current.innerHTML + imgHtml; // repli
+    emit();
+  };
+  const uploadAndInsert = async (list) => {
+    if (!props.onUploadImage) return;
+    const files = Array.from(list || []).filter(f => f && f.type && f.type.indexOf("image") === 0);
+    if (!files.length) return;
+    setBusyImg(true);
+    for (const f of files) { try { const url = await props.onUploadImage(f); insertImgAtCaret(url); } catch (e) {} }
+    setBusyImg(false);
+  };
+  const onPaste = props.onUploadImage ? (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    const imgs = [];
+    for (let i = 0; i < items.length; i++) { const it = items[i]; if (it.kind === "file" && it.type.indexOf("image") === 0) { const b = it.getAsFile(); if (b) imgs.push(b); } }
+    if (imgs.length) { e.preventDefault(); uploadAndInsert(imgs); }
+  } : undefined;
   const btn = (label, command, title) => React.createElement('button', {
     type: "button", title: title, onMouseDown: e => { e.preventDefault(); cmd(command); },
     style: { padding: "4px 9px", border: "1px solid #DDD", background: "#FFF", borderRadius: 5, fontSize: 12, cursor: "pointer", fontWeight: command === "bold" ? 700 : 400, fontStyle: command === "italic" ? "italic" : "normal" }
@@ -294,11 +321,12 @@ function RichEditor(props) {
       btn("G", "bold", "Gras"),
       btn("I", "italic", "Italique"),
       btn("• Liste", "insertUnorderedList", "Liste à puces"),
-      React.createElement('button', { type: "button", onMouseDown: e => { e.preventDefault(); props.onInsertImage && props.onInsertImage(); }, style: { padding: "4px 9px", border: "1px solid #C9A84C", background: "#FFFDF5", color: "#8A6D1F", borderRadius: 5, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "🖼 Insérer une image"),
-      props.busy && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Envoi de l'image…")
+      React.createElement('button', { type: "button", onMouseDown: e => { e.preventDefault(); if (props.onInsertImage) props.onInsertImage(); else if (props.onUploadImage && fileRef.current) fileRef.current.click(); }, style: { padding: "4px 9px", border: "1px solid #C9A84C", background: "#FFFDF5", color: "#8A6D1F", borderRadius: 5, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "🖼 Insérer une image"),
+      (props.busy || busyImg) && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Envoi de l'image…"),
+      props.onUploadImage && React.createElement('input', { ref: fileRef, type: "file", accept: "image/*", multiple: true, style: { display: "none" }, onChange: e => { uploadAndInsert(e.target.files); e.target.value = ""; } })
     ),
     React.createElement('div', {
-      ref: ref, contentEditable: true, onInput: emit, "data-ph": props.placeholder || "",
+      ref: ref, contentEditable: true, onInput: emit, onPaste: onPaste, "data-ph": props.placeholder || "",
       style: { minHeight: 160, maxHeight: 340, overflowY: "auto", padding: "10px 12px", fontSize: 13, lineHeight: 1.6, outline: "none", background: "#FFF" }
     })
   );
@@ -1034,6 +1062,7 @@ function App() {
   // au navigateur par les requêtes de liste, et reste protégée en base.
   const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,subject,message,category,priority,status,source,reference,created_at,closed_at,prestataire,en_attente,date_attente";
   const [replyText, setReplyText] = useState("");
+  const [replyHtml, setReplyHtml] = useState(""); // contenu riche (HTML) de la réponse admin — images inline au curseur
   const [replyBusy, setReplyBusy] = useState(false);
   const [fwdTicket, setFwdTicket] = useState(null);   // ticket en cours de transfert
   const [fwdEmail, setFwdEmail] = useState("");        // destinataire du transfert
@@ -3271,6 +3300,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (openTicketId === id) { setOpenTicketId(null); return; }
     setOpenTicketId(id);
     setReplyText("");
+    setReplyHtml("");
     setReplyNote("");
     setReplyFiles([]);
     setReplyImageUrls([]);
@@ -3463,11 +3493,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   const sendReply = async (ticket) => {
-    if (!replyText.trim() && !(replyImageUrls || []).length) return;
+    const richHasContent = /<img\b/i.test(replyHtml || "") || (replyHtml || "").replace(/<[^>]+>|&nbsp;|\s/gi, "").length > 0;
+    if (!replyText.trim() && !richHasContent && !(replyImageUrls || []).length) return;
     setReplyBusy(true);
     setReplyNote("");
     const body = stripSignature(replyText).trim();
-    if (!body && !(replyImageUrls || []).length) { setReplyBusy(false); return; }
+    if (!body && !richHasContent && !(replyImageUrls || []).length) { setReplyBusy(false); return; }
     const senderName = isAdmin ? "Support DSI Hotel" : (client ? client.name : "Client");
     const senderRole = isAdmin ? "admin" : "client";
 
@@ -3499,6 +3530,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       // Filet de sécurité : supprime tout <img cid:...> résiduel non apparié
       h = h.replace(/<img[^>]*\ssrc=["']cid:[^"']*["'][^>]*>/gi, "");
       msgHtml = h;
+    } else if (richHasContent) {
+      // Éditeur riche : le HTML contient déjà le texte ET les images en ligne (au curseur).
+      const safe = (typeof sanitizeRichHtml === "function") ? sanitizeRichHtml(replyHtml) : replyHtml;
+      msgHtml = '<div style="font-size:13px;color:#333;line-height:1.6;">' + safe + '</div>';
     } else if (imgsReponse.length > 0) {
       const imgsHtml = imgsReponse
         .map(u => '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:4px;margin:6px 0;display:block;" />')
@@ -3524,6 +3559,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
     setTicketMsgs(prev => ({ ...prev, [ticket.id]: [...(prev[ticket.id] || []), inserted] }));
     setReplyText("");
+    setReplyHtml("");
     setReplyHtmlOverride(null);
     // Le support vient de répondre : l'état "nouveau/réponse" est levé pour ce ticket
     if (isAdmin) setTicketState(prev => ({ ...prev, [ticket.id]: { kind: null, since: null } }));
@@ -3578,6 +3614,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         // de l'email (et non en pièce jointe), sauf si une réponse type riche pilote déjà le HTML.
         const inlineImgs = (imageUrlsToSend || []).filter(u => typeof u === "string" && /^https?:\/\//.test(u));
         let htmlOverride = replyHtmlOverride ? replyHtmlOverride.html : null;
+        // Éditeur riche : on envoie son HTML tel quel (texte + images en ligne au bon endroit).
+        if (!htmlOverride && richHasContent) {
+          htmlOverride = (typeof sanitizeRichHtml === "function") ? sanitizeRichHtml(replyHtml) : replyHtml;
+        }
         if (!htmlOverride && inlineImgs.length > 0) {
           htmlOverride = textToHtml(body) + '<div style="margin-top:8px;">' +
             inlineImgs.map(u => '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:4px;margin:6px 0;display:block;" />').join("") +
@@ -3672,7 +3712,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ---------- TICKETS : RÉPONDRE PUIS FERMER (un seul geste) ----------
   const replyAndClose = async (ticket) => {
-    if (!replyText.trim()) return;
+    if (!replyText.trim() && !/<img\b/i.test(replyHtml || "")) return;
     await sendReply(ticket);        // enregistre + envoie la réponse
     await closeTicket(ticket, false); // ferme sans 2e email (le client vient déjà de recevoir la réponse)
     setReplyNote("Réponse envoyée et ticket fermé ✅");
@@ -4541,20 +4581,20 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const r = reponsesTypes.find(x => x.id === rid);
     if (!r) return;
     const plain = r.contenu || "";
-    const html = (r.contenu_html && r.contenu_html.trim()) ? sanitizeRichHtml(r.contenu_html) : null;
-    // Images de la réponse type : on les mémorise pour qu'elles soient jointes à
-    // l'email (et rattachées au ticket), même si le texte est ensuite retouché
-    // — dans ce cas l'override HTML saute, mais les images restent en pièces jointes.
     const imgs = Array.isArray(r.images) ? r.images.filter(u => typeof u === "string" && /^https?:\/\//.test(u)) : [];
-    if (imgs.length) setReplyImageUrls(prev => Array.from(new Set([...(prev || []), ...imgs])));
-    setReplyText(prev => {
-      const p = (prev || "").trim();
-      const nouveau = p ? (p + "\n\n" + plain) : plain;
-      // Si on part d'une zone vide, on peut envoyer le HTML riche ; sinon on garde le texte
-      if (html && !p) setReplyHtmlOverride({ html, plain });
-      else setReplyHtmlOverride(null);
-      return nouveau;
-    });
+    // On insère la réponse type DIRECTEMENT dans l'éditeur riche (texte + images en ligne),
+    // avec les vraies URLs d'images (les cid: sont remplacés dans l'ordre).
+    let html = (r.contenu_html && r.contenu_html.trim()) ? sanitizeRichHtml(r.contenu_html) : null;
+    if (html) {
+      let i = 0;
+      html = html.replace(/<img[^>]*\ssrc=["']cid:[^"']*["'][^>]*>/gi, () => { const u = imgs[i++]; return u ? '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:6px;margin:6px 0;" />' : ""; });
+      html = html.replace(/<img[^>]*\ssrc=["']cid:[^"']*["'][^>]*>/gi, "");
+    } else {
+      html = textToHtml(plain) + (imgs.length ? ('<div style="margin-top:8px;">' + imgs.map(u => '<img src="' + u + '" style="max-width:100%;height:auto;border-radius:6px;margin:6px 0;" />').join("") + '</div>') : "");
+    }
+    setReplyHtmlOverride(null);
+    setReplyHtml(prev => (prev && prev.trim()) ? (prev + "<br>" + html) : html);
+    setReplyText(prev => { const p = (prev || "").trim(); return p ? (p + "\n\n" + plain) : plain; });
   };
 
   const openNewProjet = () => {
@@ -6418,7 +6458,7 @@ const nav = isAdmin
                   : React.createElement(React.Fragment, null,
                       React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                       React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
-                      React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
+                      React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
                       React.createElement('button', { onClick: () => { setFwdTicket(t); setFwdEmail(""); setFwdNote(""); setFwdMsg(""); }, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "↪ Faire suivre"),
                       React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "7px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
                     )
@@ -6510,7 +6550,15 @@ const nav = isAdmin
                 })()
               ),
               t.status !== "closed" && React.createElement('div', null,
-                React.createElement('textarea', { value: isOpen ? replyText : "", onChange: e => { const v = e.target.value; setReplyText(v); if (replyHtmlOverride && v.trim() !== (replyHtmlOverride.plain || "").trim()) setReplyHtmlOverride(null); }, onPaste: e => { const items = (e.clipboardData && e.clipboardData.items) || []; const imgs = []; for (let i = 0; i < items.length; i++) { const it = items[i]; if (it.kind === "file" && it.type.indexOf("image") === 0) { const blob = it.getAsFile(); if (blob) { const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg").replace("svg+xml", "svg"); imgs.push(new File([blob], "image-collee-" + Date.now() + "-" + i + "." + ext, { type: blob.type })); } } } if (imgs.length) { e.preventDefault(); setReplyNote("🖼 Image collée : envoi en cours…"); imgs.forEach(async (blob) => { try { const url = await uploadToStorage(blob, "tickets"); setReplyImageUrls(prev => Array.from(new Set([...(prev || []), url]))); setReplyNote("🖼 Image intégrée au message ✅"); } catch (err) { setReplyNote("Erreur : impossible d'envoyer l'image collée (" + (err.message || err) + ")."); } }); } }, placeholder: "Votre réponse au client... (vous pouvez coller une image directement)", style: { width: "100%", minHeight: 210, padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, resize: "vertical", fontFamily: "inherit", marginBottom: 8 } }),
+                React.createElement('div', { style: { marginBottom: 8 } },
+                  React.createElement(RichEditor, {
+                    key: "reply-" + t.id,
+                    value: isOpen ? replyHtml : "",
+                    onChange: html => { setReplyHtml(html); const tmp = document.createElement("div"); tmp.innerHTML = html; setReplyText((tmp.innerText || tmp.textContent || "").replace(/ /g, " ")); if (replyHtmlOverride) setReplyHtmlOverride(null); },
+                    onUploadImage: async (file) => await uploadToStorage(file, "tickets"),
+                    placeholder: "Votre réponse au client… (collez ou insérez une image où vous voulez, elle s'insère à l'endroit du curseur)"
+                  })
+                ),
                 // ---- Personnes en copie (Cc) : cases à cocher + ajout manuel ----
                 (() => {
                   const contactPrincipal = t.contact_email ? nettoyerEmail(t.contact_email) : "";
@@ -6583,7 +6631,7 @@ const nav = isAdmin
                   React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                   React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                   React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
-                  React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && replyText.trim()), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && replyText.trim()) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && replyText.trim()) ? 1 : 0.5 } }, "Répondre et fermer"),
+                  React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
                   React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
                 ),
                 // Éditeur de remarque interne (admin only) — vue cartes, ticket ouvert
