@@ -5231,11 +5231,14 @@ const nav = isAdmin
               ligne("Client depuis", dateCreation),
               React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, paddingTop: 10, borderTop: "1px solid #E8E8F0" } },
                 [
-                  { l: "Tickets", v: clientStats && clientStats !== "loading" ? clientStats.tickets : null, icon: "🎫" },
-                  { l: "Procédures", v: clientStats && clientStats !== "loading" ? clientStats.procedures : null, icon: "📚" },
-                  { l: "Fiches infra.", v: clientStats && clientStats !== "loading" ? clientStats.docs : null, icon: "🗂️" },
-                ].map((s, i) => React.createElement('div', { key: i, style: { flex: "1 1 120px", background: "white", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px" } },
-                  React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 3 } }, s.icon + " " + s.l),
+                  { l: "Tickets", v: clientStats && clientStats !== "loading" ? clientStats.tickets : null, icon: "🎫", act: () => { setShowClientForm(false); setEditCid(h.id); setTicketSearch(h.name || ""); go("tickets-admin"); } },
+                  { l: "Procédures", v: clientStats && clientStats !== "loading" ? clientStats.procedures : null, icon: "📚", act: () => { setShowClientForm(false); setEditCid(h.id); go("proc-admin"); } },
+                  { l: "Fiches infra.", v: clientStats && clientStats !== "loading" ? clientStats.docs : null, icon: "🗂️", act: () => { setShowClientForm(false); setEditCid(h.id); go("docs-techniques"); } },
+                ].map((s, i) => React.createElement('div', { key: i, onClick: s.act, title: "Ouvrir « " + s.l + " » de " + (h.name || "ce client"), style: { flex: "1 1 120px", background: "white", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px", cursor: "pointer", transition: "border-color .12s, box-shadow .12s" }, onMouseEnter: e => { e.currentTarget.style.borderColor = G; e.currentTarget.style.boxShadow = "0 2px 10px rgba(201,168,76,.18)"; }, onMouseLeave: e => { e.currentTarget.style.borderColor = "#E8E8F0"; e.currentTarget.style.boxShadow = "none"; } },
+                  React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 3, display: "flex", alignItems: "center", justifyContent: "space-between" } },
+                    React.createElement('span', null, s.icon + " " + s.l),
+                    React.createElement('span', { style: { color: G2, fontSize: 12, fontWeight: 700 } }, "→")
+                  ),
                   React.createElement('div', { style: { fontSize: 19, fontWeight: 700, color: "#1a1a3e" } }, clientStats === "loading" ? "…" : String(s.v))
                 ))
               )
