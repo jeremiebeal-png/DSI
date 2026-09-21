@@ -5641,8 +5641,10 @@ const nav = isAdmin
           React.createElement('button', { onClick: submitProcForm, disabled: savingProc, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingProc ? 0.6 : 1 } }, savingProc ? "Enregistrement..." : (editingId ? "Enregistrer" : "Publier"))
         )
       ),
-      // Recherche + compteur (comme les tickets)
-      React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
+      // Bouton retour quand une procédure est ouverte (comme les tickets)
+      selId && React.createElement('button', { onClick: () => setSelId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux procédures"),
+      // Recherche + compteur (masqués quand une procédure est ouverte)
+      !selId && React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
         React.createElement('div', { style: { flex: "1 1 220px", position: "relative", minWidth: 180 } },
           React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
           React.createElement('input', { type: "text", value: search, onChange: e => setSearch(e.target.value), placeholder: "Rechercher une procédure…", style: { width: "100%", padding: "8px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" } }),
@@ -5650,12 +5652,12 @@ const nav = isAdmin
         ),
         React.createElement('span', { style: { fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, procedures.length + (procedures.length > 1 ? " procédures" : " procédure"))
       ),
-      // Chips de filtre par catégorie
-      React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
+      // Chips de filtre par catégorie (masqués quand une procédure est ouverte)
+      !selId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
       ),
       procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des procédures..."),
-      // Liste plate type ticket : clic = dépliage inline (contenu + fichiers + Modifier/Supprimer)
+      // Liste type ticket : au clic, la liste se réduit à la procédure ouverte (affichée en plein)
       (() => {
         let liste = kbCat === "all" ? procedures : procedures.filter(p => p.category === kbCat);
         if (search.trim()) {
@@ -5663,17 +5665,18 @@ const nav = isAdmin
           liste = liste.filter(p => (p.title || "").toLowerCase().includes(s) || (p.content || "").toLowerCase().includes(s) || (p.mots_cles || "").toLowerCase().includes(s));
         }
         liste = liste.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
+        if (selId) liste = procedures.filter(p => p.id === selId);
         if (!procsLoading && liste.length === 0) {
           return React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, procedures.length === 0 ? "Aucune procédure pour ce client. Ajoutez-en une !" : "Aucune procédure ne correspond à votre recherche.");
         }
-        return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
           liste.map(p => {
             const isOpen = selId === p.id;
             const files = procFiles[p.id] || [];
             const imgs = files.filter(f => isImageFile(f.file_name));
             const docs = files.filter(f => !isImageFile(f.file_name));
-            return React.createElement('div', { key: p.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
-              React.createElement('div', { onClick: () => { const willOpen = selId !== p.id; setSelId(willOpen ? p.id : null); if (willOpen) loadFilesFor(p.id); }, style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 } },
+            return React.createElement('div', { key: p.id, style: { background: "white", borderRadius: 10, border: `1px solid ${isOpen ? G + "55" : "#E8E8F0"}`, overflow: "hidden" } },
+              React.createElement('div', { onClick: () => { const willOpen = selId !== p.id; setSelId(willOpen ? p.id : null); if (willOpen) loadFilesFor(p.id); }, style: { padding: "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: 60, boxSizing: "border-box" } },
                 React.createElement('div', { style: { width: 38, height: 38, background: G + "18", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 } }, CAT_ICONS[p.category] || "📄"),
                 React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                   React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
@@ -5684,18 +5687,25 @@ const nav = isAdmin
                 ),
                 React.createElement('span', { style: { fontSize: 12, color: "#AAA", flexShrink: 0 } }, isOpen ? "▲" : "▼")
               ),
-              isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
-                React.createElement('div', { style: { fontSize: 13, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: (imgs.length || docs.length) ? 14 : 8 } }, p.content),
-                imgs.length > 0 && React.createElement('div', { style: { marginBottom: docs.length ? 12 : 0 } },
+              isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 20, background: "#FAFAFC" } },
+                React.createElement('div', { style: { fontSize: 13.5, color: "#444", lineHeight: 1.7, marginBottom: (imgs.length || docs.length) ? 16 : 4 } },
+                  (p.content || "").split("\n").map((line, i) => {
+                    if (!line) return React.createElement('div', { key: i, style: { height: 6 } });
+                    if (/^\d+\./.test(line)) { const num = line.match(/^\d+/)[0]; return React.createElement('div', { key: i, style: { display: "flex", gap: 7, margin: "4px 0" } }, React.createElement('span', { style: { color: G, fontWeight: 500, minWidth: 16 } }, num + "."), React.createElement('span', null, line.replace(/^\d+\.\s*/, ""))); }
+                    if (line.startsWith("⚠️") || line.startsWith("🔒")) return React.createElement('div', { key: i, style: { background: "#FFFDF0", border: "1px solid #F0E0A0", borderRadius: 6, padding: "7px 11px", margin: "8px 0", fontSize: 12, color: "#744" } }, line);
+                    return React.createElement('p', { key: i, style: { margin: "3px 0" } }, line);
+                  })
+                ),
+                imgs.length > 0 && React.createElement('div', { style: { marginBottom: docs.length ? 14 : 0 } },
                   React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
                   React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
-                    imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 90, height: 90, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
+                    imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 110, height: 110, objectFit: "cover", borderRadius: 8, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
                   )
                 ),
-                docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES" }),
-                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F8" } },
-                  React.createElement('button', { onClick: (e) => { e.stopPropagation(); openEditProcForm(p); }, style: { padding: "7px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✏️ Modifier"),
-                  React.createElement('button', { onClick: (e) => { e.stopPropagation(); if (window.confirm("Supprimer la procédure « " + (p.title || "") + " » ?")) deleteProc(p.id); }, style: { padding: "7px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🗑 Supprimer")
+                docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES", onOpenImage: openViewer }),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
+                  React.createElement('button', { onClick: (e) => { e.stopPropagation(); openEditProcForm(p); }, style: { padding: "8px 15px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12.5, cursor: "pointer", fontWeight: 500 } }, "✏️ Modifier"),
+                  React.createElement('button', { onClick: (e) => { e.stopPropagation(); if (window.confirm("Supprimer la procédure « " + (p.title || "") + " » ?")) deleteProc(p.id); }, style: { padding: "8px 15px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12.5, cursor: "pointer", fontWeight: 500 } }, "🗑 Supprimer")
                 )
               )
             );
@@ -5714,26 +5724,28 @@ const nav = isAdmin
       liste = liste.filter(p => (p.title || "").toLowerCase().includes(s) || (p.content || "").toLowerCase().includes(s) || (p.mots_cles || "").toLowerCase().includes(s));
     }
     liste = liste.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
+    if (selId) liste = procedures.filter(p => p.id === selId);
     content = React.createElement('div', null,
       procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
-      React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
+      selId && React.createElement('button', { onClick: () => setSelId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux procédures"),
+      !selId && React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
         React.createElement('div', { style: { flex: "1 1 220px", position: "relative", minWidth: 180 } },
           React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
           React.createElement('input', { type: "text", value: search, onChange: e => setSearch(e.target.value), placeholder: "Rechercher une procédure…", style: { width: "100%", padding: "8px 32px", borderRadius: 20, border: "1px solid #DDD", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" } }),
           search && React.createElement('button', { onClick: () => setSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
         )
       ),
-      React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
+      !selId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
       ),
-      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
         liste.map(p => {
           const isOpen = selId === p.id;
           const files = procFiles[p.id] || [];
           const imgs = files.filter(f => isImageFile(f.file_name));
           const docs = files.filter(f => !isImageFile(f.file_name));
-          return React.createElement('div', { key: p.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
-            React.createElement('div', { onClick: () => { const willOpen = selId !== p.id; setSelId(willOpen ? p.id : null); if (willOpen) loadFilesFor(p.id); }, style: { padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 } },
+          return React.createElement('div', { key: p.id, style: { background: "white", borderRadius: 10, border: `1px solid ${isOpen ? G + "55" : "#E8E8F0"}`, overflow: "hidden" } },
+            React.createElement('div', { onClick: () => { const willOpen = selId !== p.id; setSelId(willOpen ? p.id : null); if (willOpen) loadFilesFor(p.id); }, style: { padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, minHeight: 60, boxSizing: "border-box" } },
               React.createElement('div', { style: { width: 38, height: 38, background: G + "18", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 } }, CAT_ICONS[p.category] || "📄"),
               React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                 React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
@@ -5744,18 +5756,25 @@ const nav = isAdmin
               ),
               React.createElement('span', { style: { fontSize: 12, color: "#AAA", flexShrink: 0 } }, isOpen ? "▲" : "▼")
             ),
-            isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
-              React.createElement('div', { style: { fontSize: 13, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: (imgs.length || docs.length) ? 14 : 8 } }, p.content),
-              imgs.length > 0 && React.createElement('div', { style: { marginBottom: docs.length ? 12 : 0 } },
+            isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 20, background: "#FAFAFC" } },
+              React.createElement('div', { style: { fontSize: 13.5, color: "#444", lineHeight: 1.7, marginBottom: (imgs.length || docs.length) ? 16 : 4 } },
+                (p.content || "").split("\n").map((line, i) => {
+                  if (!line) return React.createElement('div', { key: i, style: { height: 6 } });
+                  if (/^\d+\./.test(line)) { const num = line.match(/^\d+/)[0]; return React.createElement('div', { key: i, style: { display: "flex", gap: 7, margin: "4px 0" } }, React.createElement('span', { style: { color: G, fontWeight: 500, minWidth: 16 } }, num + "."), React.createElement('span', null, line.replace(/^\d+\.\s*/, ""))); }
+                  if (line.startsWith("⚠️") || line.startsWith("🔒")) return React.createElement('div', { key: i, style: { background: "#FFFDF0", border: "1px solid #F0E0A0", borderRadius: 6, padding: "7px 11px", margin: "8px 0", fontSize: 12, color: "#744" } }, line);
+                  return React.createElement('p', { key: i, style: { margin: "3px 0" } }, line);
+                })
+              ),
+              imgs.length > 0 && React.createElement('div', { style: { marginBottom: docs.length ? 14 : 0 } },
                 React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
                 React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
-                  imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 90, height: 90, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
+                  imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 110, height: 110, objectFit: "cover", borderRadius: 8, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
                 )
               ),
-              docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES" }),
-              React.createElement('div', { style: { marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+              docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES", onOpenImage: openViewer }),
+              React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" } },
                 React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Problème non résolu ?"),
-                React.createElement('button', { onClick: (e) => { e.stopPropagation(); go("contact"); }, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 11, fontWeight: 500, cursor: "pointer", padding: "6px 12px" } }, "📧 Contacter le support →")
+                React.createElement('button', { onClick: (e) => { e.stopPropagation(); go("contact"); }, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px" } }, "📧 Contacter le support →")
               )
             )
           );
