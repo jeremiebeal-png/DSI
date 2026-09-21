@@ -5641,70 +5641,126 @@ const nav = isAdmin
           React.createElement('button', { onClick: submitProcForm, disabled: savingProc, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "6px 12px", opacity: savingProc ? 0.6 : 1 } }, savingProc ? "Enregistrement..." : (editingId ? "Enregistrer" : "Publier"))
         )
       ),
-      procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des procédures..."),
-      cats.length === 0 && !showProcForm && !procsLoading && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune procédure pour ce client. Ajoutez-en une !"),
-      cats.map(cat => React.createElement('div', { key: cat, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden", marginBottom: 10 } },
-        React.createElement('div', { style: { padding: "9px 15px", background: "#F8F8FC", borderBottom: "1px solid #EEE", display: "flex", alignItems: "center", gap: 8 } },
-          React.createElement('span', null, "📁"),
-          React.createElement('span', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e" } }, cat),
-          React.createElement('span', { style: { marginLeft: "auto", fontSize: 10, color: "#AAA" } }, procedures.filter(p => p.category === cat).length + " procédure(s)")
+      // Recherche + compteur (comme les tickets)
+      React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
+        React.createElement('div', { style: { flex: "1 1 220px", position: "relative", minWidth: 180 } },
+          React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
+          React.createElement('input', { type: "text", value: search, onChange: e => setSearch(e.target.value), placeholder: "Rechercher une procédure…", style: { width: "100%", padding: "8px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" } }),
+          search && React.createElement('button', { onClick: () => setSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
         ),
-        procedures.filter(p => p.category === cat).map(p => React.createElement('div', { key: p.id, style: { padding: "9px 15px", borderBottom: "1px solid #F4F4F8", display: "flex", alignItems: "center", gap: 9 } },
-          React.createElement('span', { style: { fontSize: 14 } }, "📄"),
-          p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐"),
-          React.createElement('span', { style: { flex: 1, fontSize: 12, color: "#333" } }, p.title),
-          React.createElement('button', { onClick: () => openEditProcForm(p), style: { padding: "3px 8px", background: "none", border: `1px solid ${G}44`, borderRadius: 5, color: G, fontSize: 11, cursor: "pointer" } }, "Modifier"),
-          React.createElement('button', { onClick: () => deleteProc(p.id), style: { padding: "3px 7px", background: "none", border: "1px solid #FFCDD2", borderRadius: 5, color: "#E53E3E", fontSize: 11, cursor: "pointer", marginLeft: 4 } }, "✕")
-        ))
-      ))
+        React.createElement('span', { style: { fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, procedures.length + (procedures.length > 1 ? " procédures" : " procédure"))
+      ),
+      // Chips de filtre par catégorie
+      React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
+        ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
+      ),
+      procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement des procédures..."),
+      // Liste plate type ticket : clic = dépliage inline (contenu + fichiers + Modifier/Supprimer)
+      (() => {
+        let liste = kbCat === "all" ? procedures : procedures.filter(p => p.category === kbCat);
+        if (search.trim()) {
+          const s = search.trim().toLowerCase();
+          liste = liste.filter(p => (p.title || "").toLowerCase().includes(s) || (p.content || "").toLowerCase().includes(s) || (p.mots_cles || "").toLowerCase().includes(s));
+        }
+        liste = liste.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
+        if (!procsLoading && liste.length === 0) {
+          return React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, procedures.length === 0 ? "Aucune procédure pour ce client. Ajoutez-en une !" : "Aucune procédure ne correspond à votre recherche.");
+        }
+        return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          liste.map(p => {
+            const isOpen = selId === p.id;
+            const files = procFiles[p.id] || [];
+            const imgs = files.filter(f => isImageFile(f.file_name));
+            const docs = files.filter(f => !isImageFile(f.file_name));
+            return React.createElement('div', { key: p.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
+              React.createElement('div', { onClick: () => { const willOpen = selId !== p.id; setSelId(willOpen ? p.id : null); if (willOpen) loadFilesFor(p.id); }, style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 } },
+                React.createElement('div', { style: { width: 38, height: 38, background: G + "18", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 } }, CAT_ICONS[p.category] || "📄"),
+                React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                  React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                    React.createElement('span', { style: { fontWeight: 600, fontSize: 13.5, color: "#1a1a3e" } }, p.title),
+                    React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category),
+                    p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐")
+                  )
+                ),
+                React.createElement('span', { style: { fontSize: 12, color: "#AAA", flexShrink: 0 } }, isOpen ? "▲" : "▼")
+              ),
+              isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
+                React.createElement('div', { style: { fontSize: 13, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: (imgs.length || docs.length) ? 14 : 8 } }, p.content),
+                imgs.length > 0 && React.createElement('div', { style: { marginBottom: docs.length ? 12 : 0 } },
+                  React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
+                  React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
+                    imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 90, height: 90, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
+                  )
+                ),
+                docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES" }),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F8" } },
+                  React.createElement('button', { onClick: (e) => { e.stopPropagation(); openEditProcForm(p); }, style: { padding: "7px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✏️ Modifier"),
+                  React.createElement('button', { onClick: (e) => { e.stopPropagation(); if (window.confirm("Supprimer la procédure « " + (p.title || "") + " » ?")) deleteProc(p.id); }, style: { padding: "7px 14px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🗑 Supprimer")
+                )
+              )
+            );
+          })
+        );
+      })()
     );
   }
 
   // ---------- CLIENT : PROCÉDURES ----------
   if (page === "knowledge" && !isAdmin) {
     const cats = [...new Set(procedures.map(p => p.category))];
-    const pinned = procedures.filter(p => p.pinned);
-    let filtered = kbCat === "all" ? procedures : procedures.filter(p => p.category === kbCat);
+    let liste = kbCat === "all" ? procedures : procedures.filter(p => p.category === kbCat);
     if (search.trim()) {
       const s = search.trim().toLowerCase();
-      filtered = filtered.filter(p => p.title.toLowerCase().includes(s) || p.content.toLowerCase().includes(s));
+      liste = liste.filter(p => (p.title || "").toLowerCase().includes(s) || (p.content || "").toLowerCase().includes(s) || (p.mots_cles || "").toLowerCase().includes(s));
     }
+    liste = liste.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
     content = React.createElement('div', null,
       procsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
-      pinned.length > 0 && kbCat === "all" && !search.trim() && React.createElement('div', { style: { marginBottom: 22 } },
-        React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#888", marginBottom: 10, letterSpacing: "0.5px" } }, "⭐ PROCÉDURES LES PLUS UTILES"),
-        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(220px,1fr))", gap: 12 } },
-          pinned.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: `1.5px solid ${G}55`, padding: 15, cursor: "pointer", position: "relative" } },
-            React.createElement('div', { style: { position: "absolute", top: 10, right: 10, fontSize: 13 } }, "⭐"),
-            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9, marginBottom: 8 } },
-              React.createElement('div', { style: { width: 30, height: 30, background: G + "18", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 } }, CAT_ICONS[p.category] || "📄"),
-              React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category)
-            ),
-            React.createElement('div', { style: { fontWeight: 500, fontSize: 12, color: "#1a1a3e", marginBottom: 5 } }, p.title),
-            React.createElement('div', { style: { fontSize: 11, color: G, fontWeight: 500 } }, "Lire la procédure →")
-          ))
+      React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
+        React.createElement('div', { style: { flex: "1 1 220px", position: "relative", minWidth: 180 } },
+          React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
+          React.createElement('input', { type: "text", value: search, onChange: e => setSearch(e.target.value), placeholder: "Rechercher une procédure…", style: { width: "100%", padding: "8px 32px", borderRadius: 20, border: "1px solid #DDD", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" } }),
+          search && React.createElement('button', { onClick: () => setSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
         )
-      ),
-      React.createElement('div', { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        React.createElement('input', { value: search, onChange: e => setSearch(e.target.value), placeholder: "🔍 Rechercher une procédure...", style: { flex: "1 1 220px", padding: "8px 13px", borderRadius: 8, border: "1px solid #DDD", fontSize: 13, outline: "none" } })
       ),
       React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
         ["all", ...cats].map(c => React.createElement('button', { key: c, onClick: () => setKbCat(c), style: { padding: "5px 12px", border: `1px solid ${kbCat === c ? G : "#DDD"}`, background: kbCat === c ? G + "18" : "white", color: kbCat === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: kbCat === c ? 500 : 400 } }, c === "all" ? "Toutes" : c))
       ),
-      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
-        filtered.map(p => React.createElement('div', { key: p.id, onClick: () => go("proc-detail", p.id), style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 } },
-          React.createElement('div', { style: { width: 38, height: 38, background: G + "18", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 } }, CAT_ICONS[p.category] || "📄"),
-          React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 3, flexWrap: "wrap" } },
-              React.createElement('span', { style: { fontWeight: 600, fontSize: 13.5, color: "#1a1a3e" } }, p.title),
-              React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category),
-              p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐")
+      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        liste.map(p => {
+          const isOpen = selId === p.id;
+          const files = procFiles[p.id] || [];
+          const imgs = files.filter(f => isImageFile(f.file_name));
+          const docs = files.filter(f => !isImageFile(f.file_name));
+          return React.createElement('div', { key: p.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "hidden" } },
+            React.createElement('div', { onClick: () => { const willOpen = selId !== p.id; setSelId(willOpen ? p.id : null); if (willOpen) loadFilesFor(p.id); }, style: { padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 } },
+              React.createElement('div', { style: { width: 38, height: 38, background: G + "18", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 } }, CAT_ICONS[p.category] || "📄"),
+              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                  React.createElement('span', { style: { fontWeight: 600, fontSize: 13.5, color: "#1a1a3e" } }, p.title),
+                  React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 7px", borderRadius: 20 } }, p.category),
+                  p.pinned && React.createElement('span', { style: { fontSize: 12 } }, "⭐")
+                )
+              ),
+              React.createElement('span', { style: { fontSize: 12, color: "#AAA", flexShrink: 0 } }, isOpen ? "▲" : "▼")
             ),
-            React.createElement('div', { style: { fontSize: 11.5, color: "#AAA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ((p.content.split("\n").find(l => l)) || "").slice(0, 90) + "...")
-          ),
-          React.createElement('div', { style: { fontSize: 12, color: G, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 } }, "Lire la procédure →")
-        )),
-        filtered.length === 0 && !procsLoading && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
+            isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
+              React.createElement('div', { style: { fontSize: 13, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: (imgs.length || docs.length) ? 14 : 8 } }, p.content),
+              imgs.length > 0 && React.createElement('div', { style: { marginBottom: docs.length ? 12 : 0 } },
+                React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "🖼️ IMAGES"),
+                React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
+                  imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 90, height: 90, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
+                )
+              ),
+              docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES" }),
+              React.createElement('div', { style: { marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Problème non résolu ?"),
+                React.createElement('button', { onClick: (e) => { e.stopPropagation(); go("contact"); }, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 11, fontWeight: 500, cursor: "pointer", padding: "6px 12px" } }, "📧 Contacter le support →")
+              )
+            )
+          );
+        }),
+        !procsLoading && liste.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune procédure trouvée.")
       )
     );
   }
