@@ -728,6 +728,18 @@ function App() {
         { k: "donnees", label: "Que faire des données / emails ?", type: "textarea" },
       ],
     },
+    {
+      key: "modifmail", icon: "\uD83D\uDCE7", titre: "Modification mail",
+      desc: "Demande de modification de mot de passe : messagerie et/ou compte Windows.",
+      cat: "Problème Mot de Passe", prio: "Moyenne",
+      champs: [
+        { k: "nom", label: "Nom et prénom du collaborateur concerné", req: true },
+        { k: "compte", label: "Compte / adresse mail concerné(e)", req: true },
+        { k: "actions", label: "Que souhaitez-vous modifier ?", type: "checkboxes", options: ["Mot de passe de la messagerie (mail)", "Mot de passe du compte Windows"], req: true },
+        { k: "nouveauMdp", label: "Nouveau mot de passe souhaité (laisser vide si le support doit le générer)" },
+        { k: "remarque", label: "Remarque / précision", type: "textarea" },
+      ],
+    },
   ];
   // Détermine si un champ doit être affiché, selon ses conditions :
   //  - showIf: "cle"            -> visible si la case "cle" est cochée (=== true)
