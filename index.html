@@ -4971,7 +4971,7 @@ const nav = isAdmin
         { p: "knowledge", icon: "📖", label: "Procédures" },
         { p: "mon-installation", icon: "🗂️", label: "Infrastructure" },
         { p: "contact", icon: "📧", label: "Contacter le support" },
-        ...(isSupervisor ? [{ p: "templates", icon: "📋", label: "Template" }] : []),
+        { p: "templates", icon: "📋", label: "Template" },
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
         ...(isSupervisor ? [{ p: "rapport-tickets", icon: "📈", label: "Rapport Tickets" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
@@ -6025,7 +6025,7 @@ const nav = isAdmin
   }
 
   // ---------- CONTACT ----------
-  if (page === "templates" && (isSupervisor || isAdmin)) {
+  if (page === "templates" && (isSupervisor || isAdmin || !!myHotelId)) {
     const inputStyle = { width: "100%", padding: "10px 12px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, outline: "none", fontFamily: "inherit", boxSizing: "border-box" };
     const labelStyle = { display: "block", fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 5 };
 
