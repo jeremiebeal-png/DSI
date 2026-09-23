@@ -6227,7 +6227,29 @@ const nav = isAdmin
               ),
               React.createElement('div', { style: { marginBottom: 20 } },
                 React.createElement('label', { style: labelStyle }, "Message *"),
-                React.createElement('textarea', { value: supportForm.message, onChange: e => setSupportForm({ ...supportForm, message: e.target.value }), placeholder: "Décrivez le problème : quand, sur quel poste, message d'erreur éventuel...", style: { ...inputStyle, minHeight: 120, resize: "vertical" } })
+                React.createElement('textarea', { value: supportForm.message, onChange: e => setSupportForm({ ...supportForm, message: e.target.value }), onPaste: e => {
+                  // Capture d'écran collée (Ctrl+V) : une zone de texte ne peut pas afficher d'image,
+                  // on l'ajoute donc automatiquement aux pièces jointes. Le texte collé reste inchangé.
+                  const items = (e.clipboardData && e.clipboardData.items) || [];
+                  const imgs = [];
+                  for (let i = 0; i < items.length; i++) {
+                    const it = items[i];
+                    if (it.kind === "file" && it.type.indexOf("image") === 0) {
+                      const b = it.getAsFile();
+                      if (b) {
+                        const ext = (it.type.split("/")[1] || "png").replace("jpeg", "jpg");
+                        const d = new Date(); const p2 = n => String(n).padStart(2, "0");
+                        const nom = "capture_" + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + "_" + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds()) + (imgs.length ? "_" + (imgs.length + 1) : "") + "." + ext;
+                        imgs.push(new File([b], nom, { type: it.type }));
+                      }
+                    }
+                  }
+                  if (imgs.length) {
+                    const hasText = e.clipboardData.getData && e.clipboardData.getData("text/plain");
+                    if (!hasText) e.preventDefault();
+                    handleSupportFilesAdd(imgs);
+                  }
+                }, placeholder: "Décrivez le problème : quand, sur quel poste, message d'erreur éventuel... (vous pouvez coller une capture d'écran avec Ctrl+V)", style: { ...inputStyle, minHeight: 120, resize: "vertical" } })
               ),
               React.createElement('div', { style: { marginBottom: 20 } },
                 React.createElement('label', { style: labelStyle }, "📎 Pièces jointes (PDF, Word, Excel, images)"),
