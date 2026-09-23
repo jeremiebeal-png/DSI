@@ -6212,9 +6212,17 @@ const nav = isAdmin
           suggestedProcs.length > 0 && React.createElement('div', { style: { marginTop: 10 } },
             React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 6 } }, "Ces procédures peuvent peut-être vous aider tout de suite :"),
             React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
-              suggestedProcs.map(p => React.createElement('details', { key: p.id, style: { background: "#FFF", border: "1px solid #E8E8F0", borderRadius: 8, padding: "8px 12px" } },
-                React.createElement('summary', { style: { cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#1a1a3e", listStyle: "none" } }, "📄 " + p.title),
-                React.createElement('div', { style: { fontSize: 12.5, color: "#555", marginTop: 8, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, p.content)
+              // Clic : ouvre la procédure complète (texte, images, pièces jointes) dans l'onglet Procédures
+              suggestedProcs.map(p => React.createElement('div', {
+                key: p.id, role: "button", tabIndex: 0,
+                onClick: () => { loadFilesFor(p.id); go("knowledge", p.id); },
+                onKeyDown: e => { if (e.key === "Enter") { loadFilesFor(p.id); go("knowledge", p.id); } },
+                onMouseEnter: e => { e.currentTarget.style.borderColor = G; e.currentTarget.style.background = "#FFFDF5"; },
+                onMouseLeave: e => { e.currentTarget.style.borderColor = "#E8E8F0"; e.currentTarget.style.background = "#FFF"; },
+                style: { display: "flex", alignItems: "center", gap: 8, background: "#FFF", border: "1px solid #E8E8F0", borderRadius: 8, padding: "9px 12px", cursor: "pointer" }
+              },
+                React.createElement('span', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e", flex: 1 } }, "📄 " + p.title),
+                React.createElement('span', { style: { fontSize: 11.5, color: G2, fontWeight: 600, whiteSpace: "nowrap" } }, "Voir la procédure →")
               ))
             )
           ),
