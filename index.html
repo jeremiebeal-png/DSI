@@ -603,7 +603,9 @@ function App() {
 
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientSearch, setClientSearch] = useState(""); // recherche dans la page Gérer les clients
-  const [docHotelSearch, setDocHotelSearch] = useState(""); // recherche d'hôtel dans la page Infrastructure (admin)
+  const [docHotelSearch, setDocHotelSearch] = useState(""); // recherche (hôtels + fiches) dans la page Infrastructure (admin)
+  const [docHotelPick, setDocHotelPick] = useState(false);   // sélecteur « changer » d'hôtel (Infrastructure)
+  const [docFocusId, setDocFocusId] = useState(null);        // fiche ouverte depuis la recherche (Infrastructure)
   const [showClientMap, setShowClientMap] = useState(false); // modale carte des clients
   const [mapGeoStatus, setMapGeoStatus] = useState(""); // état du géocodage
   // Carte des clients (Leaflet) : géocodage des adresses via Nominatim, cache navigateur.
@@ -6923,59 +6925,74 @@ const nav = isAdmin
   if (page === "docs-techniques" && isAdmin) {
     const inputD = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" };
     const labelD = { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 };
-    const visibles = docCatFilter === "all" ? docs : docs.filter(d => d.categorie === docCatFilter);
+    const visibles = docFocusId ? docs.filter(d => d.id === docFocusId) : (docCatFilter === "all" ? docs : docs.filter(d => d.categorie === docCatFilter));
     const usedCats = [...new Set(docs.map(d => d.categorie))];
+    const choisirHotelDoc = (h) => { setDocHotelId(h.id); setShowDocForm(false); setDocCatFilter("all"); setDocHotelSearch(""); setDocHotelPick(false); setDocFocusId(null); };
 
     content = React.createElement('div', null,
-      // Barre de recherche d'hôtel (même style que « Gérer les clients ») :
-      // on tape un nom / ville / email, puis on clique sur l'hôtel pour afficher ses fiches.
-      (() => {
-        const q = docHotelSearch.trim().toLowerCase();
-        const choisir = (h) => { setDocHotelId(h.id); setShowDocForm(false); setDocCatFilter("all"); setDocHotelSearch(""); };
-        const res = q ? hotels.filter(h => {
-          const champs = [h.name, h.city, h.account_email, h.standard_email, h.phone, h.ninjaone_nom].filter(Boolean).join(" ").toLowerCase();
-          return q.split(/\s+/).every(mot => champs.includes(mot));
-        }) : [];
-        return React.createElement('div', { style: { position: "relative", marginBottom: 12 } },
-          React.createElement('span', { style: { position: "absolute", left: 11, top: 19, transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
-          React.createElement('input', {
-            type: "text", value: docHotelSearch, onChange: e => setDocHotelSearch(e.target.value),
-            onKeyDown: e => { if (e.key === "Enter" && res.length > 0) { e.preventDefault(); choisir(res[0]); } else if (e.key === "Escape") setDocHotelSearch(""); },
-            placeholder: "Rechercher un client (nom, ville, email…)",
-            style: { width: "100%", padding: "9px 32px 9px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }
-          }),
-          docHotelSearch && React.createElement('button', { onClick: () => setDocHotelSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: 19, transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕"),
-          q && React.createElement('div', { style: { position: "absolute", top: 42, left: 0, right: 0, zIndex: 30, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)", maxHeight: 320, overflowY: "auto" } },
-            res.length === 0
-              ? React.createElement('div', { style: { padding: "11px 14px", fontSize: 12.5, color: "#999" } }, "Aucun client ne correspond.")
-              : res.map(h => React.createElement('div', {
-                  key: h.id, onMouseDown: e => { e.preventDefault(); choisir(h); },
-                  style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", borderBottom: "1px solid #F4F4F8", background: h.id === docHotelId ? "#FFFBEB" : "white" }
-                },
-                  h.logo_url
-                    ? React.createElement('img', { src: h.logo_url, alt: "", style: { width: 28, height: 28, objectFit: "contain", borderRadius: 6, border: "1px solid #EEE", background: "white", flexShrink: 0 } })
-                    : React.createElement('span', { style: { width: 28, textAlign: "center", fontSize: 16 } }, "🏨"),
-                  React.createElement('div', { style: { minWidth: 0 } },
-                    React.createElement('div', { style: { fontSize: 13, fontWeight: 500, color: "#1a1a3e" } }, h.name),
-                    React.createElement('div', { style: { fontSize: 11, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, [h.city, h.account_email].filter(Boolean).join(" · "))
-                  )
-                ))
+      // ===== BARRE UNIQUE : recherche hôtels + fiches (même principe que « Gérer les procédures ») =====
+      React.createElement('div', { style: { position: "relative", marginBottom: 14 } },
+        React.createElement('div', { style: { display: "flex", gap: 12, alignItems: "stretch" } },
+          React.createElement('div', { style: { flex: 1, position: "relative", minWidth: 0 } },
+            React.createElement('span', { style: { position: "absolute", left: 15, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "#b3b3c4", pointerEvents: "none" } }, "🔍"),
+            React.createElement('input', { type: "text", autoComplete: "off", value: docHotelSearch, onChange: e => setDocHotelSearch(e.target.value), onKeyDown: e => { if (e.key === "Escape") setDocHotelSearch(""); }, placeholder: "Rechercher un hôtel ou une fiche…", style: { width: "100%", padding: "13px 42px", border: `1.5px solid ${docHotelSearch ? G : "#dcdce6"}`, borderRadius: 13, fontSize: 14.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit", background: "white" } }),
+            docHotelSearch && React.createElement('button', { onClick: () => setDocHotelSearch(""), title: "Effacer", style: { position: "absolute", right: 13, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#aaa", fontSize: 16, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
+          ),
+          React.createElement('button', { onClick: () => { setDocFocusId(null); openNewDocForm(); }, style: { display: "flex", alignItems: "center", gap: 6, background: G, border: "none", color: "#1c1c1c", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", padding: "0 20px", whiteSpace: "nowrap" } }, "＋ Nouvelle fiche")
+        ),
+        docHotelSearch.trim() && (() => {
+          const nq = docHotelSearch.trim().toLowerCase();
+          const mots = nq.split(/\s+/);
+          const hres = hotels.filter(h => { const c = [h.name, h.city, h.account_email, h.standard_email, h.phone, h.ninjaone_nom].filter(Boolean).join(" ").toLowerCase(); return mots.every(m => c.includes(m)); }).slice(0, 6);
+          const dres = docs.filter(d => { const c = [d.titre, d.categorie, String(d.description || "").replace(/<[^>]+>/g, " ")].filter(Boolean).join(" ").toLowerCase(); return mots.every(m => c.includes(m)); }).slice(0, 8);
+          const curNom = hotels.find(h => h.id === docHotelId)?.name || "";
+          const secStyle = { fontSize: 10.5, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#a0a0b5", padding: "10px 12px 6px" };
+          const resStyle = { display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, cursor: "pointer" };
+          const icStyle = { width: 34, height: 34, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0, background: G + "24", overflow: "hidden" };
+          const items = [];
+          if (hres.length) {
+            items.push(React.createElement('div', { key: "hsec", style: secStyle }, "🏨 Hôtels"));
+            hres.forEach(h => items.push(React.createElement('div', { key: "h" + h.id, onClick: () => choisirHotelDoc(h), onMouseDown: e => e.preventDefault(), style: resStyle, onMouseEnter: e => e.currentTarget.style.background = "#f5f5fb", onMouseLeave: e => e.currentTarget.style.background = "transparent" },
+              React.createElement('div', { style: icStyle }, h.logo_url ? React.createElement('img', { src: h.logo_url, alt: "", style: { width: "100%", height: "100%", objectFit: "contain", background: "white" } }) : "🏨"),
+              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, h.name),
+                React.createElement('div', { style: { fontSize: 11.5, color: "#8a8aa0" } }, "Voir les fiches de cet établissement")
+              ),
+              React.createElement('span', { style: { fontSize: 11, color: G2, fontWeight: 600, whiteSpace: "nowrap" } }, "changer →")
+            )));
+          }
+          if (dres.length) {
+            items.push(React.createElement('div', { key: "dsec", style: secStyle }, "📁 Fiches" + (curNom ? " — " + curNom : "")));
+            dres.forEach(d => items.push(React.createElement('div', { key: "d" + d.id, onClick: () => { setDocFocusId(d.id); setShowDocForm(false); setDocHotelSearch(""); }, onMouseDown: e => e.preventDefault(), style: resStyle, onMouseEnter: e => e.currentTarget.style.background = "#f5f5fb", onMouseLeave: e => e.currentTarget.style.background = "transparent" },
+              React.createElement('div', { style: icStyle }, DOC_CAT_ICONS[d.categorie] || "📁"),
+              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, d.titre),
+                React.createElement('div', { style: { fontSize: 11.5, color: "#8a8aa0" } }, d.categorie)
+              ),
+              React.createElement('span', { style: { fontSize: 11, color: G2, fontWeight: 600, whiteSpace: "nowrap" } }, "ouvrir →")
+            )));
+          }
+          if (!hres.length && !dres.length) items.push(React.createElement('div', { key: "empty", style: { padding: "16px 12px", color: "#999", fontSize: 13 } }, "Aucun hôtel ni fiche pour « " + docHotelSearch.trim() + " »."));
+          return React.createElement('div', { style: { position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, background: "white", border: "1px solid #E8E8F0", borderRadius: 14, boxShadow: "0 18px 50px rgba(20,20,50,.16)", padding: 8, zIndex: 40, maxHeight: "60vh", overflowY: "auto" } }, items);
+        })()
+      ),
+      // Bouton retour quand une fiche est ouverte depuis la recherche
+      docFocusId && React.createElement('button', { onClick: () => setDocFocusId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux fiches"),
+      // Ligne de contexte : hôtel courant (« changer ») + compteur
+      !docFocusId && React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap", fontSize: 13, color: "#555" } },
+        React.createElement('span', null, "Fiches de :"),
+        React.createElement('span', { style: { display: "inline-flex", alignItems: "center", gap: 8, background: "white", border: "1px solid #E8E8F0", borderRadius: 20, padding: "6px 8px 6px 12px", fontWeight: 600, color: "#1a1a3e", position: "relative" } },
+          hotels.find(h => h.id === docHotelId)?.name || "—",
+          React.createElement('button', { onClick: () => setDocHotelPick(v => !v), style: { border: "none", background: G + "26", color: G2, borderRadius: 14, fontSize: 11, padding: "3px 9px", cursor: "pointer", fontWeight: 600 } }, docHotelPick ? "fermer ✕" : "changer"),
+          docHotelPick && React.createElement('div', { style: { position: "absolute", top: "calc(100% + 6px)", left: 0, minWidth: 260, maxHeight: "50vh", overflowY: "auto", background: "white", border: "1px solid #E8E8F0", borderRadius: 12, boxShadow: "0 18px 50px rgba(20,20,50,.16)", padding: 6, zIndex: 50 } },
+            hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('div', { key: h.id, onClick: () => choisirHotelDoc(h), style: { display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: h.id === docHotelId ? 700 : 500, color: h.id === docHotelId ? G2 : "#333", background: h.id === docHotelId ? G + "14" : "transparent" }, onMouseEnter: e => { if (h.id !== docHotelId) e.currentTarget.style.background = "#f5f5fb"; }, onMouseLeave: e => { if (h.id !== docHotelId) e.currentTarget.style.background = "transparent"; } },
+              React.createElement('span', { style: { fontSize: 15 } }, "🏨"),
+              React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, h.name),
+              h.id === docHotelId && React.createElement('span', { style: { fontSize: 12, color: G2 } }, "✓")
+            ))
           )
-        );
-      })(),
-      React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-        // Hôtel actuellement affiché (sélection via la barre de recherche ci-dessus)
-        (() => {
-          const hSel = hotels.find(h => h.id === docHotelId);
-          if (!hSel) return null;
-          return React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9 } },
-            hSel.logo_url
-              ? React.createElement('img', { src: hSel.logo_url, alt: "", style: { width: 30, height: 30, objectFit: "contain", borderRadius: 6, border: "1px solid #EEE", background: "white" } })
-              : React.createElement('span', { style: { fontSize: 18 } }, "🏨"),
-            React.createElement('span', { style: { fontSize: 15, fontWeight: 600, color: "#1a1a3e" } }, hSel.name)
-          );
-        })(),
-        React.createElement('button', { onClick: openNewDocForm, style: { marginLeft: isMobile ? 0 : "auto", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Nouvelle fiche")
+        ),
+        React.createElement('span', { style: { marginLeft: "auto", fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, docs.length + (docs.length > 1 ? " fiches" : " fiche"))
       ),
 
       showDocForm && React.createElement('div', { style: { background: "white", borderRadius: 10, border: `1px solid ${G}35`, padding: 18, marginBottom: 14 } },
@@ -7051,7 +7068,7 @@ const nav = isAdmin
       ),
 
       usedCats.length > 0 && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
-        ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => setDocCatFilter(c), style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
+        ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => { setDocFocusId(null); setDocCatFilter(c); }, style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
       ),
 
       docsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
@@ -7104,7 +7121,7 @@ const nav = isAdmin
         "Retrouvez ici la documentation technique de votre établissement : photos des baies informatiques, plans, schémas réseau et fiches matériel préparés par DSI Hotel."
       ),
       usedCats.length > 0 && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap" } },
-        ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => setDocCatFilter(c), style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
+        ["all", ...usedCats].map(c => React.createElement('button', { key: c, onClick: () => { setDocFocusId(null); setDocCatFilter(c); }, style: { padding: "5px 12px", border: `1px solid ${docCatFilter === c ? G : "#DDD"}`, background: docCatFilter === c ? G + "18" : "white", color: docCatFilter === c ? G2 : "#555", borderRadius: 20, fontSize: 11, cursor: "pointer", fontWeight: docCatFilter === c ? 500 : 400 } }, c === "all" ? "Toutes" : (DOC_CAT_ICONS[c] || "") + " " + c))
       ),
       docsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
       !docsLoading && docs.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun document disponible pour le moment."),
