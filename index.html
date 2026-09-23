@@ -424,6 +424,22 @@ function videoInterneInfo(saisie) {
   return { embed: null, lien: u };
 }
 
+// Plusieurs vidéos par procédure interne, stockées dans la colonne texte video_url :
+//  - ancien format : un seul lien (texte brut)
+//  - nouveau format : JSON [{ titre, url }, …]
+function videosInternesLire(val) {
+  const t = String(val || "").trim();
+  if (!t) return [];
+  if (t.charAt(0) === "[") {
+    try { const a = JSON.parse(t); if (Array.isArray(a)) return a.filter(v => v && v.url).map(v => ({ titre: String(v.titre || ""), url: String(v.url) })); } catch (e) {}
+  }
+  return [{ titre: "", url: t }];
+}
+function videosInternesEcrire(liste) {
+  const a = (liste || []).map(v => ({ titre: String(v.titre || "").trim(), url: String(v.url || "").trim() })).filter(v => v.url);
+  return a.length ? JSON.stringify(a) : null;
+}
+
 // Transforme un lien YouTube ou Vimeo (partagé/non répertorié) en URL d'intégration
 // pour un <iframe>. Renvoie null si le lien n'est pas reconnu.
 function videoEmbedUrl(url) {
@@ -4534,7 +4550,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [aideExistingFiles, setAideExistingFiles] = useState([]);
   const [aideSaving, setAideSaving] = useState(false);
   const [aideErr, setAideErr] = useState("");
-  const emptyAideForm = () => ({ titre: "", categorie: AIDE_CATS[0], contenu: "", epingle: false, video_url: "" });
+  const emptyAideForm = () => ({ titre: "", categorie: AIDE_CATS[0], contenu: "", epingle: false, videos: [{ titre: "", url: "" }] });
 
   const emptyRtForm = () => ({ titre: "", contenu: "", contenu_html: "", images: [] });
 
@@ -4649,7 +4665,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setAideErr(""); setAideModal("new");
   };
   const openEditAide = (p) => {
-    setAideForm({ titre: p.titre || "", categorie: p.categorie || AIDE_CATS[0], contenu: p.contenu || "", epingle: !!p.epingle, video_url: p.video_url || "" });
+    setAideForm({ titre: p.titre || "", categorie: p.categorie || AIDE_CATS[0], contenu: p.contenu || "", epingle: !!p.epingle, videos: (() => { const l = videosInternesLire(p.video_url); return l.length ? l : [{ titre: "", url: "" }]; })() });
     setAideNewFiles([]); setAideExistingFiles(aideFiles[p.id] || []);
     setAideErr(""); setAideModal(p);
   };
@@ -4667,7 +4683,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         categorie: aideForm.categorie,
         contenu: aideForm.contenu || null,
         epingle: !!aideForm.epingle,
-        video_url: String(aideForm.video_url || "").trim() || null,
+        video_url: videosInternesEcrire(aideForm.videos),
         updated_at: new Date().toISOString(),
       };
       let procId = (aideModal && aideModal !== "new") ? aideModal.id : null;
@@ -8216,20 +8232,23 @@ const nav = isAdmin
                 React.createElement('span', { style: { fontSize: 14, fontWeight: 700, color: SB, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.titre),
                 p.categorie && React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20, flexShrink: 0 } }, p.categorie),
                 fl.length > 0 && React.createElement('span', { style: { fontSize: 10.5, color: "#AAA", flexShrink: 0 } }, "📎 " + fl.length),
-                p.video_url && React.createElement('span', { title: "Contient une vidéo", style: { fontSize: 11, flexShrink: 0 } }, "🎬")
+                p.video_url && (() => { const n = videosInternesLire(p.video_url).length; return React.createElement('span', { title: n > 1 ? n + " vidéos" : "Contient une vidéo", style: { fontSize: 11, color: "#888", flexShrink: 0 } }, "🎬" + (n > 1 ? " " + n : "")); })()
               ),
               React.createElement('button', { onClick: e => { e.stopPropagation(); openEditAide(p); }, style: { flexShrink: 0, padding: "6px 12px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "✏️ Modifier")
             ),
             open && React.createElement('div', { style: { padding: "0 16px 16px", borderTop: "1px solid #F2F2F6" } },
               p.contenu && React.createElement('div', { style: { fontSize: 13, color: "#444", lineHeight: 1.6, whiteSpace: "pre-wrap", margin: "12px 0" } }, p.contenu),
               (() => {
-                const v = videoInterneInfo(p.video_url);
-                if (!v) return null;
-                return React.createElement('div', { style: { margin: "12px 0" } },
-                  v.embed && React.createElement('div', { style: { position: "relative", width: "100%", maxWidth: 760, paddingTop: "min(56.25%, 428px)", borderRadius: 8, overflow: "hidden", background: "#000", marginBottom: 6 } },
-                    React.createElement('iframe', { src: v.embed, title: "Vidéo", allow: "autoplay; encrypted-media; fullscreen; picture-in-picture", allowFullScreen: true, frameBorder: "0", style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 } })
-                  ),
-                  React.createElement('a', { href: v.lien, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: "#fff", background: SB, textDecoration: "none", padding: "7px 14px", borderRadius: 7 } }, v.embed ? "↗ Ouvrir dans un nouvel onglet" : "▶ Voir la vidéo (SharePoint)")
+                const liste = videosInternesLire(p.video_url).map(x => ({ ...x, info: videoInterneInfo(x.url) })).filter(x => x.info);
+                if (!liste.length) return null;
+                return React.createElement('div', { style: { margin: "12px 0", display: "flex", flexDirection: "column", gap: 14 } },
+                  liste.map((x, k) => React.createElement('div', { key: k },
+                    React.createElement('div', { style: { fontSize: 12.5, fontWeight: 600, color: SB, marginBottom: 6 } }, "🎬 " + (x.titre || (liste.length > 1 ? "Vidéo " + (k + 1) : "Vidéo"))),
+                    x.info.embed && React.createElement('div', { style: { position: "relative", width: "100%", maxWidth: 760, paddingTop: "min(56.25%, 428px)", borderRadius: 8, overflow: "hidden", background: "#000", marginBottom: 6 } },
+                      React.createElement('iframe', { src: x.info.embed, title: x.titre || "Vidéo", allow: "autoplay; encrypted-media; fullscreen; picture-in-picture", allowFullScreen: true, frameBorder: "0", style: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 } })
+                    ),
+                    React.createElement('a', { href: x.info.lien, target: "_blank", rel: "noopener noreferrer", style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: "#fff", background: SB, textDecoration: "none", padding: "7px 14px", borderRadius: 7 } }, x.info.embed ? "↗ Ouvrir dans un nouvel onglet" : "▶ Voir la vidéo (SharePoint)")
+                  ))
                 );
               })(),
               imgs.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: docs.length ? 10 : 0 } },
@@ -8268,13 +8287,23 @@ const nav = isAdmin
             React.createElement('textarea', { value: aideForm.contenu, onChange: e => setAideForm({ ...aideForm, contenu: e.target.value }), placeholder: "Rédigez les étapes, notes, bonnes pratiques…", style: { ...inp, minHeight: 160, resize: "vertical" } })
           ),
           React.createElement('div', { style: { marginBottom: 12 } },
-            React.createElement('label', { style: lbl }, "🎬 Vidéo (lien SharePoint, Stream, YouTube ou Vimeo)"),
-            React.createElement('input', { value: aideForm.video_url || "", onChange: e => setAideForm({ ...aideForm, video_url: e.target.value }), placeholder: "Collez le lien de la vidéo, ou le code « Intégrer » (<iframe…>) de SharePoint", style: inp }),
-            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 4, lineHeight: 1.5 } },
-              "Pour lire la vidéo directement dans le portail : dans SharePoint, ouvrez la vidéo › « … » › Intégrer, puis collez le code ici. Un simple lien de partage s'ouvrira dans un nouvel onglet."),
-            (() => { const v = videoInterneInfo(aideForm.video_url); if (!String(aideForm.video_url || "").trim()) return null;
-              return React.createElement('div', { style: { fontSize: 11, marginTop: 4, color: v ? (v.embed ? "#2F855A" : "#B7791F") : "#C53030" } },
-                v ? (v.embed ? "✓ La vidéo sera lue dans le portail." : "↗ La vidéo s'ouvrira dans un nouvel onglet (SharePoint).") : "Lien non reconnu : il doit commencer par https://"); })()
+            React.createElement('label', { style: lbl }, "🎬 Vidéos (liens SharePoint, Stream, YouTube ou Vimeo)"),
+            (aideForm.videos || []).map((v, k) => {
+              const info = videoInterneInfo(v.url);
+              const setV = (champ, val) => setAideForm(prev => ({ ...prev, videos: (prev.videos || []).map((x, j) => j === k ? { ...x, [champ]: val } : x) }));
+              return React.createElement('div', { key: k, style: { border: "1px solid #ECECF2", borderRadius: 8, padding: 8, marginBottom: 6, background: "#FBFBFE" } },
+                React.createElement('div', { style: { display: "flex", gap: 6 } },
+                  React.createElement('input', { value: v.titre, onChange: e => setV("titre", e.target.value), placeholder: "Titre (ex. : Restauration d'une VM)", style: { ...inp, flex: "0 0 36%" } }),
+                  React.createElement('input', { value: v.url, onChange: e => setV("url", e.target.value), placeholder: "Lien de la vidéo ou code « Intégrer » (<iframe…>)", style: { ...inp, flex: 1 } }),
+                  React.createElement('button', { type: "button", title: "Retirer cette vidéo", onClick: () => setAideForm(prev => { const l = (prev.videos || []).filter((_, j) => j !== k); return { ...prev, videos: l.length ? l : [{ titre: "", url: "" }] }; }), style: { flexShrink: 0, border: "1px solid #F5B5B5", background: "white", color: "#C53030", borderRadius: 7, cursor: "pointer", padding: "0 10px", fontSize: 13 } }, "✕")
+                ),
+                String(v.url || "").trim() && React.createElement('div', { style: { fontSize: 11, marginTop: 4, color: info ? (info.embed ? "#2F855A" : "#B7791F") : "#C53030" } },
+                  info ? (info.embed ? "✓ Lue dans le portail." : "↗ S'ouvrira dans un nouvel onglet (SharePoint).") : "Lien non reconnu : il doit commencer par https://")
+              );
+            }),
+            React.createElement('button', { type: "button", onClick: () => setAideForm(prev => ({ ...prev, videos: [...(prev.videos || []), { titre: "", url: "" }] })), style: { marginTop: 2, border: "1px dashed " + G, background: "#FFFDF5", color: G2, borderRadius: 7, cursor: "pointer", padding: "6px 12px", fontSize: 12, fontWeight: 600 } }, "＋ Ajouter une vidéo"),
+            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 6, lineHeight: 1.5 } },
+              "Pour lire une vidéo directement dans le portail : dans SharePoint, ouvrez la vidéo › « … » › Intégrer, puis collez le code. Un simple lien de partage s'ouvrira dans un nouvel onglet.")
           ),
           React.createElement('div', { style: { marginBottom: 12 } },
             React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#444", cursor: "pointer" } },
