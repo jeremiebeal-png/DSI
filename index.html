@@ -6956,10 +6956,17 @@ const nav = isAdmin
         );
       })(),
       React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-        React.createElement('select', { value: docHotelId || "", onChange: e => { setDocHotelId(e.target.value); setShowDocForm(false); setDocCatFilter("all"); }, style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12, background: "white" } },
-          hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
-        ),
-        React.createElement('button', { onClick: () => loadDocs(docHotelId), style: { padding: "7px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔄 Actualiser"),
+        // Hôtel actuellement affiché (sélection via la barre de recherche ci-dessus)
+        (() => {
+          const hSel = hotels.find(h => h.id === docHotelId);
+          if (!hSel) return null;
+          return React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9 } },
+            hSel.logo_url
+              ? React.createElement('img', { src: hSel.logo_url, alt: "", style: { width: 30, height: 30, objectFit: "contain", borderRadius: 6, border: "1px solid #EEE", background: "white" } })
+              : React.createElement('span', { style: { fontSize: 18 } }, "🏨"),
+            React.createElement('span', { style: { fontSize: 15, fontWeight: 600, color: "#1a1a3e" } }, hSel.name)
+          );
+        })(),
         React.createElement('button', { onClick: openNewDocForm, style: { marginLeft: isMobile ? 0 : "auto", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "8px 14px" } }, "+ Nouvelle fiche")
       ),
 
