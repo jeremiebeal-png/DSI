@@ -603,6 +603,7 @@ function App() {
 
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientSearch, setClientSearch] = useState(""); // recherche dans la page Gérer les clients
+  const [docHotelSearch, setDocHotelSearch] = useState(""); // recherche d'hôtel dans la page Infrastructure (admin)
   const [showClientMap, setShowClientMap] = useState(false); // modale carte des clients
   const [mapGeoStatus, setMapGeoStatus] = useState(""); // état du géocodage
   // Carte des clients (Leaflet) : géocodage des adresses via Nominatim, cache navigateur.
@@ -6918,6 +6919,42 @@ const nav = isAdmin
     const usedCats = [...new Set(docs.map(d => d.categorie))];
 
     content = React.createElement('div', null,
+      // Barre de recherche d'hôtel (même style que « Gérer les clients ») :
+      // on tape un nom / ville / email, puis on clique sur l'hôtel pour afficher ses fiches.
+      (() => {
+        const q = docHotelSearch.trim().toLowerCase();
+        const choisir = (h) => { setDocHotelId(h.id); setShowDocForm(false); setDocCatFilter("all"); setDocHotelSearch(""); };
+        const res = q ? hotels.filter(h => {
+          const champs = [h.name, h.city, h.account_email, h.standard_email, h.phone, h.ninjaone_nom].filter(Boolean).join(" ").toLowerCase();
+          return q.split(/\s+/).every(mot => champs.includes(mot));
+        }) : [];
+        return React.createElement('div', { style: { position: "relative", marginBottom: 12 } },
+          React.createElement('span', { style: { position: "absolute", left: 11, top: 19, transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
+          React.createElement('input', {
+            type: "text", value: docHotelSearch, onChange: e => setDocHotelSearch(e.target.value),
+            onKeyDown: e => { if (e.key === "Enter" && res.length > 0) { e.preventDefault(); choisir(res[0]); } else if (e.key === "Escape") setDocHotelSearch(""); },
+            placeholder: "Rechercher un client (nom, ville, email…)",
+            style: { width: "100%", padding: "9px 32px 9px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }
+          }),
+          docHotelSearch && React.createElement('button', { onClick: () => setDocHotelSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: 19, transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕"),
+          q && React.createElement('div', { style: { position: "absolute", top: 42, left: 0, right: 0, zIndex: 30, background: "white", border: "1px solid #E8E8F0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)", maxHeight: 320, overflowY: "auto" } },
+            res.length === 0
+              ? React.createElement('div', { style: { padding: "11px 14px", fontSize: 12.5, color: "#999" } }, "Aucun client ne correspond.")
+              : res.map(h => React.createElement('div', {
+                  key: h.id, onMouseDown: e => { e.preventDefault(); choisir(h); },
+                  style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", cursor: "pointer", borderBottom: "1px solid #F4F4F8", background: h.id === docHotelId ? "#FFFBEB" : "white" }
+                },
+                  h.logo_url
+                    ? React.createElement('img', { src: h.logo_url, alt: "", style: { width: 28, height: 28, objectFit: "contain", borderRadius: 6, border: "1px solid #EEE", background: "white", flexShrink: 0 } })
+                    : React.createElement('span', { style: { width: 28, textAlign: "center", fontSize: 16 } }, "🏨"),
+                  React.createElement('div', { style: { minWidth: 0 } },
+                    React.createElement('div', { style: { fontSize: 13, fontWeight: 500, color: "#1a1a3e" } }, h.name),
+                    React.createElement('div', { style: { fontSize: 11, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, [h.city, h.account_email].filter(Boolean).join(" · "))
+                  )
+                ))
+          )
+        );
+      })(),
       React.createElement('div', { style: { display: "flex", gap: 9, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
         React.createElement('select', { value: docHotelId || "", onChange: e => { setDocHotelId(e.target.value); setShowDocForm(false); setDocCatFilter("all"); }, style: { padding: "7px 11px", borderRadius: 7, border: "1px solid #DDD", fontSize: 12, background: "white" } },
           hotels.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
