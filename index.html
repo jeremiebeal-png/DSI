@@ -1935,6 +1935,20 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         setHotels(prev => prev.map(h => h.id === editingClientId ? { ...h, ...update } : h));
       } else {
         if (!clientForm.email.trim() || !clientForm.pw.trim()) { setClientErr("Email et mot de passe sont obligatoires pour un nouveau client."); setSavingClient(false); return; }
+        // Contrôles avant appel au Worker (Supabase refuse sinon, avec un message générique)
+        {
+          const supEmail = clientForm.email.trim().toLowerCase();
+          const errPw = validerMotDePasse(clientForm.pw.trim());
+          if (errPw) { setClientErr("Compte superviseur : " + errPw); setSavingClient(false); return; }
+          const stdE = (clientForm.stdEmail || "").trim().toLowerCase();
+          const stdP = (clientForm.stdPw || "").trim();
+          if (stdE || stdP) {
+            if (!stdE || !stdP) { setClientErr("Compte standard : renseignez l'email ET le mot de passe (ou laissez les deux vides)."); setSavingClient(false); return; }
+            if (stdE === supEmail) { setClientErr("Le compte standard doit utiliser un email différent de celui du superviseur."); setSavingClient(false); return; }
+            const errStd = validerMotDePasse(stdP);
+            if (errStd) { setClientErr("Compte standard : " + errStd); setSavingClient(false); return; }
+          }
+        }
         if (!adminApiReady) { setClientErr("La création de clients nécessite le Worker admin (voir instructions de déploiement). En attendant, créez le compte manuellement dans Supabase → Authentication → Users."); setSavingClient(false); return; }
         const result = await callAdminApi("/admin/create-client", {
           email: clientForm.email, password: clientForm.pw, hotelName: clientForm.name,
