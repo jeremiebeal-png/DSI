@@ -1147,7 +1147,7 @@ function App() {
   const [tickets, setTickets] = useState([]);
   const [validations, setValidations] = useState({}); // { reference: {status, validated_at, validateur_email} }
   const [ticketsLoading, setTicketsLoading] = useState(false);
-  const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all | waiting
+  const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all | waiting | sheraton
   const [tkSortPresta, setTkSortPresta] = useState(false);
   const [openTicketId, setOpenTicketId] = useState(null);
   const [ticketMsgs, setTicketMsgs] = useState({}); // { ticketId: [messages] }
@@ -6467,8 +6467,14 @@ const nav = isAdmin
         React.createElement('span', { key: "r", style: { ...base, background: "#E53E3E" }, title: "Sans réponse depuis plus de 4h" }, "⏱ En retard")
       );
     };
+    // Onglet dédié "Sheraton" : tous les tickets non fermés des hôtels dont le nom
+    // contient "Sheraton" (ex. Sheraton - CDG). Ils sont retirés de "Ouverts".
+    const sheratonHotelIds = new Set(hotels.filter(h => /sheraton/i.test(h.name || "")).map(h => h.id));
+    const estSheraton = (t) => sheratonHotelIds.has(t.hotel_id);
+    const nbSheraton = tickets.filter(t => estSheraton(t) && t.status !== "closed").length;
     let list = tickets;
-    if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente);
+    if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente && !estSheraton(t));
+    if (ticketFilter === "sheraton") list = tickets.filter(t => estSheraton(t) && t.status !== "closed");
     if (ticketFilter === "closed") list = tickets.filter(t => t.status === "closed");
     if (ticketFilter === "waiting") list = tickets.filter(t => t.en_attente && t.status !== "closed");
 
@@ -6495,7 +6501,7 @@ const nav = isAdmin
     content = React.createElement('div', null,
       openTicketId && React.createElement('button', { onClick: () => setOpenTicketId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux tickets"),
       !openTicketId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        [["open", "Ouverts"], ["waiting", "En projet"], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
+        [["open", "Ouverts"], ["waiting", "En projet"], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
         ),
         React.createElement('div', { style: { flex: "1 1 240px", position: "relative", minWidth: 180 } },
