@@ -1280,6 +1280,7 @@ function App() {
     { key: "tickets",    page: "rapport-tickets",  icon: "📈", label: "Rapport Tickets", grp: "rap" },
     { key: "projets",    page: "projets",         icon: "📊", label: "Projets" },
     { key: "tickets",    page: "planning",         icon: "📅", label: "Planning équipe" },
+    { key: "tickets",    page: "historique-comptes", icon: "🗃️", label: "Historique comptes" },
     { key: "rapports",   page: "rapports",        icon: "📝", label: "Rapport Intervention", grp: "rap" },
     { key: "ninjaone",   page: "ninjaone",        icon: "🖥️", label: "Rapports Sécurité", grp: "rap" },
     { key: "reponses",   page: "reponses-types",  icon: "💬", label: "Réponses types", grp: "sup" },
@@ -3140,6 +3141,16 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   //  optionnel (checkcentral_group_map) associe un groupe à un hôtel.
   // ============================================================
   const [bkChecks, setBkChecks] = useState([]);
+  // ----- Historique des demandes de comptes (création / modification / suppression / mot de passe) -----
+  const [hcRows, setHcRows] = useState([]);
+  const [hcFiles, setHcFiles] = useState({});      // { ticketId: [pdf] }
+  const [hcLoading, setHcLoading] = useState(false);
+  const [hcErr, setHcErr] = useState("");
+  const [hcSearch, setHcSearch] = useState("");
+  const [hcType, setHcType] = useState("");
+  const [hcHotel, setHcHotel] = useState("");
+  const [hcStatut, setHcStatut] = useState("");
+  const [hcOpenId, setHcOpenId] = useState(null);
   // ----- Planning d'équipe (calendrier Outlook partagé) -----
   const [plSemaine, setPlSemaine] = useState(() => plLundi(new Date()));
   const [plData, setPlData] = useState({ equipe: [], evenements: [], boite: "" });
@@ -4223,6 +4234,62 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setRapLoading(false);
   };
 
+  // Charge toutes les demandes liées aux comptes : formulaires "Demande interne"
+  // (arrivée / modification, suppression, mot de passe) + tickets de catégorie "Création de compte".
+  const loadHistoriqueComptes = async () => {
+    if (!profile) return;
+    setHcLoading(true); setHcErr("");
+    try {
+      let rows = [];
+      for (let from = 0; from < 10000; from += 1000) {
+        let q = sb.from("tickets").select(TICKET_COLS)
+          .or('contact_role.eq."Demande interne",category.eq."Création de compte"')
+          .order("created_at", { ascending: false }).range(from, from + 999);
+        if (!isAdmin) q = q.eq("hotel_id", myHotelId || "00000000-0000-0000-0000-000000000000");
+        const { data, error } = await q;
+        if (error) throw error;
+        rows = rows.concat(data || []);
+        if (!data || data.length < 1000) break;
+      }
+      setHcRows(rows);
+      // PDF récapitulatifs joints aux demandes (pièces jointes hors messages)
+      const ids = rows.map(r => r.id); const fMap = {};
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data: fs } = await sb.from("ticket_fichiers").select("id,ticket_id,file_name,file_url,message_id").in("ticket_id", ids.slice(i, i + 100));
+        (fs || []).filter(f => !f.message_id).forEach(f => { (fMap[f.ticket_id] = fMap[f.ticket_id] || []).push(f); });
+      }
+      setHcFiles(fMap);
+      loadValidations();
+    } catch (e) { setHcErr("Erreur de chargement : " + (e.message || e)); }
+    finally { setHcLoading(false); }
+  };
+  useEffect(() => { if (page === "historique-comptes" && (isAdmin || isSupervisor)) loadHistoriqueComptes(); }, [page, profile]);
+  // Extrait les infos clés du message généré par le formulaire.
+  const hcInfos = (t) => {
+    const lignes = String(t.message || "").split("\n");
+    const champ = (prefixe) => { const l = lignes.find(x => x.trim().startsWith(prefixe)); if (!l) return ""; const i = l.indexOf(" : "); const v = i >= 0 ? l.slice(i + 3).trim() : ""; return v === "-" ? "" : v; };
+    const s = String(t.subject || "");
+    let type = "Autre";
+    if (s.includes("Arrivée collaborateur")) type = champ("Type de demande") === "Modification" ? "Modification" : "Création";
+    else if (s.includes("Suppression de compte")) type = "Suppression";
+    else if (s.includes("Modification Password")) type = "Mot de passe";
+    else if (t.category === "Création de compte") type = "Autre demande";
+    return {
+      type,
+      collaborateur: champ("Nom et prénom du collaborateur"),
+      poste: champ("Poste / service"),
+      compte: champ("Compte à modifier") || champ("Compte / adresse mail concerné"),
+      dateEffet: (champ("Date d'arrivée") || champ("Date de départ / d'effet")).replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3/$2/$1"),
+    };
+  };
+  const HC_TYPES = { "Création": ["#256029", "#EAF6EC"], "Modification": ["#2B6CB0", "#EBF4FF"], "Suppression": ["#B03A2E", "#FDECEC"], "Mot de passe": ["#6B46C1", "#F3EEFF"], "Autre demande": ["#555", "#F0F0F5"], "Autre": ["#555", "#F0F0F5"] };
+  const hcVoirTicket = (t) => {
+    if (isAdmin) setTicketFilter("all");
+    setOpenTicketId(t.id);
+    loadTicketMsgs(t.id);
+    go(isAdmin ? "tickets-admin" : "tickets-client");
+  };
+
   const loadPlanning = async () => {
     setPlLoading(true); setPlErr("");
     try {
@@ -5182,6 +5249,7 @@ const nav = isAdmin
         { p: "contact", icon: "📧", label: "Contacter le support" },
         { p: "templates", icon: "📋", label: "Template" },
         ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
+        ...(isSupervisor ? [{ p: "historique-comptes", icon: "🗃️", label: "Historique comptes" }] : []),
         ...(isSupervisor ? [{ p: "rapport-tickets", icon: "📈", label: "Rapport Tickets" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapport Sécurité" }] : []),
         ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapport Intervention" }] : []),
@@ -7449,6 +7517,89 @@ const nav = isAdmin
 
   // --- Page ADMIN : sélection client + période + génération + envoi ---
   // ---------- BACKUPS (CheckCentral) — admin uniquement ----------
+  if (page === "historique-comptes" && (isAdmin || isSupervisor)) {
+    const q = hcSearch.trim().toLowerCase();
+    const nomHotelDe = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : (id ? "?" : "Non assigné"); };
+    const lignesHc = hcRows.map(t => ({ t, i: hcInfos(t) })).filter(({ t, i }) => {
+      if (hcType && i.type !== hcType) return false;
+      if (hcHotel && t.hotel_id !== hcHotel) return false;
+      if (hcStatut === "open" && t.status === "closed") return false;
+      if (hcStatut === "closed" && t.status !== "closed") return false;
+      if (q) {
+        const txt = [t.reference, i.collaborateur, i.poste, i.compte, t.contact_name, t.contact_email, isAdmin ? nomHotelDe(t.hotel_id) : ""].join(" ").toLowerCase();
+        if (!txt.includes(q)) return false;
+      }
+      return true;
+    });
+    const fmtD = (s) => s ? new Date(s).toLocaleDateString("fr-FR") : "";
+    const exporterCsv = () => {
+      const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+      const entetes = ["Date", "Référence", ...(isAdmin ? ["Hôtel"] : []), "Type", "Collaborateur", "Poste", "Compte concerné", "Date d'effet", "Demandé par", "Email demandeur", "Statut", "Validation"];
+      const lignesCsv = lignesHc.map(({ t, i }) => {
+        const v = t.reference && validations[t.reference];
+        const val = v ? (v.status === "validated" ? "Validé" : v.status === "refused" ? "Refusé" : "En attente") : "";
+        return [fmtD(t.created_at), t.reference || "", ...(isAdmin ? [nomHotelDe(t.hotel_id)] : []), i.type, i.collaborateur, i.poste, i.compte, i.dateEffet, t.contact_name, t.contact_email, t.status === "closed" ? "Fermé" : "Ouvert", val].map(esc).join(";");
+      });
+      const blob = new Blob(["\ufeff" + [entetes.map(esc).join(";"), ...lignesCsv].join("\r\n")], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = "Historique_comptes_" + new Date().toISOString().slice(0, 10) + ".csv";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    };
+    const selS = { padding: "7px 9px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12.5, background: "white", fontFamily: "inherit" };
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
+        isAdmin ? "Toutes les demandes de création, modification, suppression de compte et de mot de passe, pour tous les hôtels. Cliquez sur une ligne pour voir le détail."
+                : "Toutes les demandes de création, modification, suppression de compte et de mot de passe de votre établissement. Cliquez sur une ligne pour voir le détail."),
+      React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 } },
+        React.createElement('input', { value: hcSearch, onChange: e => setHcSearch(e.target.value), placeholder: "Rechercher : collaborateur, référence, demandeur…", style: { ...selS, flex: "1 1 240px", minWidth: 0 } }),
+        React.createElement('select', { value: hcType, onChange: e => setHcType(e.target.value), style: selS },
+          React.createElement('option', { value: "" }, "Tous les types"),
+          ["Création", "Modification", "Suppression", "Mot de passe", "Autre demande"].map(x => React.createElement('option', { key: x, value: x }, x))),
+        isAdmin && React.createElement('select', { value: hcHotel, onChange: e => setHcHotel(e.target.value), style: { ...selS, maxWidth: 200 } },
+          React.createElement('option', { value: "" }, "Tous les hôtels"),
+          [...hotels].sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr")).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+        React.createElement('select', { value: hcStatut, onChange: e => setHcStatut(e.target.value), style: selS },
+          React.createElement('option', { value: "" }, "Tous statuts"),
+          React.createElement('option', { value: "open" }, "Ouvertes"),
+          React.createElement('option', { value: "closed" }, "Fermées")),
+        React.createElement('button', { onClick: loadHistoriqueComptes, disabled: hcLoading, style: { ...selS, cursor: "pointer" } }, hcLoading ? "…" : "↻"),
+        React.createElement('button', { onClick: exporterCsv, disabled: !lignesHc.length, style: { ...selS, cursor: "pointer", background: G, border: "none", fontWeight: 600, color: "#111" } }, "⬇ Export Excel (CSV)")
+      ),
+      React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 8 } }, lignesHc.length + " demande" + (lignesHc.length > 1 ? "s" : "") + (lignesHc.length !== hcRows.length ? " sur " + hcRows.length : "")),
+      hcErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, hcErr),
+      hcLoading && !hcRows.length && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
+      !hcLoading && !hcErr && lignesHc.length === 0 && React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 28, textAlign: "center", color: "#999", fontSize: 13 } }, hcRows.length ? "Aucune demande ne correspond aux filtres." : "Aucune demande de compte pour le moment."),
+      React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        lignesHc.map(({ t, i }) => {
+          const ouvert = hcOpenId === t.id;
+          const [c, bg] = HC_TYPES[i.type] || HC_TYPES["Autre"];
+          const pdfs = hcFiles[t.id] || [];
+          return React.createElement('div', { key: t.id, style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, overflow: "hidden" } },
+            React.createElement('div', { onClick: () => setHcOpenId(ouvert ? null : t.id), style: { padding: "11px 14px", cursor: "pointer", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" } },
+              React.createElement('div', { style: { fontSize: 11.5, color: "#888", minWidth: 78 } }, fmtD(t.created_at)),
+              React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: c, background: bg, padding: "3px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, i.type),
+              React.createElement('div', { style: { flex: "1 1 200px", minWidth: 0 } },
+                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e" } }, i.collaborateur || i.compte || t.subject || "(sans nom)"),
+                React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginTop: 2 } },
+                  [isAdmin ? nomHotelDe(t.hotel_id) : null, i.poste, i.dateEffet ? ((i.type === "Suppression" ? "Départ : " : "Effet : ") + i.dateEffet) : null, "Demandé par " + (t.contact_name || t.contact_email || "?")].filter(Boolean).join(" · "))
+              ),
+              badgeValidation(t.reference),
+              React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: t.status === "closed" ? "#888" : "#2F855A", background: t.status === "closed" ? "#F0F0F5" : "#EAF6EC", padding: "3px 9px", borderRadius: 20 } }, t.status === "closed" ? "Fermée" : (t.en_attente ? "En cours" : "Ouverte")),
+              React.createElement('span', { style: { fontSize: 10.5, color: "#999", fontFamily: "monospace" } }, t.reference || "")
+            ),
+            ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: "12px 14px", background: "#FAFAFC" } },
+              React.createElement('div', { style: { whiteSpace: "pre-wrap", fontSize: 12.5, color: "#444", lineHeight: 1.6 } }, t.message || ""),
+              React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, alignItems: "center" } },
+                pdfs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", style: { fontSize: 12, color: G2, textDecoration: "none", border: "1px solid #E8D89A", borderRadius: 6, padding: "5px 10px", background: "white" } }, "📕 " + f.file_name)),
+                React.createElement('button', { onClick: () => hcVoirTicket(t), style: { marginLeft: "auto", padding: "6px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Voir le ticket →")
+              )
+            )
+          );
+        })
+      )
+    );
+  }
+
   if (page === "planning" && isAdmin) {
     const nbJours = plWeekend ? 7 : 5;
     const jours = Array.from({ length: nbJours }, (_, i) => plAjout(plSemaine, i));
@@ -8569,7 +8720,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : page === "planning" ? "Planning d'équipe" : page === "templates" ? "Template — Demandes internes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Accueil" : page === "aide-interne" ? "Aide - Procédures Internes" : page === "suppr-ticket" ? "Suppression définitive d'un ticket" : page === "admins" ? "Gérer les administrateurs" : page === "login-logs" ? "Journal de connexions" : page === "securite" ? "Sécurité — Appareils MFA" : page === "client-admin" ? "Gérer les clients" : page === "proc-admin" ? "Gérer les procédures" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport Jour — tickets ouverts" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapport d'activité" : page === "ninjaone" ? "Rapports Sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Backups — Statut des sauvegardes" : page === "planning" ? "Planning d'équipe" : page === "historique-comptes" ? "Historique des demandes de comptes" : page === "templates" ? "Template — Demandes internes" : "Gérer les procédures") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des demandes de comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Infrastructure" : page === "contact" ? "Contacter le support" : page === "templates" ? "Template — Demandes internes" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapport Sécurité" : page === "rapport-intervention" ? "Rapport Intervention" : page === "rapport-tickets" ? "Rapport de suivi des tickets" : page === "securite" ? "Sécurité — Mes téléphones" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
@@ -8817,4 +8968,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
- 
