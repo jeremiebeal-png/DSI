@@ -6514,7 +6514,7 @@ const nav = isAdmin
     content = React.createElement('div', null,
       openTicketId && React.createElement('button', { onClick: () => setOpenTicketId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux tickets"),
       !openTicketId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        [["open", "Ouverts"], ["waiting", "En projet"], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
+        [["open", "Ouverts"], ["waiting", "En cours"], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
         ),
         React.createElement('div', { style: { flex: "1 1 240px", position: "relative", minWidth: 180 } },
@@ -6643,7 +6643,7 @@ const nav = isAdmin
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status)),
                       ticketStateBadge(ticketState[t.id], t.status),
                       t.prestataire && React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prestaColor(t.prestataire), background: prestaColor(t.prestataire) + "1C", padding: "2px 8px", borderRadius: 20 } }, "🔗 " + t.prestataire),
-                      t.en_attente && React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: "#854F0B", background: "#FAEEDA", padding: "2px 8px", borderRadius: 20 } }, "⏸ En projet" + (t.date_attente ? " · " + new Date(t.date_attente).toLocaleDateString("fr-FR") : "")),
+                      t.en_attente && React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: "#854F0B", background: "#FAEEDA", padding: "2px 8px", borderRadius: 20 } }, "⏸ En cours" + (t.date_attente ? " · " + new Date(t.date_attente).toLocaleDateString("fr-FR") : "")),
                     ),
                     t.subject && React.createElement('div', { style: { fontSize: 12, fontWeight: 500, color: "#444", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "Objet : " + t.subject),
                     React.createElement('div', { style: { fontSize: 12, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.contact_name || "?") + " — " + (t.message || "")),
@@ -6719,7 +6719,7 @@ const nav = isAdmin
                 React.createElement('span', { style: { width: 1, height: 18, background: "#E0E0E8" } }),
                 React.createElement('label', { style: { fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
                   React.createElement('input', { type: "checkbox", checked: !!t.en_attente, onChange: async (e) => { const val = e.target.checked; const { error } = await sb.from("tickets").update({ en_attente: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, en_attente: val } : x)); else alert("Erreur : " + error.message); }, style: { width: 15, height: 15, cursor: "pointer" } }),
-                  "⏸ En projet"
+                  "⏸ En cours"
                 ),
                 t.en_attente && React.createElement('input', { type: "date", value: t.date_attente || "", onChange: async (e) => { const val = e.target.value || null; const { error } = await sb.from("tickets").update({ date_attente: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, date_attente: val } : x)); else alert("Erreur : " + error.message); }, style: { padding: "4px 8px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
               ),
