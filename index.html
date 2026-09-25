@@ -3199,7 +3199,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         setBkGroupMap(m);
       } catch (e) { /* table peut ne pas exister encore */ }
 
-      const res = await fetch(CHECKCENTRAL_API_URL, { method: "GET" });
+      const { data: sessBk } = await sb.auth.getSession();
+      const res = await fetch(CHECKCENTRAL_API_URL, { method: "GET", headers: { Authorization: "Bearer " + (sessBk.session?.access_token || "") } });
       if (!res.ok) {
         const t = await res.text().catch(() => "");
         setBkNote("Erreur Worker CheckCentral (" + res.status + ")" + (t ? " — " + t.slice(0, 200) : "") + ".");
