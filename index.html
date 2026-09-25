@@ -1068,9 +1068,10 @@ function App() {
       const validateur = nettoyerEmail(tplValues.validateurEmail || "").trim();
       if (validateur) {
         try {
+          const { data: sessV } = await sb.auth.getSession();
           const rv = await fetch(ADMIN_API_URL + "/creer-validation", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + (sessV.session?.access_token || "") },
             body: JSON.stringify({
               ticketId, reference, hotelId: myHotelId, hotelName: nomHotel,
               titre: tplActif.titre, recap: message,
@@ -1900,7 +1901,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         });
       }
       setAddAccountHotel(null);
-      await loadHotels();
+      // Rafraîchit la liste des hôtels (loadHotels n'existait pas -> erreur après succès).
+      const { data: hs } = await sb.from("hotels").select("*").order("name");
+      if (hs) setHotels(hs);
     } catch (e) {
       setAddAccountErr(e.message || "Erreur lors de l'opération sur le compte.");
     } finally {
@@ -2323,9 +2326,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // Charge le statut des demandes de validation (via le Worker) et l'indexe par référence.
   const loadValidations = async () => {
     try {
+      const { data: sessV } = await sb.auth.getSession();
       const res = await fetch(ADMIN_API_URL + "/validations-hotel", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (sessV.session?.access_token || "") },
         body: JSON.stringify(isAdmin ? { all: true } : { hotelId: myHotelId }),
       });
       const data = await res.json().catch(() => ({}));
