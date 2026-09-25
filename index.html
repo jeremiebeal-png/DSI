@@ -375,6 +375,33 @@ const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp"];
 const isImageFile = (name) => IMAGE_EXTS.includes((name.split('.').pop() || '').toLowerCase());
 const fileExt = (name) => (name.split('.').pop() || '').toLowerCase();
 
+// ====== Aperçu intégré des documents (procédures) ======
+// PDF : affiché directement par le navigateur. Word / Excel / PowerPoint : affichés
+// via la visionneuse Microsoft Office Online (fichier public Supabase). Autres : lien.
+const OFFICE_EXTS = ["doc", "docx", "xls", "xlsx", "ppt", "pptx"];
+const urlTelechargement = (f) => f.file_url + (f.file_url.includes("?") ? "&" : "?") + "download=" + encodeURIComponent(f.file_name || "fichier");
+const urlApercu = (f) => {
+  const ext = fileExt(f.file_name || "");
+  if (ext === "pdf") return f.file_url + "#view=FitH";
+  if (OFFICE_EXTS.includes(ext)) return "https://view.officeapps.live.com/op/embed.aspx?src=" + encodeURIComponent(f.file_url);
+  return null;
+};
+function DocApercu({ f }) {
+  const apercu = urlApercu(f);
+  const [ouvert, setOuvert] = React.useState(true);
+  const lienS = { color: G2, fontSize: 11, textDecoration: "none", whiteSpace: "nowrap" };
+  return React.createElement('div', { style: { border: "1px solid #E8E8F0", borderRadius: 8, overflow: "hidden", background: "#F8F8FC" } },
+    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", fontSize: 12, color: "#333", flexWrap: "wrap" } },
+      React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.file_name || "")] || "📄"),
+      React.createElement('span', { style: { flex: 1, minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
+      apercu && React.createElement('button', { onClick: () => setOuvert(!ouvert), style: { background: "none", border: "none", padding: 0, cursor: "pointer", ...lienS } }, ouvert ? "Masquer ▲" : "Afficher ▼"),
+      apercu && React.createElement('a', { href: apercu, target: "_blank", rel: "noreferrer", style: lienS }, "Plein écran ↗"),
+      React.createElement('a', { href: urlTelechargement(f), rel: "noreferrer", style: lienS }, "Télécharger ⬇")
+    ),
+    apercu && ouvert && React.createElement('iframe', { src: apercu, title: f.file_name, loading: "lazy", style: { display: "block", width: "100%", height: "75vh", minHeight: 420, border: 0, borderTop: "1px solid #E8E8F0", background: "#fff" } })
+  );
+}
+
 const Badge = ({ label, color }) => (
   React.createElement('span', { style: { display: "inline-block", padding: "2px 8px", borderRadius: 100, fontSize: 11, fontWeight: 500, background: color + "22", color, border: `1px solid ${color}44` } }, label)
 );
@@ -5980,7 +6007,7 @@ const nav = isAdmin
                     imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 110, height: 110, objectFit: "cover", borderRadius: 8, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
                   )
                 ),
-                docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES", onOpenImage: openViewer }),
+                docs.length > 0 && React.createElement('div', null, React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"), React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } }, docs.map((f, i) => React.createElement(DocApercu, { key: f.id || i, f })))),
                 React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
                   React.createElement('button', { onClick: (e) => { e.stopPropagation(); openEditProcForm(p); }, style: { padding: "8px 15px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12.5, cursor: "pointer", fontWeight: 500 } }, "✏️ Modifier"),
                   React.createElement('button', { onClick: (e) => { e.stopPropagation(); if (window.confirm("Supprimer la procédure « " + (p.title || "") + " » ?")) deleteProc(p.id); }, style: { padding: "8px 15px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12.5, cursor: "pointer", fontWeight: 500 } }, "🗑 Supprimer")
@@ -6064,7 +6091,7 @@ const nav = isAdmin
                   imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 110, height: 110, objectFit: "cover", borderRadius: 8, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
                 )
               ),
-              docs.length > 0 && React.createElement(FileList, { files: docs, title: "📎 PIÈCES JOINTES", onOpenImage: openViewer }),
+              docs.length > 0 && React.createElement('div', null, React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"), React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } }, docs.map((f, i) => React.createElement(DocApercu, { key: f.id || i, f })))),
               React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" } },
                 React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Problème non résolu ?"),
                 React.createElement('button', { onClick: (e) => { e.stopPropagation(); go("contact"); }, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px" } }, "📧 Contacter le support →")
@@ -6110,11 +6137,7 @@ const nav = isAdmin
         files.filter(f => !isImageFile(f.file_name)).length > 0 && React.createElement('div', { style: { marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F8" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 8 } }, "📎 PIÈCES JOINTES"),
           React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
-            files.filter(f => !isImageFile(f.file_name)).map((f, i) => React.createElement('a', { key: i, href: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
-              React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.file_name)] || "📄"),
-              React.createElement('span', { style: { flex: 1 } }, f.file_name),
-              React.createElement('span', { style: { color: G2, fontSize: 11 } }, "Télécharger ⬇")
-            ))
+            files.filter(f => !isImageFile(f.file_name)).map((f, i) => React.createElement(DocApercu, { key: f.id || i, f }))
           )
         ),
         !isAdmin && React.createElement('div', { style: { marginTop: 18, paddingTop: 14, borderTop: "1px solid #F0F0F8", display: "flex", justifyContent: "space-between", alignItems: "center" } },
@@ -8288,11 +8311,7 @@ const nav = isAdmin
                 imgs.map((f, i) => React.createElement('img', { key: f.id, src: f.file_url, alt: f.file_name, title: f.file_name, onClick: () => openViewer(imgs, i), style: { width: 80, height: 80, objectFit: "cover", borderRadius: 7, border: "1px solid #E2E2E8", cursor: "zoom-in" } }))
               ),
               docs.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                docs.map(f => React.createElement('a', { key: f.id, href: f.file_url, target: "_blank", rel: "noreferrer", style: { display: "flex", alignItems: "center", gap: 8, background: "#F8F8FC", borderRadius: 7, padding: "8px 12px", fontSize: 12, color: "#333", textDecoration: "none" } },
-                  React.createElement('span', { style: { fontSize: 16 } }, FILE_ICONS[fileExt(f.file_name)] || "📄"),
-                  React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.file_name),
-                  React.createElement('span', { style: { color: G2, fontSize: 11 } }, "Télécharger ⬇")
-                ))
+                docs.map((f, i) => React.createElement(DocApercu, { key: f.id || i, f }))
               )
             )
           );
