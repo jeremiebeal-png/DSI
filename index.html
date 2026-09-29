@@ -790,10 +790,15 @@ function App() {
         { k: "dateArrivee", label: "Date d'arrivée", type: "date", req: true },
         { k: "services", label: "Accès souhaités au Réseau Admin", type: "checkboxes", options: ["FO", "CONCIERGERIE", "HK", "FINANCE", "RH", "COMMERCIAL", "MARKETING", "GC&E", "RESERVATION", "F&B", "CUISINE", "TECH", "DIRECTION"], req: true },
         { k: "apps", label: "Accès applicatifs (PMS / logiciels)", type: "checkboxes", options: ["Opera", "PEP", "ONQ", "Protel", "Micros", "Agilysys"] },
-        { k: "creerMail", label: "Créer une adresse mail", type: "checkbox" },
-        { k: "mailACreer", label: "Adresse mail à créer", showIf: "creerMail", req: true },
-        { k: "telMfa", label: "Numéro de téléphone pour le MFA", type: "tel", showIf: "creerMail" },
-        { k: "groupesMail", label: "Groupes de distribution et boîtes partagées à inclure", type: "textarea", showIf: "creerMail" },
+        // Nouveau compte : création d'adresse mail
+        { k: "creerMail", label: "Créer une adresse mail", type: "checkbox", showIfNotEquals: { typeDemande: "Modification" } },
+        { k: "mailACreer", label: "Adresse mail à créer", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" }, req: true },
+        { k: "telMfa", label: "Numéro de téléphone pour le MFA", type: "tel", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" } },
+        { k: "groupesMail", label: "Groupes de distribution et boîtes partagées à inclure", type: "textarea", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" } },
+        // Modification : changement d'adresse mail (ancienne -> nouvelle)
+        { k: "modifMail", label: "Modification adresse mail", type: "checkbox", showIfEquals: { typeDemande: "Modification" } },
+        { k: "ancienMail", label: "Ancienne adresse mail", showIf: "modifMail", showIfEquals: { typeDemande: "Modification" }, req: true },
+        { k: "nouveauMail", label: "Nouvelle adresse mail", showIf: "modifMail", showIfEquals: { typeDemande: "Modification" }, req: true },
         { k: "creerVpn", label: "Créer un VPN", type: "checkbox" },
         { k: "materiel", label: "Autre remarque", type: "textarea" },
         { k: "validateurEmail", label: "Email du validateur (RH / direction)", type: "validation", req: true },
@@ -828,8 +833,14 @@ function App() {
   // Détermine si un champ doit être affiché, selon ses conditions :
   //  - showIf: "cle"            -> visible si la case "cle" est cochée (=== true)
   //  - showIfEquals: { cle: v } -> visible si la valeur de "cle" vaut v
+  //  - showIfNotEquals: { cle: v } -> visible si la valeur de "cle" ne vaut PAS v
   const champVisible = (ch, values) => {
     if (ch.showIf && values[ch.showIf] !== true) return false;
+    if (ch.showIfNotEquals) {
+      for (const cle in ch.showIfNotEquals) {
+        if (values[cle] === ch.showIfNotEquals[cle]) return false;
+      }
+    }
     if (ch.showIfEquals) {
       for (const cle in ch.showIfEquals) {
         if (values[cle] !== ch.showIfEquals[cle]) return false;
