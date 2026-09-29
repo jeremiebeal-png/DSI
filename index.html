@@ -4294,7 +4294,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setPlLoading(true); setPlErr("");
     try {
       const d = await callAdminApi("/admin/planning-list", { start: plSemaine, end: plAjout(plSemaine, 6) });
-      setPlData({ equipe: d.equipe || [], evenements: d.evenements || [], boite: d.boite || "" });
+      // Comptes admin masqués du planning (doublons) : nom affiché, comparé sans accents/casse.
+      const PL_EXCLUS = ["jeremie beal"];
+      const plNorm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+      const equipe = (d.equipe || []).filter(m => !(PL_EXCLUS.includes(plNorm(m.nom)) && /\s/.test(String(m.nom || "").trim())));
+      setPlData({ equipe, evenements: d.evenements || [], boite: d.boite || "" });
     } catch (e) {
       setPlErr(e.message || "Erreur de chargement du planning.");
     } finally { setPlLoading(false); }
@@ -4302,9 +4306,32 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => { if (page === "planning" && isAdmin) loadPlanning(); }, [page, plSemaine]);
 
   // Techniciens affectés à un RDV : catégorie Outlook = nom, ou invité par email.
+  // + initiales du technicien dans le titre (ex. "MP GDN", "PAROA - MP/SA" -> Marc Pratlong).
+  // Initiales utilisées par l'équipe quand elles diffèrent du calcul automatique
+  // (clé = début de l'email, avant @). Ajouter ici toute nouvelle exception.
+  const PL_INITIALES_FORCEES = { "aftab.saifullah": ["SA"], "as": ["SA"] };
+  const plInitialesDe = (m) => {
+    const res = [...(PL_INITIALES_FORCEES[String(m.email || "").split("@")[0].toLowerCase()] || [])];
+    const parts = String(m.nom || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[\s._-]+/).filter(Boolean);
+    if (parts.length >= 2) res.push((parts[0][0] + parts[parts.length - 1][0]).toUpperCase());
+    const local = String(m.email || "").split("@")[0];
+    if (/^[a-z]{2,3}$/i.test(local)) res.push(local.toUpperCase());          // ex. mp@dsihotel.fr
+    const lp = local.split(/[._-]+/).filter(Boolean);
+    if (lp.length >= 2) res.push((lp[0][0] + lp[lp.length - 1][0]).toUpperCase()); // ex. marc.pratlong@
+    return [...new Set(res)];
+  };
   const plTechsDe = (e) => {
     const cats = (e.categories || []).map(c => c.toLowerCase());
-    return plData.equipe.filter(m => cats.includes(m.nom.toLowerCase()) || (e.participants || []).includes(m.email));
+    // Initiales -> technicien, en ignorant celles partagées par plusieurs membres (ambiguës).
+    const compte = {};
+    plData.equipe.forEach(m => plInitialesDe(m).forEach(i => { compte[i] = (compte[i] || 0) + 1; }));
+    // Jetons du titre écrits en MAJUSCULES (2-3 lettres) : "MP", "GJ", "SA"...
+    const jetons = new Set(String(e.titre || "").split(/[^A-Za-z]+/).filter(t => t.length >= 2 && t.length <= 3 && t === t.toUpperCase()));
+    return plData.equipe.filter(m =>
+      cats.includes(m.nom.toLowerCase()) ||
+      (e.participants || []).includes(m.email) ||
+      plInitialesDe(m).some(i => compte[i] === 1 && jetons.has(i))
+    );
   };
   const plJoursDe = (e) => {
     const d0 = (e.debut || "").slice(0, 10);
@@ -7621,7 +7648,7 @@ const nav = isAdmin
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
         "Planning de l'équipe, synchronisé en direct avec le calendrier Outlook de ", React.createElement('b', null, plData.boite || "info@dsihotel.fr"),
-        ". Cliquez dans une case pour ajouter un RDV, sur un RDV pour le modifier. Les RDV saisis dans Outlook apparaissent ici ; un RDV est rattaché à un technicien par sa catégorie Outlook (= son nom) ou s'il est invité."
+        ". Cliquez dans une case pour ajouter un RDV, sur un RDV pour le modifier. Les RDV saisis dans Outlook apparaissent ici ; un RDV est rattaché à un technicien par sa catégorie Outlook (= son nom), s'il est invité, ou si ses initiales figurent en majuscules dans le titre (ex. « MP GDN »)."
       ),
       React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 } },
         React.createElement('button', { onClick: () => setPlSemaine(plAjout(plSemaine, -7)), style: btnS }, "◀"),
