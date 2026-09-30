@@ -8142,7 +8142,7 @@ const nav = isAdmin
               ),
               React.createElement('div', { style: { display: "flex", gap: 6 } },
                 c && btn(soBusy === h.id ? "Synchro…" : "🔄 Synchroniser", () => soSynchroniser(h.id), { disabled: !!soBusy }),
-                btn(c ? "⚙️ Configurer" : "+ Configurer Sophos", () => setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "2bd56cba-9f88-4e44-9d5c-6eb8cb373d2b", clientSecret: "0706d4ddcf4742dc6e60285dc9d86c08593fbf4032ba1b635c701d3f613c287728989be32547736743a1d14e6d3a12c2ccde", actif: c ? c.actif : true, existe: !!c, err: "" }),
+                btn(c ? "⚙️ Configurer" : "+ Configurer Sophos", () => setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "" }),
                   c ? null : { style: { border: "1px solid " + G, color: G2, fontWeight: 600 } })
               )
             ),
