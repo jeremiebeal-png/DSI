@@ -1581,6 +1581,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const doLogin = async () => {
     setLoggingIn(true);
     setLoginErr("");
+    try { localStorage.setItem("dsi-last-activity", String(Date.now())); } catch (e) {}
     const { error } = await sb.auth.signInWithPassword({ email, password: pw });
     if (error) setLoginErr("Email ou mot de passe incorrect.");
     setLoggingIn(false);
@@ -1762,10 +1763,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
-  const doLogout = async () => {
+  const doLogout = async (opts) => {
     window.__dsiLoggedToken = null;
     window.__dsiPageInit = false;
-    await sb.auth.signOut();
+    try { localStorage.removeItem("dsi-last-activity"); } catch (e) {}
+    // Déconnexion automatique : on ne ferme QUE la session de ce navigateur
+    // (scope "local"). Sinon, sur un compte hôtel partagé, l'inactivité d'un
+    // poste déconnecterait tous les collègues connectés avec le même compte.
+    try { await sb.auth.signOut(opts && opts.local ? { scope: "local" } : undefined); }
+    catch (e) { try { await sb.auth.signOut({ scope: "local" }); } catch (e2) {} }
     setEmail(""); setPw(""); setHotels([]); setProcedures([]); setEditCid(null);
     setMfaState("checking"); setMfaFactorId(null); setMfaQr(null); setMfaSecret(""); setMfaCode(""); setMfaErr("");
   };
@@ -1775,53 +1781,72 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   //   - Admin : 15 min d'inactivité -> déconnexion (avertissement 1 min avant).
   //   - Superviseur / compte standard client : 3 min -> déconnexion
   //     (avertissement 30 s avant).
-  // Les minuteurs sont suspendus quand l'onglet est masqué (consultation d'un
-  // PDF ou d'une image dans un autre onglet) : ce n'est pas de l'inactivité.
+  // La dernière activité est mémorisée dans le navigateur (localStorage) :
+  //   - le décompte continue quand l'onglet est en arrière-plan ou la fenêtre
+  //     réduite (avant : il était suspendu, la session ne expirait jamais) ;
+  //   - au retour sur l'onglet, ou à la réouverture du portail / du navigateur,
+  //     une session inactive depuis trop longtemps est fermée immédiatement ;
+  //   - plusieurs onglets ouverts partagent la même dernière activité.
+  // Contrôle par intervalle (et non un seul setTimeout) : fiable même quand le
+  // navigateur ralentit les minuteurs des onglets en arrière-plan.
   useEffect(() => {
-    if (!session) return; // uniquement quand l'utilisateur est connecté
+    if (!session || recoveryMode) return; // uniquement quand l'utilisateur est connecté
 
-    // Admin = 15 min ; superviseur et client standard = 3 min.
+    const KEY = "dsi-last-activity";
     const LOGOUT_AFTER = isAdmin ? 15 * 60 * 1000 : 3 * 60 * 1000;
-    // Avertissement : 1 min avant pour les admins, 30 s avant pour les autres.
     const WARN_BEFORE = isAdmin ? 60 * 1000 : 30 * 1000;
-    const WARN_AFTER = Math.max(0, LOGOUT_AFTER - WARN_BEFORE);
-    let warnTimer, logoutTimer;
+    let lastWrite = 0;
+    let done = false;
 
-    const clearTimers = () => {
-      clearTimeout(warnTimer);
-      clearTimeout(logoutTimer);
+    const lireDerniere = () => {
+      try { const v = parseInt(localStorage.getItem(KEY) || "", 10); return isNaN(v) ? null : v; } catch (e) { return null; }
+    };
+    const ecrireMaintenant = () => {
+      const now = Date.now();
+      if (now - lastWrite < 5000) return; // limite les écritures (mousemove)
+      lastWrite = now;
+      try { localStorage.setItem(KEY, String(now)); } catch (e) {}
     };
 
-    const resetTimers = () => {
-      clearTimers();
-      setIdleWarning(false);
-      if (document.hidden) return; // onglet en arrière-plan : on ne compte pas
-      warnTimer = setTimeout(() => setIdleWarning(true), WARN_AFTER);
-      logoutTimer = setTimeout(() => { setIdleWarning(false); doLogout(); }, LOGOUT_AFTER);
+    const verifier = () => {
+      if (done) return;
+      let derniere = lireDerniere();
+      if (derniere === null) { ecrireMaintenant(); derniere = Date.now(); }
+      const inactif = Date.now() - derniere;
+      if (inactif >= LOGOUT_AFTER) {
+        done = true;
+        setIdleWarning(false);
+        doLogout({ local: true });
+        return;
+      }
+      setIdleWarning(inactif >= LOGOUT_AFTER - WARN_BEFORE);
     };
 
-    // Toute activité de l'utilisateur relance les minuteurs
+    // Toute activité de l'utilisateur met à jour l'horodatage
     const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"];
-    const onActivity = () => resetTimers();
-    events.forEach(ev => window.addEventListener(ev, onActivity));
+    const onActivity = () => { if (!document.hidden) { ecrireMaintenant(); } };
+    events.forEach(ev => window.addEventListener(ev, onActivity, { passive: true }));
 
-    // Onglet masqué -> suspend ; onglet réaffiché -> repart à zéro
-    const onVisibility = () => { if (document.hidden) clearTimers(); else resetTimers(); };
+    // Retour sur l'onglet : on vérifie tout de suite (déconnexion si expiré)
+    const onVisibility = () => { if (!document.hidden) verifier(); };
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
 
-    resetTimers(); // démarre au montage
+    verifier(); // au montage : ferme une session restée ouverte trop longtemps
+    const timer = setInterval(verifier, 5000);
 
     return () => {
-      clearTimers();
+      clearInterval(timer);
       events.forEach(ev => window.removeEventListener(ev, onActivity));
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
     };
-  }, [session, isAdmin]);
+  }, [session, isAdmin, recoveryMode]);
 
   // Bouton "Je suis toujours là" : relance simplement l'activité
   const stayConnected = () => {
     setIdleWarning(false);
-    window.dispatchEvent(new Event("mousemove")); // relance les minuteurs
+    try { localStorage.setItem("dsi-last-activity", String(Date.now())); } catch (e) {}
   };
 
   // ---------- HOTEL (CLIENT) CRUD ----------
