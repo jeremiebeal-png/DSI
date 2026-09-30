@@ -72,6 +72,8 @@ const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
 // Worker dédié CheckCentral (statuts de backup). Ajuster l'URL après déploiement
 // du Worker "dsi-hotel-checkcentral" si le sous-domaine diffère.
 const CHECKCENTRAL_API_URL = "https://dsi-hotel-checkcentral.jeremie-beal.workers.dev/status";
+// Worker de supervision Sophos Central (ajuster l'URL après déploiement si le sous-domaine diffère).
+const SOPHOS_API_URL = "https://dsi-hotel-sophos.jeremie-beal.workers.dev";
 
 // ====== SIGNATURE EMAIL DSI HOTEL ======
 const SIGN_LOGO_URL = "https://www.dsihotel.com/dsi-logo-gold.png";
@@ -1293,6 +1295,7 @@ function App() {
     { key: "projets",    page: "projets",            icon: "📊", label: "Projets", grp: "pil" },
     { key: "tickets",    page: "planning",           icon: "📅", label: "Planning équipe", grp: "pil" },
     { key: "docs",       page: "backups",            icon: "💾", label: "Sauvegardes", grp: "pil" },
+    { key: "docs",       page: "sophos",             icon: "🔒", label: "Sécurité Sophos", grp: "pil" },
     { key: "tickets",    page: "rapport-jour",       icon: "📄", label: "Rapport du jour", grp: "rap" },
     { key: "tickets",    page: "rapport-tickets",    icon: "📈", label: "Suivi des tickets", grp: "rap" },
     { key: "rapports",   page: "rapports",           icon: "📝", label: "Rapports d'intervention", grp: "rap" },
@@ -3184,6 +3187,127 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   //  optionnel (checkcentral_group_map) associe un groupe à un hôtel.
   // ============================================================
   const [bkChecks, setBkChecks] = useState([]);
+  // ============================================================
+  //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
+  //  (un compte par hôtel). Données alimentées par le Worker dsi-hotel-sophos.
+  // ============================================================
+  const [soComptes, setSoComptes] = useState([]);
+  const [soAlertes, setSoAlertes] = useState([]);
+  const [soLoading, setSoLoading] = useState(false);
+  const [soErr, setSoErr] = useState("");
+  const [soMsg, setSoMsg] = useState("");
+  const [soTab, setSoTab] = useState("alertes");
+  const [soVoirResolues, setSoVoirResolues] = useState(false);
+  const [soHotelFiltre, setSoHotelFiltre] = useState("");
+  const [soOpenHotel, setSoOpenHotel] = useState(null);
+  const [soPostes, setSoPostes] = useState({});
+  const [soModal, setSoModal] = useState(null);
+  const [soBusy, setSoBusy] = useState("");
+  const [soNoteEdit, setSoNoteEdit] = useState(null);
+
+  const callSophosApi = async (path, payload) => {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = (sessionData.session && sessionData.session.access_token) || "";
+    const res = await fetch(SOPHOS_API_URL + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.erreur || ("Erreur " + res.status + " (le Worker dsi-hotel-sophos est-il déployé ?)"));
+    return data;
+  };
+
+  const loadSophos = async (silencieux) => {
+    if (!silencieux) setSoLoading(true);
+    setSoErr("");
+    try {
+      const [c, a] = await Promise.all([
+        sb.from("sophos_comptes").select("id,hotel_id,client_id,tenant_id,actif,dernier_controle,dernier_statut,derniere_erreur,nb_postes,nb_postes_ko,nb_postes_suspects,nb_postes_muets,nb_alertes,nb_alertes_hautes"),
+        sb.from("sophos_alertes").select("*").order("raised_at", { ascending: false }).limit(1000),
+      ]);
+      if (c.error) throw c.error;
+      if (a.error) throw a.error;
+      setSoComptes(c.data || []);
+      setSoAlertes(a.data || []);
+    } catch (e) {
+      setSoErr("Erreur de chargement : " + (e.message || e) + " — le script SQL Sophos a-t-il été exécuté ?");
+    } finally {
+      if (!silencieux) setSoLoading(false);
+    }
+  };
+
+  const loadSoPostes = async (hotelId) => {
+    const { data, error } = await sb.from("sophos_postes")
+      .select("hostname,type,os,health,threats_status,services_status,tamper_protection,last_seen_at")
+      .eq("hotel_id", hotelId).order("hostname");
+    if (!error) setSoPostes(prev => ({ ...prev, [hotelId]: data || [] }));
+  };
+
+  const soSynchroniser = async (hotelId) => {
+    setSoBusy(hotelId); setSoMsg("");
+    try {
+      const r = await callSophosApi("/synchroniser", { hotelId });
+      setSoMsg("✅ Synchronisé : " + (r.nb_postes || 0) + " poste(s), " + (r.nb_alertes || 0) + " alerte(s) ouverte(s).");
+      await loadSophos(true);
+      if (soOpenHotel === hotelId) loadSoPostes(hotelId);
+    } catch (e) {
+      setSoMsg("❌ " + (e.message || e));
+      await loadSophos(true);
+    } finally { setSoBusy(""); }
+  };
+
+  const soEnregistrerCompte = async () => {
+    const f = soModal;
+    if (!f) return;
+    if (!String(f.clientId || "").trim()) { setSoModal({ ...f, err: "L'ID client est obligatoire." }); return; }
+    if (!f.existe && !String(f.clientSecret || "").trim()) { setSoModal({ ...f, err: "Le secret est obligatoire pour un nouveau compte." }); return; }
+    setSoModal({ ...f, busy: true, err: "" });
+    try {
+      const r = await callSophosApi("/compte", { hotelId: f.hotelId, clientId: f.clientId.trim(), clientSecret: (f.clientSecret || "").trim(), actif: f.actif !== false });
+      setSoModal(null);
+      const s = r.synchro;
+      setSoMsg(s && s.ok
+        ? "✅ Compte Sophos enregistré et testé — " + (s.nb_postes || 0) + " poste(s), " + (s.nb_alertes || 0) + " alerte(s)."
+        : "✅ Compte Sophos enregistré." + (s && s.erreur ? " ⚠️ Première synchro : " + s.erreur : ""));
+      await loadSophos(true);
+    } catch (e) {
+      setSoModal({ ...f, busy: false, err: e.message || String(e) });
+    }
+  };
+
+  const soSupprimerCompte = async (hotelId, nom) => {
+    if (!confirm("Retirer la supervision Sophos de « " + nom + " » ?\n\nL'identité API enregistrée, les alertes et l'état des postes de cet hôtel seront supprimés du portail (rien n'est modifié dans Sophos Central).")) return;
+    try {
+      await callSophosApi("/supprimer", { hotelId });
+      setSoModal(null);
+      setSoMsg("Supervision retirée pour « " + nom + " ».");
+      await loadSophos(true);
+    } catch (e) { alert("Erreur : " + (e.message || e)); }
+  };
+
+  const soPrendreEnCharge = async (a) => {
+    const maj = { prise_en_charge_par: adminFromName(), prise_en_charge_le: new Date().toISOString() };
+    const { error } = await sb.from("sophos_alertes").update(maj).eq("id", a.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    setSoAlertes(prev => prev.map(x => x.id === a.id ? { ...x, ...maj } : x));
+  };
+
+  const soEnregistrerNote = async () => {
+    if (!soNoteEdit) return;
+    const note = (soNoteEdit.note || "").trim() || null;
+    const { error } = await sb.from("sophos_alertes").update({ note }).eq("id", soNoteEdit.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    setSoAlertes(prev => prev.map(x => x.id === soNoteEdit.id ? { ...x, note } : x));
+    setSoNoteEdit(null);
+  };
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (page === "sophos") loadSophos();
+    else if (page === "accueil") loadSophos(true);
+  }, [page, profile]);
+
   // ----- Historique des demandes de comptes (création / modification / suppression / mot de passe) -----
   const [hcRows, setHcRows] = useState([]);
   const [hcFiles, setHcFiles] = useState({});      // { ticketId: [pdf] }
@@ -5451,6 +5575,13 @@ const nav = isAdmin
       const rappelsProches = (rappelsDus || []).filter(r => { const j = new Date(r.rappel_date + "T00:00:00"); const t = new Date(); t.setHours(0,0,0,0); return j.getTime() > t.getTime(); });
       if (rappelsEchus.length > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "⏰", rappelsEchus.length + " rappel" + (rappelsEchus.length > 1 ? "s" : "") + " à échéance", "Fiche" + (rappelsEchus.length > 1 ? "s" : "") + " à revoir (Care Pack, contrat, licence…)", "docs-techniques"));
       if (rappelsProches.length > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "⏰", rappelsProches.length + " rappel" + (rappelsProches.length > 1 ? "s" : "") + " à venir", "Échéance dans les 30 jours", "docs-techniques"));
+      // Sophos : alertes hautes, postes en mauvaise santé, comptes en erreur
+      const soHautes = (soComptes || []).filter(c => c.actif).reduce((n, c) => n + (c.nb_alertes_hautes || 0), 0);
+      const soKo = (soComptes || []).filter(c => c.actif).reduce((n, c) => n + (c.nb_postes_ko || 0), 0);
+      const soErrs = (soComptes || []).filter(c => c.actif && c.dernier_statut === "erreur").length;
+      if (soHautes > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "🔒", soHautes + " alerte" + (soHautes > 1 ? "s" : "") + " Sophos haute" + (soHautes > 1 ? "s" : ""), "Menaces détectées à traiter", "sophos"));
+      if (soKo > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "💻", soKo + " poste" + (soKo > 1 ? "s" : "") + " en mauvaise santé", "Protection Sophos dégradée", "sophos"));
+      if (soErrs > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "🔌", soErrs + " compte" + (soErrs > 1 ? "s" : "") + " Sophos en erreur", "Connexion à Sophos Central impossible", "sophos"));
 
       content = React.createElement('div', null,
         // Bandeau de bienvenue
@@ -7883,6 +8014,192 @@ const nav = isAdmin
     );
   }
 
+  // ---------- SÉCURITÉ SOPHOS (admin) ----------
+  if (page === "sophos" && isAdmin) {
+    const SEV = { high: { l: "Haute", c: "#C53030", bg: "#FDECEC" }, medium: { l: "Moyenne", c: "#B7791F", bg: "#FFF6E5" }, low: { l: "Faible", c: "#718096", bg: "#F0F0F4" } };
+    const sevMeta = (s) => SEV[s] || { l: s || "—", c: "#718096", bg: "#F0F0F4" };
+    const HEALTH = { good: { l: "OK", c: "#2F855A", bg: "#E9F6EE" }, suspicious: { l: "Suspect", c: "#B7791F", bg: "#FFF6E5" }, bad: { l: "Mauvais", c: "#C53030", bg: "#FDECEC" }, unknown: { l: "Inconnu", c: "#718096", bg: "#F0F0F4" } };
+    const healthMeta = (h) => HEALTH[h] || HEALTH.unknown;
+    const nomHotel = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "?"; };
+    const compteDe = (hid) => soComptes.find(c => c.hotel_id === hid);
+    const seuilMuet = Date.now() - 7 * 86400000;
+    const etatHotel = (c) => {
+      if (!c) return { c: "#A0AEC0", l: "Non configuré", rank: 4 };
+      if (!c.actif) return { c: "#A0AEC0", l: "Désactivé", rank: 4 };
+      if (c.dernier_statut === "erreur") return { c: "#C53030", l: "Erreur de connexion", rank: 0 };
+      if (!c.dernier_controle) return { c: "#A0AEC0", l: "En attente de synchro", rank: 3 };
+      if ((c.nb_alertes_hautes || 0) > 0 || (c.nb_postes_ko || 0) > 0) return { c: "#C53030", l: "Critique", rank: 1 };
+      if ((c.nb_alertes || 0) > 0 || (c.nb_postes_suspects || 0) > 0 || (c.nb_postes_muets || 0) > 0) return { c: "#DD6B20", l: "À surveiller", rank: 2 };
+      return { c: "#2F855A", l: "OK", rank: 3 };
+    };
+    const somme = (k) => soComptes.filter(c => c.actif).reduce((n, c) => n + (c[k] || 0), 0);
+    const nbErreurs = soComptes.filter(c => c.actif && c.dernier_statut === "erreur").length;
+
+    let alertesVues = soAlertes.filter(a => soVoirResolues ? true : a.statut === "ouverte");
+    if (soHotelFiltre) alertesVues = alertesVues.filter(a => a.hotel_id === soHotelFiltre);
+    const rankSev = { high: 0, medium: 1, low: 2 };
+    alertesVues = alertesVues.slice().sort((a, b) =>
+      (a.statut === "ouverte" ? 0 : 1) - (b.statut === "ouverte" ? 0 : 1) ||
+      (rankSev[a.severity] ?? 3) - (rankSev[b.severity] ?? 3) ||
+      new Date(b.raised_at || 0) - new Date(a.raised_at || 0));
+
+    const hotelsTries = hotels.slice().sort((a, b) => {
+      const ea = etatHotel(compteDe(a.id)), eb = etatHotel(compteDe(b.id));
+      return ea.rank - eb.rank || String(a.name).localeCompare(String(b.name));
+    });
+
+    const tuile = (lbl, val, coul) => React.createElement('div', { style: { flex: "1 1 140px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
+      React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 5 } }, lbl),
+      React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: coul } }, String(val)));
+    const btn = (lbl, onClick, extra) => React.createElement('button', { onClick, disabled: extra && extra.disabled, style: Object.assign({ padding: "6px 12px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" }, (extra && extra.style) || {}) }, lbl);
+    const inputS = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
+
+    const hautes = somme("nb_alertes_hautes"), ko = somme("nb_postes_ko"), muets = somme("nb_postes_muets");
+
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
+        "Supervision centralisée des comptes Sophos Central de chaque établissement : alertes de sécurité et santé des postes. Les données sont actualisées automatiquement environ toutes les 20 minutes ; les nouvelles alertes de sévérité haute sont envoyées par email à l'équipe."),
+      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
+        tuile("Établissements suivis", soComptes.filter(c => c.actif).length + " / " + hotels.length, "#0F0F24"),
+        tuile("Alertes hautes", hautes, hautes > 0 ? "#C53030" : "#2F855A"),
+        tuile("Alertes ouvertes", somme("nb_alertes"), somme("nb_alertes") > 0 ? "#DD6B20" : "#2F855A"),
+        tuile("Postes en mauvaise santé", ko, ko > 0 ? "#C53030" : "#2F855A"),
+        tuile("Postes muets (+7 j)", muets, muets > 0 ? "#DD6B20" : "#2F855A"),
+        tuile("Comptes en erreur", nbErreurs, nbErreurs > 0 ? "#C53030" : "#2F855A")
+      ),
+      React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
+        [["alertes", "🚨 Alertes"], ["hotels", "🏨 Établissements"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
+        React.createElement('button', { onClick: () => loadSophos(), disabled: soLoading, style: { marginLeft: "auto", padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, soLoading ? "…" : "🔄 Actualiser")
+      ),
+      soMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: soMsg.startsWith("❌") ? "#FDECEC" : "#F0F7F2", border: "1px solid " + (soMsg.startsWith("❌") ? "#F5B5B5" : "#C6E6D0"), color: soMsg.startsWith("❌") ? "#C53030" : "#2F855A" } }, soMsg),
+      soErr && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030" } }, soErr),
+
+      // ----- Onglet ALERTES -----
+      soTab === "alertes" && React.createElement('div', null,
+        React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 } },
+          React.createElement('select', { value: soHotelFiltre, onChange: e => setSoHotelFiltre(e.target.value), style: { padding: "7px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12.5, maxWidth: 260 } },
+            React.createElement('option', { value: "" }, "Tous les établissements"),
+            hotels.filter(h => compteDe(h.id)).sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+          React.createElement('label', { style: { fontSize: 12.5, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
+            React.createElement('input', { type: "checkbox", checked: soVoirResolues, onChange: e => setSoVoirResolues(e.target.checked) }), "Afficher les alertes résolues"),
+          React.createElement('span', { style: { fontSize: 12, color: "#888" } }, alertesVues.length + " alerte" + (alertesVues.length > 1 ? "s" : ""))
+        ),
+        !soLoading && alertesVues.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", background: "#E9F6EE", border: "1px solid #B7E0C6", borderRadius: 10, color: "#2F855A", fontSize: 13.5, fontWeight: 600 } },
+          soComptes.length === 0 ? "Aucun compte Sophos configuré : commencez par l'onglet « Établissements »." : "✅ Aucune alerte Sophos ouverte."),
+        React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          alertesVues.map(a => {
+            const sm = sevMeta(a.severity);
+            const ouverte = a.statut === "ouverte";
+            return React.createElement('div', { key: a.id, style: { background: ouverte ? "white" : "#FAFAFC", border: "1px solid " + (ouverte && a.severity === "high" ? "#F5B5B5" : "#E8E8F0"), borderLeft: "5px solid " + (ouverte ? sm.c : "#CBD5E0"), borderRadius: 10, padding: "12px 15px", opacity: ouverte ? 1 : 0.75 } },
+              React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 } },
+                React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: sm.c, background: sm.bg, padding: "2px 9px", borderRadius: 20 } }, sm.l),
+                React.createElement('span', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e" } }, nomHotel(a.hotel_id)),
+                a.poste && React.createElement('span', { style: { fontSize: 11.5, color: "#555", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, "💻 " + a.poste),
+                a.category && React.createElement('span', { style: { fontSize: 11, color: "#888" } }, a.category),
+                React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, fmtDateHeureFr2(a.raised_at)),
+                !ouverte && React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: "#2F855A", background: "#E9F6EE", padding: "2px 9px", borderRadius: 20 } }, "✓ Résolue" + (a.resolue_le ? " le " + fmtDateHeureFr2(a.resolue_le) : ""))
+              ),
+              React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.5 } }, a.description || a.type || "(sans description)"),
+              a.note && soNoteEdit?.id !== a.id && React.createElement('div', { style: { marginTop: 7, fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 9px", whiteSpace: "pre-wrap" } }, "📝 " + a.note),
+              soNoteEdit?.id === a.id && React.createElement('div', { style: { marginTop: 8 } },
+                React.createElement('textarea', { value: soNoteEdit.note, onChange: e => setSoNoteEdit({ ...soNoteEdit, note: e.target.value }), rows: 2, autoFocus: true, placeholder: "Action menée, analyse, faux positif…", style: { ...inputS, resize: "vertical" } }),
+                React.createElement('div', { style: { display: "flex", gap: 6, marginTop: 6 } },
+                  btn("Enregistrer", soEnregistrerNote, { style: { background: G, border: "none", color: "#111", fontWeight: 600 } }),
+                  btn("Annuler", () => setSoNoteEdit(null)))
+              ),
+              React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 9 } },
+                a.prise_en_charge_par
+                  ? React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", background: "#EBF4FF", padding: "3px 10px", borderRadius: 20 } }, "👤 Pris en charge par " + a.prise_en_charge_par + (a.prise_en_charge_le ? " — " + fmtDateHeureFr2(a.prise_en_charge_le) : ""))
+                  : (ouverte && btn("✋ Prendre en charge", () => soPrendreEnCharge(a), { style: { border: "1px solid " + G, color: G2, fontWeight: 600 } })),
+                soNoteEdit?.id !== a.id && btn(a.note ? "✏️ Modifier la note" : "📝 Ajouter une note", () => setSoNoteEdit({ id: a.id, note: a.note || "" }))
+              )
+            );
+          })
+        )
+      ),
+
+      // ----- Onglet ÉTABLISSEMENTS -----
+      soTab === "hotels" && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        hotelsTries.map(h => {
+          const c = compteDe(h.id);
+          const et = etatHotel(c);
+          const ouvert = soOpenHotel === h.id;
+          const postes = soPostes[h.id];
+          const aProbleme = (p) => p.health !== "good" || (p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet);
+          return React.createElement('div', { key: h.id, style: { background: "white", border: "1px solid #E8E8F0", borderLeft: "5px solid " + et.c, borderRadius: 10, overflow: "hidden" } },
+            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 15px", flexWrap: "wrap" } },
+              React.createElement('div', { onClick: () => { if (!c) return; const v = ouvert ? null : h.id; setSoOpenHotel(v); if (v) loadSoPostes(h.id); }, style: { flex: "1 1 220px", minWidth: 0, cursor: c ? "pointer" : "default" } },
+                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#1a1a3e" } }, (c ? (ouvert ? "▼ " : "▶ ") : "") + h.name),
+                React.createElement('div', { style: { fontSize: 11.5, color: et.c, fontWeight: 600, marginTop: 2 } }, et.l,
+                  c && c.dernier_controle && React.createElement('span', { style: { color: "#999", fontWeight: 400 } }, " · contrôlé " + fmtDateHeureFr2(c.dernier_controle)))
+              ),
+              c && c.actif && c.dernier_statut !== "erreur" && React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 } },
+                React.createElement('span', { style: { background: "#F0F0F8", color: "#555", padding: "3px 9px", borderRadius: 20 } }, "💻 " + (c.nb_postes || 0) + " postes"),
+                (c.nb_postes_ko || 0) > 0 && React.createElement('span', { style: { background: "#FDECEC", color: "#C53030", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_ko + " mauvais"),
+                (c.nb_postes_suspects || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_suspects + " suspects"),
+                (c.nb_postes_muets || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_muets + " muets"),
+                (c.nb_alertes || 0) > 0 && React.createElement('span', { style: { background: (c.nb_alertes_hautes || 0) > 0 ? "#FDECEC" : "#FFF6E5", color: (c.nb_alertes_hautes || 0) > 0 ? "#C53030" : "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, "🚨 " + c.nb_alertes + " alerte" + (c.nb_alertes > 1 ? "s" : ""))
+              ),
+              React.createElement('div', { style: { display: "flex", gap: 6 } },
+                c && btn(soBusy === h.id ? "Synchro…" : "🔄 Synchroniser", () => soSynchroniser(h.id), { disabled: !!soBusy }),
+                btn(c ? "⚙️ Configurer" : "+ Configurer Sophos", () => setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "" }),
+                  c ? null : { style: { border: "1px solid " + G, color: G2, fontWeight: 600 } })
+              )
+            ),
+            c && c.dernier_statut === "erreur" && c.derniere_erreur && React.createElement('div', { style: { margin: "0 15px 11px", fontSize: 12, color: "#C53030", background: "#FDECEC", borderRadius: 7, padding: "7px 10px" } }, "⚠️ " + c.derniere_erreur),
+            ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: "12px 15px", background: "#FAFAFC" } },
+              !postes ? React.createElement('div', { style: { fontSize: 12, color: "#999" } }, "Chargement des postes…")
+              : (() => {
+                  const pb = postes.filter(aProbleme);
+                  return React.createElement('div', null,
+                    React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 8 } }, postes.length + " poste(s) — " + (postes.length - pb.length) + " sans problème" + (pb.length ? ", " + pb.length + " à vérifier :" : ".")),
+                    pb.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 5 } },
+                      pb.map((p, i) => {
+                        const hm = healthMeta(p.health);
+                        const muet = p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet;
+                        return React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 10, background: "white", border: "1px solid #EEE", borderRadius: 7, padding: "7px 11px", fontSize: 12.5, flexWrap: "wrap" } },
+                          React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e", minWidth: 140 } }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?")),
+                          React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: hm.c, background: hm.bg, padding: "2px 8px", borderRadius: 20 } }, hm.l),
+                          p.threats_status && p.threats_status !== "good" && React.createElement('span', { style: { fontSize: 11, color: "#C53030" } }, "menaces : " + p.threats_status),
+                          p.services_status && p.services_status !== "good" && React.createElement('span', { style: { fontSize: 11, color: "#B7791F" } }, "services : " + p.services_status),
+                          p.tamper_protection === false && React.createElement('span', { style: { fontSize: 11, color: "#B7791F" } }, "protection anti-altération désactivée"),
+                          muet && React.createElement('span', { style: { fontSize: 11, color: "#B7791F", fontWeight: 600 } }, "muet depuis " + Math.floor((Date.now() - new Date(p.last_seen_at).getTime()) / 86400000) + " j"),
+                          React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, p.os || "")
+                        );
+                      })
+                    )
+                  );
+                })()
+            )
+          );
+        })
+      ),
+
+      // ----- Fenêtre de configuration d'un compte Sophos -----
+      soModal && React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !soModal.busy) setSoModal(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 480, maxWidth: "100%" } },
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 3 } }, "Compte Sophos Central"),
+          React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14 } }, soModal.nom),
+          React.createElement('div', { style: { fontSize: 11.5, color: "#2B6CB0", background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 7, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 } },
+            "Dans le Sophos Central de l'hôtel : Paramètres généraux → Gestion des identifiants API → Ajouter, rôle « Service Principal ReadOnly ». Copiez l'ID client et le secret ici."),
+          React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "ID client *"),
+          React.createElement('input', { value: soModal.clientId, onChange: e => setSoModal({ ...soModal, clientId: e.target.value, err: "" }), placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style: { ...inputS, marginBottom: 12, fontFamily: "monospace" } }),
+          React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Secret client " + (soModal.existe ? "(laisser vide pour conserver l'actuel)" : "*")),
+          React.createElement('input', { type: "password", autoComplete: "new-password", value: soModal.clientSecret, onChange: e => setSoModal({ ...soModal, clientSecret: e.target.value, err: "" }), placeholder: soModal.existe ? "•••••••• (inchangé)" : "Secret client", style: { ...inputS, marginBottom: 12 } }),
+          React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#444", cursor: "pointer", marginBottom: 12 } },
+            React.createElement('input', { type: "checkbox", checked: soModal.actif !== false, onChange: e => setSoModal({ ...soModal, actif: e.target.checked }) }), "Supervision active"),
+          React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 12, lineHeight: 1.5 } }, "🔒 Le secret est chiffré par le Worker et n'est jamais réaffiché. Les identifiants sont testés à l'enregistrement."),
+          soModal.err && React.createElement('div', { style: { fontSize: 12.5, color: "#C53030", background: "#FDECEC", borderRadius: 7, padding: "8px 10px", marginBottom: 12 } }, soModal.err),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
+            soModal.existe && React.createElement('button', { onClick: () => soSupprimerCompte(soModal.hotelId, soModal.nom), disabled: soModal.busy, style: { marginRight: "auto", padding: "8px 13px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🗑 Retirer"),
+            React.createElement('button', { onClick: () => setSoModal(null), disabled: soModal.busy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+            React.createElement('button', { onClick: soEnregistrerCompte, disabled: soModal.busy, style: { padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: soModal.busy ? 0.6 : 1 } }, soModal.busy ? "Test en cours…" : "Tester et enregistrer")
+          )
+        )
+      )
+    );
+  }
+
   if (page === "rapport-tickets" && isAdmin) {
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
@@ -8785,7 +9102,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
