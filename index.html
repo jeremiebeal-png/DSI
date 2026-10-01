@@ -3224,10 +3224,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const colsComptes = "id,hotel_id,client_id,tenant_id,actif,dernier_controle,dernier_statut,derniere_erreur,nb_postes,nb_postes_ko,nb_postes_suspects,nb_postes_muets,nb_alertes,nb_alertes_hautes";
       let [c, a] = await Promise.all([
-        sb.from("sophos_comptes").select(colsComptes + ",nb_licences,regles,principal"),
+        sb.from("sophos_comptes").select(colsComptes + ",nb_licences,regles,principal,libelle"),
         sb.from("sophos_alertes").select("*").order("raised_at", { ascending: false }).limit(1000),
       ]);
-      // Replis si les migrations SQL (licences / compte partagé) ne sont pas encore passées
+      // Replis si les migrations SQL (licences / compte partagé / suppression) ne sont pas encore passées
+      if (c.error) c = await sb.from("sophos_comptes").select(colsComptes + ",nb_licences,regles,principal");
       if (c.error) c = await sb.from("sophos_comptes").select(colsComptes + ",nb_licences");
       if (c.error) c = await sb.from("sophos_comptes").select(colsComptes);
       if (c.error) throw c.error;
@@ -3240,10 +3241,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const partages = Object.keys(parTenant).filter(t => parTenant[t] > 1);
       if (partages.length) {
         const na = await sb.from("sophos_postes")
-          .select("sophos_id,tenant_id,hostname,type,os,health,last_seen_at,dernier_utilisateur,ips,affectation")
+          .select("*")
           .is("hotel_id", null).in("tenant_id", partages).order("hostname");
         setSoNonAffectes(na.error ? [] : (na.data || []));
       } else setSoNonAffectes([]);
+      // PC marqués « à supprimer de Sophos Central »
+      const sup = await sb.from("sophos_postes").select("*").eq("a_supprimer", true).order("hostname");
+      setSoASupprimer(sup.error ? [] : (sup.data || []));
     } catch (e) {
       setSoErr("Erreur de chargement : " + (e.message || e) + " — le script SQL Sophos a-t-il été exécuté ?");
     } finally {
@@ -3272,6 +3276,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [soNonAffectes, setSoNonAffectes] = useState([]);
   const [soSuggest, setSoSuggest] = useState({ loading: false, err: "", parPoste: {} });
   const [soVoirIgnores, setSoVoirIgnores] = useState(false);
+  const [soASupprimer, setSoASupprimer] = useState([]);
+  // Coche / décoche « à supprimer de Sophos Central » (mémorisé dans sophos_postes)
+  const soMarquerSuppression = async (p, val) => {
+    const maj = { a_supprimer: !!val, a_supprimer_par: val ? adminFromName() : null, a_supprimer_le: val ? new Date().toISOString() : null };
+    const { error } = await sb.from("sophos_postes").update(maj).eq("tenant_id", p.tenant_id).eq("sophos_id", p.sophos_id);
+    if (error) { alert("Erreur : " + error.message + (/column|a_supprimer/i.test(error.message) ? "\n\nLe script sophos_suppression.sql a-t-il été exécuté ?" : "")); return; }
+    const appliquer = (x) => (x.tenant_id === p.tenant_id && x.sophos_id === p.sophos_id) ? { ...x, ...maj } : x;
+    setSoNonAffectes(prev => prev.map(appliquer));
+    setSoPostes(prev => { const o = {}; Object.keys(prev).forEach(k => { o[k] = (prev[k] || []).map(appliquer); }); return o; });
+    setSoASupprimer(prev => val
+      ? [...prev.filter(x => !(x.tenant_id === p.tenant_id && x.sophos_id === p.sophos_id)), { ...p, ...maj }].sort((a, b) => String(a.hostname).localeCompare(String(b.hostname)))
+      : prev.filter(x => !(x.tenant_id === p.tenant_id && x.sophos_id === p.sophos_id)));
+  };
   const soAffecter = async (tenantId, items, msgOk) => {
     setSoMsg("");
     try {
@@ -3348,6 +3365,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         copierDe: f.copierDe || undefined,
         actif: f.actif !== false,
         principal: !!f.principal,
+        libelle: f.copierDe ? undefined : (f.libelle || "").trim(), // compte copié : on garde le nom existant
         regles: { groupes: decoupe(f.rGroupes), prefixes: decoupe(f.rPrefixes), domaines: decoupe(f.rDomaines), ips: decoupe(f.rIps) },
       });
       setSoModal(null);
@@ -8111,6 +8129,20 @@ const nav = isAdmin
     const HEALTH = { good: { l: "OK", c: "#2F855A", bg: "#E9F6EE" }, suspicious: { l: "Suspect", c: "#B7791F", bg: "#FFF6E5" }, bad: { l: "Mauvais", c: "#C53030", bg: "#FDECEC" }, unknown: { l: "Inconnu", c: "#718096", bg: "#F0F0F4" } };
     const healthMeta = (h) => HEALTH[h] || HEALTH.unknown;
     const nomHotel = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "?"; };
+    // Nom lisible d'un compte Sophos Central (tenant)
+    const nomSophos = (tenantId) => {
+      const cs = soComptes.filter(x => x.tenant_id === tenantId);
+      const lib = (cs.find(x => x.libelle) || {}).libelle;
+      if (lib) return lib;
+      if (!cs.length) return "Sophos inconnu";
+      const pr = cs.find(x => x.principal !== false) || cs[0];
+      return "Sophos de " + nomHotel(pr.hotel_id) + (cs.length > 1 ? " (partagé, " + cs.length + " hôtels)" : "");
+    };
+    const caseSuppr = (p) => React.createElement('label', { title: "Mémorise qu'il faudra supprimer ce PC dans « " + nomSophos(p.tenant_id) + " »", onClick: e => e.stopPropagation(),
+        style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap", padding: "2px 7px", borderRadius: 6,
+          color: p.a_supprimer ? "#C53030" : "#999", background: p.a_supprimer ? "#FDECEC" : "transparent", border: "1px solid " + (p.a_supprimer ? "#F5B5B5" : "#E8E8F0"), fontWeight: p.a_supprimer ? 700 : 400 } },
+      React.createElement('input', { type: "checkbox", checked: !!p.a_supprimer, onChange: e => soMarquerSuppression(p, e.target.checked), style: { margin: 0 } }),
+      "🗑 À supprimer de Sophos");
     const compteDe = (hid) => soComptes.find(c => c.hotel_id === hid);
     // Alerte de licence (expirée / à échéance) : rangée à part, ce n'est pas une menace.
     const estLicence = (a) => a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" "));
@@ -8172,7 +8204,7 @@ const nav = isAdmin
         tuile("Licences à traiter", nbLic, nbLic > 0 ? "#B7791F" : "#2F855A")
       ),
       React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
-        [["alertes", "🚨 Alertes" + (ouvertes ? " (" + ouvertes + ")" : "")], ["licences", "📜 Licences" + (nbLic ? " (" + nbLic + ")" : "")], ["hotels", "🏨 Établissements"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
+        [["alertes", "🚨 Alertes" + (ouvertes ? " (" + ouvertes + ")" : "")], ["licences", "📜 Licences" + (nbLic ? " (" + nbLic + ")" : "")], ["hotels", "🏨 Établissements"], ["suppr", "🗑 À supprimer" + (soASupprimer.length ? " (" + soASupprimer.length + ")" : "")]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
         React.createElement('button', { onClick: () => loadSophos(), disabled: soLoading, style: { marginLeft: "auto", padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, soLoading ? "…" : "🔄 Actualiser")
       ),
       soMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: soMsg.startsWith("❌") ? "#FDECEC" : "#F0F7F2", border: "1px solid " + (soMsg.startsWith("❌") ? "#F5B5B5" : "#C6E6D0"), color: soMsg.startsWith("❌") ? "#C53030" : "#2F855A" } }, soMsg),
@@ -8225,6 +8257,33 @@ const nav = isAdmin
         )
       ),
 
+      // ----- Onglet À SUPPRIMER (par compte Sophos Central) -----
+      soTab === "suppr" && React.createElement('div', null,
+        React.createElement('div', { style: { fontSize: 12, color: "#555", background: "#F4F4F8", border: "1px solid #E2E2EA", borderRadius: 8, padding: "9px 12px", marginBottom: 12, lineHeight: 1.55 } },
+          "🗑 PC cochés « À supprimer de Sophos », regroupés par console Sophos Central. Connectez-vous à la console indiquée → Appareils → sélectionnez le PC → Supprimer. Une fois supprimé dans Sophos, il disparaît automatiquement de cette liste à la synchronisation suivante."),
+        soASupprimer.length === 0
+          ? React.createElement('div', { style: { padding: 28, textAlign: "center", background: "#E9F6EE", border: "1px solid #B7E0C6", borderRadius: 10, color: "#2F855A", fontSize: 13.5, fontWeight: 600 } }, "✅ Aucun PC en attente de suppression.")
+          : Object.entries(soASupprimer.reduce((acc, p) => { (acc[p.tenant_id] = acc[p.tenant_id] || []).push(p); return acc; }, {})).map(([t, liste]) =>
+              React.createElement('div', { key: t, style: { background: "white", border: "1px solid #F5B5B5", borderLeft: "5px solid #C53030", borderRadius: 10, overflow: "hidden", marginBottom: 10 } },
+                React.createElement('div', { style: { padding: "10px 15px", background: "#FDECEC", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                  React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                    React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#C53030" } }, "🛡️ " + nomSophos(t) + " — " + liste.length + " PC à supprimer"),
+                    React.createElement('div', { style: { fontSize: 11.5, color: "#9B2C2C", marginTop: 2 } }, "Hôtels de cette console : " + soComptes.filter(x => x.tenant_id === t).map(x => nomHotel(x.hotel_id)).join(" · "))),
+                  React.createElement('a', { href: "https://central.sophos.com", target: "_blank", rel: "noopener noreferrer", style: { fontSize: 12, fontWeight: 600, color: "#C53030", textDecoration: "none", border: "1px solid #F5B5B5", background: "white", borderRadius: 7, padding: "5px 10px" } }, "Ouvrir Sophos Central ↗")),
+                liste.map(p => {
+                  const j = p.last_seen_at ? Math.floor((Date.now() - new Date(p.last_seen_at).getTime()) / 86400000) : null;
+                  return React.createElement('div', { key: p.sophos_id, style: { display: "flex", alignItems: "center", gap: 10, padding: "7px 15px", borderTop: "1px solid #F8E0E0", fontSize: 12.5, flexWrap: "wrap" } },
+                    React.createElement('span', { style: { flex: "0 0 190px", fontWeight: 700, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?")),
+                    React.createElement('span', { style: { flex: "0 0 190px", color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.hotel_id ? "🏨 " + nomHotel(p.hotel_id) : "— non affecté"),
+                    React.createElement('span', { style: { flex: "0 0 190px", color: "#777", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.dernier_utilisateur ? "👤 " + p.dernier_utilisateur : ""),
+                    React.createElement('span', { style: { flex: "0 0 130px", color: "#C05621", fontSize: 11.5, whiteSpace: "nowrap" } }, j === null ? "" : j === 0 ? "vu aujourd'hui" : "muet depuis " + j + " j"),
+                    React.createElement('span', { style: { color: "#999", fontSize: 11 } }, p.a_supprimer_par ? "coché par " + p.a_supprimer_par + (p.a_supprimer_le ? " le " + fmtDateHeureFr2(p.a_supprimer_le) : "") : ""),
+                    React.createElement('div', { style: { marginLeft: "auto" } }, btn("↩ Retirer de la liste", () => soMarquerSuppression(p, false), { style: { padding: "4px 9px" } }))
+                  );
+                })
+              ))
+      ),
+
       // ----- Onglet ÉTABLISSEMENTS -----
       soTab === "hotels" && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
         // ===== Comptes Sophos partagés : PC non affectés =====
@@ -8260,6 +8319,7 @@ const nav = isAdmin
                 React.createElement('span', { style: { flex: "0 0 90px", color: j !== null && j > 7 ? "#C05621" : "#888", fontSize: 11.5 } }, j === null ? "" : j === 0 ? "vu aujourd'hui" : "vu il y a " + j + " j"),
                 sg && React.createElement('span', { style: { fontSize: 11.5, color: sg.hotel ? "#2F855A" : "#999" } }, "NinjaOne : " + sg.org + (sg.hotel ? "" : " (aucun hôtel correspondant)")),
                 React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" } },
+                  caseSuppr(p),
                   sg && sg.hotel && btn("✓ " + sg.hotel.name, () => soAffecter(t, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: sg.hotel.id }], p.hostname + " → " + sg.hotel.name), { style: { border: "1px solid #9AE6B4", color: "#2F855A", fontWeight: 600, padding: "4px 9px" } }),
                   ignore
                     ? btn("↩ Ne plus ignorer", () => soAffecter(t, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: null }], p.hostname + " remis dans les PC à affecter"), { style: { padding: "4px 9px" } })
@@ -8277,7 +8337,7 @@ const nav = isAdmin
             return React.createElement('div', { key: t, style: { background: "white", border: "1px solid #F0D98A", borderLeft: "5px solid #B7791F", borderRadius: 10, overflow: "hidden", marginBottom: 6 } },
               React.createElement('div', { style: { padding: "11px 15px", background: "#FFFBEB", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
                 React.createElement('div', { style: { flex: "1 1 260px" } },
-                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#8A6D1F" } }, "🔗 Compte Sophos partagé — " + liste.length + " PC non affecté" + (liste.length > 1 ? "s" : "")),
+                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#8A6D1F" } }, "🔗 " + nomSophos(t) + " — " + liste.length + " PC non affecté" + (liste.length > 1 ? "s" : "")),
                   React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 2 } }, "Hôtels du compte : " + hotelsT.map(x => x.name).join(" · ") + ". Affinez les règles via « Configurer » ou affectez les PC ci-dessous (mémorisé).")),
                 liste.length > 0 && btn(soSuggest.loading ? "🔎 Recherche…" : "🔎 Suggérer via NinjaOne", () => soSuggererNinja(liste), { disabled: soSuggest.loading }),
                 avecSugg.length > 0 && btn("✓ Appliquer " + avecSugg.length + " suggestion" + (avecSugg.length > 1 ? "s" : ""), () => soAffecter(t, avecSugg.map(x => ({ sophosId: x.p.sophos_id, hostname: x.p.hostname, hotelId: x.sg.hotel.id })), avecSugg.length + " PC affecté(s) selon NinjaOne"), { style: { background: "#2F855A", border: "none", color: "white", fontWeight: 600 } })
@@ -8320,7 +8380,7 @@ const nav = isAdmin
                   const rg = (c && c.regles) || {};
                   const j = (k) => (Array.isArray(rg[k]) ? rg[k] : []).join(", ");
                   setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "",
-                    copierDe: "", principal: c ? c.principal !== false : true,
+                    copierDe: "", principal: c ? c.principal !== false : true, libelle: (c && c.libelle) || "",
                     rGroupes: j("groupes"), rPrefixes: j("prefixes"), rDomaines: j("domaines"), rIps: j("ips"),
                     partageOuvert: !!(c && c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1) });
                 },
@@ -8394,6 +8454,7 @@ const nav = isAdmin
                         cell("1 1 160px", (n && n.utilisateur) || p.dernier_utilisateur ? "👤 " + ((n && n.utilisateur) || p.dernier_utilisateur) : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
                         React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
                           n && n.doublons && pastille("doublon ×" + n.doublons, "#B7791F", "#FFF6E5"),
+                          caseSuppr(p),
                           partageH && React.createElement('select', { value: "", title: "Ce PC n'est pas de cet hôtel ? Déplacez-le (mémorisé)", onChange: e => {
                               const v = e.target.value; if (!v) return;
                               if (v === "__auto") soAffecter(c.tenant_id, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: null }], p.hostname + " : retour aux règles automatiques");
@@ -8469,6 +8530,8 @@ const nav = isAdmin
               React.createElement('option', { value: "" }, "Non — nouveaux identifiants"),
               soComptes.map(x => React.createElement('option', { key: x.hotel_id, value: x.hotel_id }, "Oui — comme " + nomHotel(x.hotel_id))))
           ),
+          !soModal.copierDe && React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Nom du compte Sophos (facultatif)"),
+          !soModal.copierDe && React.createElement('input', { value: soModal.libelle || "", onChange: e => setSoModal({ ...soModal, libelle: e.target.value }), placeholder: "ex. Sophos Groupe Holiday Inn — pour savoir dans quelle console aller", style: { ...inputS, marginBottom: 12 } }),
           !soModal.copierDe && React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "ID client *"),
           !soModal.copierDe && React.createElement('input', { value: soModal.clientId, onChange: e => setSoModal({ ...soModal, clientId: e.target.value, err: "" }), placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style: { ...inputS, marginBottom: 12, fontFamily: "monospace" } }),
           !soModal.copierDe && React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Secret client " + (soModal.existe ? "(laisser vide pour conserver l'actuel)" : "*")),
