@@ -8261,7 +8261,12 @@ const nav = isAdmin
                 React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, (a._nb > 1 ? "dernière : " : "") + fmtDateHeureFr2(a.raised_at)),
                 !ouverte && React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: "#2F855A", background: "#E9F6EE", padding: "2px 9px", borderRadius: 20 } }, "✓ Résolue" + (a.resolue_le ? " le " + fmtDateHeureFr2(a.resolue_le) : ""))
               ),
-              React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.5 } }, a.description || a.type || "(sans description)"),
+              React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.5, wordBreak: "break-word" } }, (() => {
+                // Sophos renvoie parfois les accents encodés (&eacute;) : décodage en texte brut (sans HTML)
+                const t = a.description || a.type || "(sans description)";
+                if (!/&[a-z#0-9]+;/i.test(t)) return t;
+                const el = document.createElement("textarea"); el.innerHTML = t; return el.value;
+              })()),
               a.note && soNoteEdit?.id !== a.id && React.createElement('div', { style: { marginTop: 7, fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 9px", whiteSpace: "pre-wrap" } }, "📝 " + a.note),
               soNoteEdit?.id === a.id && React.createElement('div', { style: { marginTop: 8 } },
                 React.createElement('textarea', { value: soNoteEdit.note, onChange: e => setSoNoteEdit({ ...soNoteEdit, note: e.target.value }), rows: 2, autoFocus: true, placeholder: "Action menée, analyse, faux positif…", style: { ...inputS, resize: "vertical" } }),
