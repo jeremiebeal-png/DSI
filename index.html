@@ -3222,10 +3222,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!silencieux) setSoLoading(true);
     setSoErr("");
     try {
-      const [c, a] = await Promise.all([
-        sb.from("sophos_comptes").select("id,hotel_id,client_id,tenant_id,actif,dernier_controle,dernier_statut,derniere_erreur,nb_postes,nb_postes_ko,nb_postes_suspects,nb_postes_muets,nb_alertes,nb_alertes_hautes"),
+      const colsComptes = "id,hotel_id,client_id,tenant_id,actif,dernier_controle,dernier_statut,derniere_erreur,nb_postes,nb_postes_ko,nb_postes_suspects,nb_postes_muets,nb_alertes,nb_alertes_hautes";
+      let [c, a] = await Promise.all([
+        sb.from("sophos_comptes").select(colsComptes + ",nb_licences"),
         sb.from("sophos_alertes").select("*").order("raised_at", { ascending: false }).limit(1000),
       ]);
+      // Repli si la colonne nb_licences n'existe pas encore (sophos_licences.sql non exécuté)
+      if (c.error) c = await sb.from("sophos_comptes").select(colsComptes);
       if (c.error) throw c.error;
       if (a.error) throw a.error;
       setSoComptes(c.data || []);
@@ -3248,7 +3251,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setSoBusy(hotelId); setSoMsg("");
     try {
       const r = await callSophosApi("/synchroniser", { hotelId });
-      setSoMsg("✅ Synchronisé : " + (r.nb_postes || 0) + " poste(s), " + (r.nb_alertes || 0) + " alerte(s) ouverte(s).");
+      setSoMsg("✅ Synchronisé : " + (r.nb_postes || 0) + " poste(s), " + (r.nb_alertes || 0) + " alerte(s) de sécurité" + (r.nb_licences ? ", " + r.nb_licences + " licence(s)" : "") + ".");
       await loadSophos(true);
       if (soOpenHotel === hotelId) loadSoPostes(hotelId);
     } catch (e) {
@@ -3268,7 +3271,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setSoModal(null);
       const s = r.synchro;
       setSoMsg(s && s.ok
-        ? "✅ Compte Sophos enregistré et testé — " + (s.nb_postes || 0) + " poste(s), " + (s.nb_alertes || 0) + " alerte(s)."
+        ? "✅ Compte Sophos enregistré et testé — " + (s.nb_postes || 0) + " poste(s), " + (s.nb_alertes || 0) + " alerte(s) de sécurité" + (s.nb_licences ? ", " + s.nb_licences + " alerte(s) de licence" : "") + "."
         : "✅ Compte Sophos enregistré." + (s && s.erreur ? " ⚠️ Première synchro : " + s.erreur : ""));
       await loadSophos(true);
     } catch (e) {
@@ -5576,7 +5579,10 @@ const nav = isAdmin
       if (rappelsEchus.length > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "⏰", rappelsEchus.length + " rappel" + (rappelsEchus.length > 1 ? "s" : "") + " à échéance", "Fiche" + (rappelsEchus.length > 1 ? "s" : "") + " à revoir (Care Pack, contrat, licence…)", "docs-techniques"));
       if (rappelsProches.length > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "⏰", rappelsProches.length + " rappel" + (rappelsProches.length > 1 ? "s" : "") + " à venir", "Échéance dans les 30 jours", "docs-techniques"));
       // Sophos : alertes hautes, postes en mauvaise santé, comptes en erreur
-      const soHautes = (soComptes || []).filter(c => c.actif).reduce((n, c) => n + (c.nb_alertes_hautes || 0), 0);
+      // Alertes hautes de SÉCURITÉ uniquement (les licences expirées ne comptent pas)
+      const soActifs = new Set((soComptes || []).filter(c => c.actif).map(c => c.hotel_id));
+      const soHautes = (soAlertes || []).filter(a => a.statut === "ouverte" && a.severity === "high" && soActifs.has(a.hotel_id)
+        && !(a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" ")))).length;
       const soKo = (soComptes || []).filter(c => c.actif).reduce((n, c) => n + (c.nb_postes_ko || 0), 0);
       const soErrs = (soComptes || []).filter(c => c.actif && c.dernier_statut === "erreur").length;
       if (soHautes > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "🔒", soHautes + " alerte" + (soHautes > 1 ? "s" : "") + " Sophos haute" + (soHautes > 1 ? "s" : ""), "Menaces détectées à traiter", "sophos"));
@@ -8022,20 +8028,29 @@ const nav = isAdmin
     const healthMeta = (h) => HEALTH[h] || HEALTH.unknown;
     const nomHotel = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "?"; };
     const compteDe = (hid) => soComptes.find(c => c.hotel_id === hid);
+    // Alerte de licence (expirée / à échéance) : rangée à part, ce n'est pas une menace.
+    const estLicence = (a) => a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" "));
+    const alertesSecu = soAlertes.filter(a => !estLicence(a));
+    const alertesLic = soAlertes.filter(a => estLicence(a) && a.statut === "ouverte");
+    // Compteurs par hôtel recalculés côté portail (fiables même avant la migration SQL)
+    const ouvSecu = (hid) => alertesSecu.filter(a => a.hotel_id === hid && a.statut === "ouverte");
+    const nbAlertesH = (c) => ouvSecu(c.hotel_id).length;
+    const nbHautesH = (c) => ouvSecu(c.hotel_id).filter(a => a.severity === "high").length;
+    const nbLicH = (c) => alertesLic.filter(a => a.hotel_id === c.hotel_id).length;
     const seuilMuet = Date.now() - 7 * 86400000;
     const etatHotel = (c) => {
       if (!c) return { c: "#A0AEC0", l: "Non configuré", rank: 4 };
       if (!c.actif) return { c: "#A0AEC0", l: "Désactivé", rank: 4 };
       if (c.dernier_statut === "erreur") return { c: "#C53030", l: "Erreur de connexion", rank: 0 };
       if (!c.dernier_controle) return { c: "#A0AEC0", l: "En attente de synchro", rank: 3 };
-      if ((c.nb_alertes_hautes || 0) > 0 || (c.nb_postes_ko || 0) > 0) return { c: "#C53030", l: "Critique", rank: 1 };
-      if ((c.nb_alertes || 0) > 0 || (c.nb_postes_suspects || 0) > 0 || (c.nb_postes_muets || 0) > 0) return { c: "#DD6B20", l: "À surveiller", rank: 2 };
+      if (nbHautesH(c) > 0 || (c.nb_postes_ko || 0) > 0) return { c: "#C53030", l: "Critique", rank: 1 };
+      if (nbAlertesH(c) > 0 || (c.nb_postes_suspects || 0) > 0 || (c.nb_postes_muets || 0) > 0) return { c: "#DD6B20", l: "À surveiller", rank: 2 };
       return { c: "#2F855A", l: "OK", rank: 3 };
     };
     const somme = (k) => soComptes.filter(c => c.actif).reduce((n, c) => n + (c[k] || 0), 0);
     const nbErreurs = soComptes.filter(c => c.actif && c.dernier_statut === "erreur").length;
 
-    let alertesVues = soAlertes.filter(a => soVoirResolues ? true : a.statut === "ouverte");
+    let alertesVues = (soTab === "licences" ? alertesLic : alertesSecu).filter(a => soVoirResolues ? true : a.statut === "ouverte");
     if (soHotelFiltre) alertesVues = alertesVues.filter(a => a.hotel_id === soHotelFiltre);
     const rankSev = { high: 0, medium: 1, low: 2 };
     alertesVues = alertesVues.slice().sort((a, b) =>
@@ -8054,43 +8069,51 @@ const nav = isAdmin
     const btn = (lbl, onClick, extra) => React.createElement('button', { onClick, disabled: extra && extra.disabled, style: Object.assign({ padding: "6px 12px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" }, (extra && extra.style) || {}) }, lbl);
     const inputS = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
 
-    const hautes = somme("nb_alertes_hautes"), ko = somme("nb_postes_ko"), muets = somme("nb_postes_muets");
+    const actifs = soComptes.filter(c => c.actif);
+    const hautes = actifs.reduce((n, c) => n + nbHautesH(c), 0);
+    const ouvertes = actifs.reduce((n, c) => n + nbAlertesH(c), 0);
+    const nbLic = actifs.reduce((n, c) => n + nbLicH(c), 0);
+    const ko = somme("nb_postes_ko"), muets = somme("nb_postes_muets");
 
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Supervision centralisée des comptes Sophos Central de chaque établissement : alertes de sécurité et santé des postes. Les données sont actualisées automatiquement environ toutes les 20 minutes ; les nouvelles alertes de sévérité haute sont envoyées par email à l'équipe."),
+        "Supervision centralisée des comptes Sophos Central de chaque établissement : alertes de sécurité et santé des postes. Les données sont actualisées automatiquement environ toutes les 20 minutes ; les nouvelles alertes de sécurité de sévérité haute sont envoyées par email à l'équipe. Les alertes de licence sont regroupées dans l'onglet « Licences »."),
       React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
         tuile("Établissements suivis", soComptes.filter(c => c.actif).length + " / " + hotels.length, "#0F0F24"),
         tuile("Alertes hautes", hautes, hautes > 0 ? "#C53030" : "#2F855A"),
-        tuile("Alertes ouvertes", somme("nb_alertes"), somme("nb_alertes") > 0 ? "#DD6B20" : "#2F855A"),
+        tuile("Alertes ouvertes", ouvertes, ouvertes > 0 ? "#DD6B20" : "#2F855A"),
         tuile("Postes en mauvaise santé", ko, ko > 0 ? "#C53030" : "#2F855A"),
         tuile("Postes muets (+7 j)", muets, muets > 0 ? "#DD6B20" : "#2F855A"),
-        tuile("Comptes en erreur", nbErreurs, nbErreurs > 0 ? "#C53030" : "#2F855A")
+        tuile("Comptes en erreur", nbErreurs, nbErreurs > 0 ? "#C53030" : "#2F855A"),
+        tuile("Licences à traiter", nbLic, nbLic > 0 ? "#B7791F" : "#2F855A")
       ),
       React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
-        [["alertes", "🚨 Alertes"], ["hotels", "🏨 Établissements"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
+        [["alertes", "🚨 Alertes" + (ouvertes ? " (" + ouvertes + ")" : "")], ["licences", "📜 Licences" + (nbLic ? " (" + nbLic + ")" : "")], ["hotels", "🏨 Établissements"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
         React.createElement('button', { onClick: () => loadSophos(), disabled: soLoading, style: { marginLeft: "auto", padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, soLoading ? "…" : "🔄 Actualiser")
       ),
       soMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: soMsg.startsWith("❌") ? "#FDECEC" : "#F0F7F2", border: "1px solid " + (soMsg.startsWith("❌") ? "#F5B5B5" : "#C6E6D0"), color: soMsg.startsWith("❌") ? "#C53030" : "#2F855A" } }, soMsg),
       soErr && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030" } }, soErr),
 
       // ----- Onglet ALERTES -----
-      soTab === "alertes" && React.createElement('div', null,
+      (soTab === "alertes" || soTab === "licences") && React.createElement('div', null,
+        soTab === "licences" && React.createElement('div', { style: { fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "9px 12px", marginBottom: 12, lineHeight: 1.55 } },
+          "📜 Licences et abonnements Sophos expirés ou arrivant à échéance. Ce ne sont pas des menaces : pas d'email immédiat, un récapitulatif est envoyé chaque lundi matin. Produit plus utilisé → acquitter l'alerte dans Sophos Central (elle passera en « Résolue »). Produit à conserver → prévoir le renouvellement avec le client."),
         React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 } },
           React.createElement('select', { value: soHotelFiltre, onChange: e => setSoHotelFiltre(e.target.value), style: { padding: "7px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12.5, maxWidth: 260 } },
             React.createElement('option', { value: "" }, "Tous les établissements"),
             hotels.filter(h => compteDe(h.id)).sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
-          React.createElement('label', { style: { fontSize: 12.5, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
+          soTab === "alertes" && React.createElement('label', { style: { fontSize: 12.5, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
             React.createElement('input', { type: "checkbox", checked: soVoirResolues, onChange: e => setSoVoirResolues(e.target.checked) }), "Afficher les alertes résolues"),
           React.createElement('span', { style: { fontSize: 12, color: "#888" } }, alertesVues.length + " alerte" + (alertesVues.length > 1 ? "s" : ""))
         ),
         !soLoading && alertesVues.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", background: "#E9F6EE", border: "1px solid #B7E0C6", borderRadius: 10, color: "#2F855A", fontSize: 13.5, fontWeight: 600 } },
-          soComptes.length === 0 ? "Aucun compte Sophos configuré : commencez par l'onglet « Établissements »." : "✅ Aucune alerte Sophos ouverte."),
+          soComptes.length === 0 ? "Aucun compte Sophos configuré : commencez par l'onglet « Établissements »." : soTab === "licences" ? "✅ Aucune licence expirée." : "✅ Aucune alerte de sécurité ouverte."),
         React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
           alertesVues.map(a => {
-            const sm = sevMeta(a.severity);
+            const lic = estLicence(a);
+            const sm = lic ? { l: "Licence", c: "#B7791F", bg: "#FFF6E5" } : sevMeta(a.severity);
             const ouverte = a.statut === "ouverte";
-            return React.createElement('div', { key: a.id, style: { background: ouverte ? "white" : "#FAFAFC", border: "1px solid " + (ouverte && a.severity === "high" ? "#F5B5B5" : "#E8E8F0"), borderLeft: "5px solid " + (ouverte ? sm.c : "#CBD5E0"), borderRadius: 10, padding: "12px 15px", opacity: ouverte ? 1 : 0.75 } },
+            return React.createElement('div', { key: a.id, style: { background: ouverte ? "white" : "#FAFAFC", border: "1px solid " + (ouverte && !lic && a.severity === "high" ? "#F5B5B5" : "#E8E8F0"), borderLeft: "5px solid " + (ouverte ? sm.c : "#CBD5E0"), borderRadius: 10, padding: "12px 15px", opacity: ouverte ? 1 : 0.75 } },
               React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 } },
                 React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: sm.c, background: sm.bg, padding: "2px 9px", borderRadius: 20 } }, sm.l),
                 React.createElement('span', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e" } }, nomHotel(a.hotel_id)),
@@ -8138,7 +8161,8 @@ const nav = isAdmin
                 (c.nb_postes_ko || 0) > 0 && React.createElement('span', { style: { background: "#FDECEC", color: "#C53030", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_ko + " mauvais"),
                 (c.nb_postes_suspects || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_suspects + " suspects"),
                 (c.nb_postes_muets || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_muets + " muets"),
-                (c.nb_alertes || 0) > 0 && React.createElement('span', { style: { background: (c.nb_alertes_hautes || 0) > 0 ? "#FDECEC" : "#FFF6E5", color: (c.nb_alertes_hautes || 0) > 0 ? "#C53030" : "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, "🚨 " + c.nb_alertes + " alerte" + (c.nb_alertes > 1 ? "s" : ""))
+                nbAlertesH(c) > 0 && React.createElement('span', { style: { background: nbHautesH(c) > 0 ? "#FDECEC" : "#FFF6E5", color: nbHautesH(c) > 0 ? "#C53030" : "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, "🚨 " + nbAlertesH(c) + " alerte" + (nbAlertesH(c) > 1 ? "s" : "")),
+                nbLicH(c) > 0 && React.createElement('span', { style: { background: "#FFFBEB", color: "#8A6D1F", padding: "3px 9px", borderRadius: 20 } }, "📜 " + nbLicH(c) + " licence" + (nbLicH(c) > 1 ? "s" : ""))
               ),
               React.createElement('div', { style: { display: "flex", gap: 6 } },
                 c && btn(soBusy === h.id ? "Synchro…" : "🔄 Synchroniser", () => soSynchroniser(h.id), { disabled: !!soBusy }),
