@@ -3390,19 +3390,40 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } catch (e) { alert("Erreur : " + (e.message || e)); }
   };
 
+  // Même alerte répétée (même hôtel, même PC, même message, même statut) :
+  // on n'affiche que la plus récente, avec le nombre d'occurrences. La prise en
+  // charge et la note s'appliquent à tout le groupe.
+  const soCleAlerte = (a) => [a.hotel_id, String(a.poste || "").trim().toUpperCase(), String(a.description || a.type || "").trim().toLowerCase(), a.statut].join("|");
+  const soDedoublonner = (liste) => {
+    const groupes = new Map();
+    (liste || []).forEach(a => { const k = soCleAlerte(a); if (!groupes.has(k)) groupes.set(k, []); groupes.get(k).push(a); });
+    return [...groupes.values()].map(g => {
+      g.sort((x, y) => new Date(y.raised_at || 0) - new Date(x.raised_at || 0));
+      const rec = g[0];
+      const pec = g.find(x => x.prise_en_charge_par);
+      const not = g.find(x => x.note);
+      return { ...rec,
+        prise_en_charge_par: rec.prise_en_charge_par || (pec && pec.prise_en_charge_par) || null,
+        prise_en_charge_le: rec.prise_en_charge_le || (pec && pec.prise_en_charge_le) || null,
+        note: rec.note || (not && not.note) || null,
+        _ids: g.map(x => x.id), _nb: g.length, _premiere: g[g.length - 1].raised_at };
+    });
+  };
   const soPrendreEnCharge = async (a) => {
+    const ids = a._ids || [a.id];
     const maj = { prise_en_charge_par: adminFromName(), prise_en_charge_le: new Date().toISOString() };
-    const { error } = await sb.from("sophos_alertes").update(maj).eq("id", a.id);
+    const { error } = await sb.from("sophos_alertes").update(maj).in("id", ids);
     if (error) { alert("Erreur : " + error.message); return; }
-    setSoAlertes(prev => prev.map(x => x.id === a.id ? { ...x, ...maj } : x));
+    setSoAlertes(prev => prev.map(x => ids.includes(x.id) ? { ...x, ...maj } : x));
   };
 
   const soEnregistrerNote = async () => {
     if (!soNoteEdit) return;
     const note = (soNoteEdit.note || "").trim() || null;
-    const { error } = await sb.from("sophos_alertes").update({ note }).eq("id", soNoteEdit.id);
+    const ids = soNoteEdit.ids || [soNoteEdit.id];
+    const { error } = await sb.from("sophos_alertes").update({ note }).in("id", ids);
     if (error) { alert("Erreur : " + error.message); return; }
-    setSoAlertes(prev => prev.map(x => x.id === soNoteEdit.id ? { ...x, note } : x));
+    setSoAlertes(prev => prev.map(x => ids.includes(x.id) ? { ...x, note } : x));
     setSoNoteEdit(null);
   };
 
@@ -5683,7 +5704,7 @@ const nav = isAdmin
       // Sophos : alertes hautes, postes en mauvaise santé, comptes en erreur
       // Alertes hautes de SÉCURITÉ uniquement (les licences expirées ne comptent pas)
       const soActifs = new Set((soComptes || []).filter(c => c.actif).map(c => c.hotel_id));
-      const soHautes = (soAlertes || []).filter(a => a.statut === "ouverte" && a.severity === "high" && soActifs.has(a.hotel_id)
+      const soHautes = soDedoublonner(soAlertes).filter(a => a.statut === "ouverte" && a.severity === "high" && soActifs.has(a.hotel_id)
         && !(a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" ")))).length;
       const soKo = (soComptes || []).filter(c => c.actif).reduce((n, c) => n + (c.nb_postes_ko || 0), 0);
       const soErrs = (soComptes || []).filter(c => c.actif && c.dernier_statut === "erreur").length;
@@ -8146,8 +8167,9 @@ const nav = isAdmin
     const compteDe = (hid) => soComptes.find(c => c.hotel_id === hid);
     // Alerte de licence (expirée / à échéance) : rangée à part, ce n'est pas une menace.
     const estLicence = (a) => a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" "));
-    const alertesSecu = soAlertes.filter(a => !estLicence(a));
-    const alertesLic = soAlertes.filter(a => estLicence(a) && a.statut === "ouverte");
+    const alertesUniques = soDedoublonner(soAlertes);
+    const alertesSecu = alertesUniques.filter(a => !estLicence(a));
+    const alertesLic = alertesUniques.filter(a => estLicence(a) && a.statut === "ouverte");
     // Compteurs par hôtel recalculés côté portail (fiables même avant la migration SQL)
     const ouvSecu = (hid) => alertesSecu.filter(a => a.hotel_id === hid && a.statut === "ouverte");
     const nbAlertesH = (c) => ouvSecu(c.hotel_id).length;
@@ -8235,7 +8257,8 @@ const nav = isAdmin
                 React.createElement('span', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e" } }, nomHotel(a.hotel_id)),
                 a.poste && React.createElement('span', { style: { fontSize: 11.5, color: "#555", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, "💻 " + a.poste),
                 a.category && React.createElement('span', { style: { fontSize: 11, color: "#888" } }, a.category),
-                React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, fmtDateHeureFr2(a.raised_at)),
+                a._nb > 1 && React.createElement('span', { title: "Même alerte remontée " + a._nb + " fois — seule la plus récente est affichée", style: { fontSize: 10.5, fontWeight: 700, color: "#6B46C1", background: "#F3EEFF", padding: "2px 9px", borderRadius: 20 } }, "🔁 ×" + a._nb + " · depuis le " + fmtDateHeureFr2(a._premiere)),
+                React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, (a._nb > 1 ? "dernière : " : "") + fmtDateHeureFr2(a.raised_at)),
                 !ouverte && React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: "#2F855A", background: "#E9F6EE", padding: "2px 9px", borderRadius: 20 } }, "✓ Résolue" + (a.resolue_le ? " le " + fmtDateHeureFr2(a.resolue_le) : ""))
               ),
               React.createElement('div', { style: { fontSize: 13, color: "#333", lineHeight: 1.5 } }, a.description || a.type || "(sans description)"),
@@ -8250,7 +8273,7 @@ const nav = isAdmin
                 a.prise_en_charge_par
                   ? React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", background: "#EBF4FF", padding: "3px 10px", borderRadius: 20 } }, "👤 Pris en charge par " + a.prise_en_charge_par + (a.prise_en_charge_le ? " — " + fmtDateHeureFr2(a.prise_en_charge_le) : ""))
                   : (ouverte && btn("✋ Prendre en charge", () => soPrendreEnCharge(a), { style: { border: "1px solid " + G, color: G2, fontWeight: 600 } })),
-                soNoteEdit?.id !== a.id && btn(a.note ? "✏️ Modifier la note" : "📝 Ajouter une note", () => setSoNoteEdit({ id: a.id, note: a.note || "" }))
+                soNoteEdit?.id !== a.id && btn(a.note ? "✏️ Modifier la note" : "📝 Ajouter une note", () => setSoNoteEdit({ id: a.id, ids: a._ids, note: a.note || "" }))
               )
             );
           })
