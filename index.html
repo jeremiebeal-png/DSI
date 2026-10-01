@@ -3248,26 +3248,35 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setSoPostes(prev => ({ ...prev, [hotelId]: data || [] }));
       // Postes à problème -> on interroge NinjaOne pour comprendre pourquoi
       const seuil = Date.now() - 7 * 86400000;
-      const aVoir = (data || []).filter(p => p.health !== "good" || (p.last_seen_at && new Date(p.last_seen_at).getTime() < seuil)).map(p => p.hostname);
-      if (aVoir.length) soLoadNinja(hotelId, aVoir);
+      const estPb = p => p.health !== "good" || (p.last_seen_at && new Date(p.last_seen_at).getTime() < seuil);
+      const pbNoms = (data || []).filter(estPb).map(p => p.hostname);
+      const okNoms = (data || []).filter(p => !estPb(p)).map(p => p.hostname);
+      if (pbNoms.length || okNoms.length) soLoadNinja(hotelId, pbNoms, okNoms);
     }
   };
 
   // NinjaOne : état des postes problématiques (muets / mauvaise santé), par hôtel
   const [soNinja, setSoNinja] = useState({});
-  const soLoadNinja = async (hotelId, hostnames) => {
-    const noms = [...new Set((hostnames || []).filter(Boolean))];
-    if (!noms.length) return;
-    setSoNinja(prev => ({ ...prev, [hotelId]: { loading: true, postes: (prev[hotelId] && prev[hotelId].postes) || {} } }));
+  // Postes à problème : fiche détaillée (10 par appel) ; postes OK : état +
+  // dernier contact seulement (20 par appel). Affichage au fil des lots.
+  const soLoadNinja = async (hotelId, pbNoms, okNoms) => {
+    const lots = [];
+    const pb = [...new Set((pbNoms || []).filter(Boolean))];
+    const ok = [...new Set((okNoms || []).filter(Boolean))];
+    for (let i = 0; i < pb.length; i += 10) lots.push({ hostnames: pb.slice(i, i + 10), detail: true });
+    for (let i = 0; i < ok.length; i += 20) lots.push({ hostnames: ok.slice(i, i + 20), detail: false });
+    if (!lots.length) return;
     const postes = {};
+    setSoNinja(prev => ({ ...prev, [hotelId]: { loading: true, err: "", postes } }));
     let err = "";
-    try {
-      for (let i = 0; i < noms.length; i += 10) {
-        const r = await callSophosApi("/ninja-postes", { hostnames: noms.slice(i, i + 10) });
+    for (const lot of lots) {
+      try {
+        const r = await callSophosApi("/ninja-postes", lot);
         (r.postes || []).forEach(p => { postes[String(p.hostname || "").toUpperCase()] = p; });
-      }
-    } catch (e) { err = e.message || String(e); }
-    setSoNinja(prev => ({ ...prev, [hotelId]: { loading: false, err, postes } }));
+        setSoNinja(prev => ({ ...prev, [hotelId]: { loading: true, err: "", postes: { ...postes } } }));
+      } catch (e) { err = e.message || String(e); break; }
+    }
+    setSoNinja(prev => ({ ...prev, [hotelId]: { loading: false, err, postes: { ...postes } } }));
   };
 
 
@@ -8200,10 +8209,16 @@ const nav = isAdmin
               : (() => {
                   const pb = postes.filter(aProbleme);
                   return React.createElement('div', null,
-                    React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 8 } }, postes.length + " poste(s) — " + (postes.length - pb.length) + " sans problème" + (pb.length ? ", " + pb.length + " à vérifier :" : ".")),
+                    React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 8 } }, postes.length + " poste(s) — " + (pb.length ? pb.length + " à vérifier, " : "") + (postes.length - pb.length) + " sans problème"),
                     soNinja[h.id] && soNinja[h.id].err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 10px", marginBottom: 8 } }, "NinjaOne indisponible : " + soNinja[h.id].err),
-                    pb.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 5 } },
-                      pb.map((p, i) => {
+                    postes.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 5 } },
+                      pb.concat(postes.filter(p => !aProbleme(p))).map((p, i) => {
+                        const estPb = i < pb.length;
+                        const titre = (i === 0 && pb.length > 0)
+                          ? React.createElement('div', { key: "t-pb", style: { fontSize: 11.5, fontWeight: 700, color: "#C53030", margin: "2px 0 1px" } }, "⚠️ À vérifier (" + pb.length + ")")
+                          : (i === pb.length)
+                            ? React.createElement('div', { key: "t-ok", style: { fontSize: 11.5, fontWeight: 700, color: "#2F855A", margin: (pb.length ? "10px" : "2px") + " 0 1px" } }, "✅ Sans problème (" + (postes.length - pb.length) + ")")
+                            : null;
                         const hm = healthMeta(p.health);
                         const muet = p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet;
                         const nj = soNinja[h.id];
@@ -8211,7 +8226,7 @@ const nav = isAdmin
                         const depuis = (iso) => { if (!iso) return "—"; const j = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return j <= 0 ? "aujourd'hui" : "il y a " + j + " j"; };
                         // Diagnostic croisé Sophos x NinjaOne
                         let diag = null;
-                        if (n && !n.erreur) {
+                        if (n && !n.erreur && estPb) {
                           if (!n.trouve) diag = { c: "#718096", bg: "#F0F0F4", t: "❓ Introuvable dans NinjaOne : PC non géré, renommé ou retiré." };
                           else if (n.en_ligne || (n.dernier_contact && Date.now() - new Date(n.dernier_contact).getTime() < 2 * 86400000)) {
                             diag = muet
@@ -8221,7 +8236,7 @@ const nav = isAdmin
                             diag = { c: "#2B6CB0", bg: "#EBF4FF", t: "💤 Hors ligne aussi dans NinjaOne depuis " + depuis(n.dernier_contact).replace("il y a ", "") + " : PC éteint, débranché ou retiré. À vérifier sur place, ou à supprimer de Sophos s'il n'existe plus." };
                           }
                         }
-                        return React.createElement('div', { key: i, style: { background: "white", border: "1px solid #EEE", borderRadius: 7, overflow: "hidden" } },
+                        return [titre, React.createElement('div', { key: p.hostname || i, style: { background: "white", border: "1px solid " + (estPb ? "#F5D0D0" : "#EEE"), borderRadius: 7, overflow: "hidden" } },
                         React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, padding: "7px 11px", fontSize: 12.5, flexWrap: "wrap" } },
                           React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e", minWidth: 140 } }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?")),
                           React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: hm.c, background: hm.bg, padding: "2px 8px", borderRadius: 20 } }, hm.l),
@@ -8229,6 +8244,7 @@ const nav = isAdmin
                           p.services_status && p.services_status !== "good" && React.createElement('span', { style: { fontSize: 11, color: "#B7791F" } }, "services : " + p.services_status),
                           p.tamper_protection === false && React.createElement('span', { style: { fontSize: 11, color: "#B7791F" } }, "protection anti-altération désactivée"),
                           muet && React.createElement('span', { style: { fontSize: 11, color: "#B7791F", fontWeight: 600 } }, "muet depuis " + Math.floor((Date.now() - new Date(p.last_seen_at).getTime()) / 86400000) + " j"),
+                          p.last_seen_at && !muet && React.createElement('span', { style: { fontSize: 11, color: "#888" } }, "Sophos : vu " + depuis(p.last_seen_at)),
                           React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, p.os || "")
                         ),
                         // ----- Bloc NinjaOne -----
@@ -8240,7 +8256,7 @@ const nav = isAdmin
                               n.trouve && React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 5 } },
                                 React.createElement('span', { style: { fontWeight: 700, color: "#1a1a3e" } }, "NinjaOne"),
                                 React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 20, color: n.en_ligne ? "#2F855A" : "#718096", background: n.en_ligne ? "#E9F6EE" : "#F0F0F4" } }, n.en_ligne ? "● En ligne" : "○ Hors ligne"),
-                                React.createElement('span', null, "Dernier contact : ", React.createElement('b', null, n.dernier_contact ? fmtDateHeureFr2(n.dernier_contact) + " (" + depuis(n.dernier_contact) + ")" : "—")),
+                                React.createElement('span', null, n.en_ligne ? "Connecté — dernier contact : " : "Dernière connexion : ", React.createElement('b', null, n.dernier_contact ? fmtDateHeureFr2(n.dernier_contact) + " (" + depuis(n.dernier_contact) + ")" : "—")),
                                 n.utilisateur && React.createElement('span', null, "👤 " + n.utilisateur),
                                 n.dernier_demarrage && React.createElement('span', null, "Démarré le " + fmtDateHeureFr2(n.dernier_demarrage)),
                                 n.ip_publique && React.createElement('span', null, "IP publique " + n.ip_publique),
@@ -8248,10 +8264,11 @@ const nav = isAdmin
                                 n.doublons && React.createElement('span', { style: { color: "#B7791F" } }, n.doublons + " fiches portent ce nom"),
                                 n.lien && React.createElement('a', { href: n.lien, target: "_blank", rel: "noopener noreferrer", style: { marginLeft: "auto", color: G2, fontWeight: 600, textDecoration: "none" } }, "Ouvrir dans NinjaOne ↗")
                               ),
-                              diag && React.createElement('div', { style: { color: diag.c, background: diag.bg, borderRadius: 6, padding: "5px 9px", fontWeight: 600 } }, diag.t)
+                              diag && React.createElement('div', { style: { color: diag.c, background: diag.bg, borderRadius: 6, padding: "5px 9px", fontWeight: 600 } }, diag.t),
+                              !n.trouve && !estPb && React.createElement('span', { style: { color: "#999" } }, "NinjaOne : PC introuvable (non géré ou nom différent).")
                             )
                         )
-                        );
+                        )];
                       })
                     )
                   );
