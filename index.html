@@ -3257,6 +3257,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // NinjaOne : état des postes problématiques (muets / mauvaise santé), par hôtel
   const [soNinja, setSoNinja] = useState({});
+  const [soSecOuvertes, setSoSecOuvertes] = useState({}); // sections repliées/dépliées par hôtel
   // Postes à problème : fiche détaillée (10 par appel) ; postes OK : état +
   // dernier contact seulement (20 par appel). Affichage au fil des lots.
   const soLoadNinja = async (hotelId, pbNoms, okNoms) => {
@@ -8207,70 +8208,112 @@ const nav = isAdmin
             ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: "12px 15px", background: "#FAFAFC" } },
               !postes ? React.createElement('div', { style: { fontSize: 12, color: "#999" } }, "Chargement des postes…")
               : (() => {
-                  const pb = postes.filter(aProbleme);
-                  return React.createElement('div', null,
-                    React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 8 } }, postes.length + " poste(s) — " + (pb.length ? pb.length + " à vérifier, " : "") + (postes.length - pb.length) + " sans problème"),
-                    soNinja[h.id] && soNinja[h.id].err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 10px", marginBottom: 8 } }, "NinjaOne indisponible : " + soNinja[h.id].err),
-                    postes.length > 0 && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 5 } },
-                      pb.concat(postes.filter(p => !aProbleme(p))).map((p, i) => {
-                        const estPb = i < pb.length;
-                        const titre = (i === 0 && pb.length > 0)
-                          ? React.createElement('div', { key: "t-pb", style: { fontSize: 11.5, fontWeight: 700, color: "#C53030", margin: "2px 0 1px" } }, "⚠️ À vérifier (" + pb.length + ")")
-                          : (i === pb.length)
-                            ? React.createElement('div', { key: "t-ok", style: { fontSize: 11.5, fontWeight: 700, color: "#2F855A", margin: (pb.length ? "10px" : "2px") + " 0 1px" } }, "✅ Sans problème (" + (postes.length - pb.length) + ")")
-                            : null;
-                        const hm = healthMeta(p.health);
-                        const muet = p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet;
-                        const nj = soNinja[h.id];
-                        const n = nj && nj.postes ? nj.postes[String(p.hostname || "").toUpperCase()] : null;
-                        const depuis = (iso) => { if (!iso) return "—"; const j = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return j <= 0 ? "aujourd'hui" : "il y a " + j + " j"; };
-                        // Diagnostic croisé Sophos x NinjaOne
-                        let diag = null;
-                        if (n && !n.erreur && estPb) {
-                          if (!n.trouve) diag = { c: "#718096", bg: "#F0F0F4", t: "❓ Introuvable dans NinjaOne : PC non géré, renommé ou retiré." };
-                          else if (n.en_ligne || (n.dernier_contact && Date.now() - new Date(n.dernier_contact).getTime() < 2 * 86400000)) {
-                            diag = muet
-                              ? { c: "#C53030", bg: "#FDECEC", t: "⚠️ PC allumé (vu par NinjaOne " + depuis(n.dernier_contact) + ") mais Sophos ne remonte plus : agent Sophos à réparer / réinstaller." }
-                              : { c: "#B7791F", bg: "#FFF6E5", t: "PC en ligne dans NinjaOne : intervention à distance possible." };
-                          } else {
-                            diag = { c: "#2B6CB0", bg: "#EBF4FF", t: "💤 Hors ligne aussi dans NinjaOne depuis " + depuis(n.dernier_contact).replace("il y a ", "") + " : PC éteint, débranché ou retiré. À vérifier sur place, ou à supprimer de Sophos s'il n'existe plus." };
-                          }
-                        }
-                        return [titre, React.createElement('div', { key: p.hostname || i, style: { background: "white", border: "1px solid " + (estPb ? "#F5D0D0" : "#EEE"), borderRadius: 7, overflow: "hidden" } },
-                        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, padding: "7px 11px", fontSize: 12.5, flexWrap: "wrap" } },
-                          React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e", minWidth: 140 } }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?")),
-                          React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: hm.c, background: hm.bg, padding: "2px 8px", borderRadius: 20 } }, hm.l),
-                          p.threats_status && p.threats_status !== "good" && React.createElement('span', { style: { fontSize: 11, color: "#C53030" } }, "menaces : " + p.threats_status),
-                          p.services_status && p.services_status !== "good" && React.createElement('span', { style: { fontSize: 11, color: "#B7791F" } }, "services : " + p.services_status),
-                          p.tamper_protection === false && React.createElement('span', { style: { fontSize: 11, color: "#B7791F" } }, "protection anti-altération désactivée"),
-                          muet && React.createElement('span', { style: { fontSize: 11, color: "#B7791F", fontWeight: 600 } }, "muet depuis " + Math.floor((Date.now() - new Date(p.last_seen_at).getTime()) / 86400000) + " j"),
-                          p.last_seen_at && !muet && React.createElement('span', { style: { fontSize: 11, color: "#888" } }, "Sophos : vu " + depuis(p.last_seen_at)),
-                          React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, p.os || "")
-                        ),
-                        // ----- Bloc NinjaOne -----
-                        React.createElement('div', { style: { borderTop: "1px dashed #EEE", padding: "7px 11px", background: "#FCFCFE", fontSize: 11.5, color: "#555" } },
-                          !nj || (nj.loading && !n) ? React.createElement('span', { style: { color: "#999" } }, "🔎 Recherche dans NinjaOne…")
-                          : !n ? React.createElement('span', { style: { color: "#999" } }, "NinjaOne : pas d'information.")
-                          : n.erreur ? React.createElement('span', { style: { color: "#B7791F" } }, "NinjaOne : " + n.erreur)
-                          : React.createElement('div', null,
-                              n.trouve && React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 5 } },
-                                React.createElement('span', { style: { fontWeight: 700, color: "#1a1a3e" } }, "NinjaOne"),
-                                React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 20, color: n.en_ligne ? "#2F855A" : "#718096", background: n.en_ligne ? "#E9F6EE" : "#F0F0F4" } }, n.en_ligne ? "● En ligne" : "○ Hors ligne"),
-                                React.createElement('span', null, n.en_ligne ? "Connecté — dernier contact : " : "Dernière connexion : ", React.createElement('b', null, n.dernier_contact ? fmtDateHeureFr2(n.dernier_contact) + " (" + depuis(n.dernier_contact) + ")" : "—")),
-                                n.utilisateur && React.createElement('span', null, "👤 " + n.utilisateur),
-                                n.dernier_demarrage && React.createElement('span', null, "Démarré le " + fmtDateHeureFr2(n.dernier_demarrage)),
-                                n.ip_publique && React.createElement('span', null, "IP publique " + n.ip_publique),
-                                n.modele && React.createElement('span', { style: { color: "#888" } }, n.modele),
-                                n.doublons && React.createElement('span', { style: { color: "#B7791F" } }, n.doublons + " fiches portent ce nom"),
-                                n.lien && React.createElement('a', { href: n.lien, target: "_blank", rel: "noopener noreferrer", style: { marginLeft: "auto", color: G2, fontWeight: 600, textDecoration: "none" } }, "Ouvrir dans NinjaOne ↗")
-                              ),
-                              diag && React.createElement('div', { style: { color: diag.c, background: diag.bg, borderRadius: 6, padding: "5px 9px", fontWeight: 600 } }, diag.t),
-                              !n.trouve && !estPb && React.createElement('span', { style: { color: "#999" } }, "NinjaOne : PC introuvable (non géré ou nom différent).")
-                            )
+                  // ===== Classement des postes par diagnostic (Sophos x NinjaOne) =====
+                  const nj = soNinja[h.id];
+                  const njPostes = (nj && nj.postes) || {};
+                  const JOUR = 86400000;
+                  const ilYa = (iso) => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / JOUR)) : null;
+                  const depuisTxt = (iso) => { const j = ilYa(iso); return j === null ? "—" : j === 0 ? "aujourd'hui" : j === 1 ? "hier" : "il y a " + j + " j"; };
+                  const CATS = [
+                    { k: "menace",  ico: "🔴", t: "Menace ou protection dégradée", aide: "Sophos signale une menace, un service arrêté ou la protection anti-altération désactivée sur un PC actif. À traiter en priorité.", c: "#C53030", bg: "#FDECEC", bd: "#F5B5B5", ouvert: true },
+                    { k: "casse",   ico: "🟠", t: "Agent Sophos à réparer", aide: "Le PC est actif (vu récemment par NinjaOne) mais Sophos ne remonte plus : il n'est probablement plus protégé. Réinstaller ou réparer l'agent Sophos.", c: "#C05621", bg: "#FFF3E8", bd: "#F6C9A0", ouvert: true },
+                    { k: "analyse", ico: "⏳", t: "Analyse NinjaOne en cours", aide: "Recherche des PC dans NinjaOne…", c: "#718096", bg: "#F4F4F8", bd: "#E2E2EA", ouvert: true },
+                    { k: "eteint",  ico: "🔵", t: "Éteints ou absents", aide: "Hors ligne dans Sophos ET dans NinjaOne depuis plus de 7 jours : PC éteint, rangé, en panne ou retiré. À vérifier sur place.", c: "#2B6CB0", bg: "#EBF4FF", bd: "#BEE3F8", ouvert: false },
+                    { k: "fantome", ico: "👻", t: "Probablement retirés", aide: "Muets dans Sophos et introuvables dans NinjaOne : anciens PC, renommés ou réinstallés. À supprimer de Sophos Central pour garder un inventaire propre.", c: "#6B6B80", bg: "#F4F4F8", bd: "#E2E2EA", ouvert: false },
+                    { k: "ok",      ico: "✅", t: "Sans problème", aide: "Protégés et à jour dans Sophos.", c: "#2F855A", bg: "#E9F6EE", bd: "#B7E0C6", ouvert: false },
+                  ];
+                  const classer = (p) => {
+                    const n = njPostes[String(p.hostname || "").toUpperCase()];
+                    const muet = !!(p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet);
+                    const degrade = p.health === "bad" || p.health === "suspicious" || p.tamper_protection === false;
+                    if (!muet) return degrade ? "menace" : "ok";
+                    if (!n || n.erreur) return (nj && nj.loading) ? "analyse" : "fantome";
+                    if (!n.trouve) return "fantome";
+                    const jNinja = ilYa(n.dernier_contact);
+                    if (n.en_ligne || (jNinja !== null && jNinja <= 7)) return "casse";
+                    return "eteint";
+                  };
+                  const groupes = {};
+                  postes.forEach(p => { const k = classer(p); (groupes[k] = groupes[k] || []).push(p); });
+                  // Tri interne : plus récemment vus par NinjaOne en premier, puis par nom
+                  Object.values(groupes).forEach(arr => arr.sort((a, b) => String(a.hostname).localeCompare(String(b.hostname))));
+                  const secKey = (k) => h.id + ":" + k;
+                  const estOuverte = (cat) => soSecOuvertes[secKey(cat.k)] !== undefined ? soSecOuvertes[secKey(cat.k)] : cat.ouvert;
+                  const basculer = (cat) => setSoSecOuvertes(prev => ({ ...prev, [secKey(cat.k)]: !estOuverte(cat) }));
+                  const pastille = (txt, c, bg, extra) => React.createElement('span', { style: Object.assign({ fontSize: 10.5, fontWeight: 700, color: c, background: bg, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" }, extra || {}) }, txt);
+                  const cell = (w, contenu, extra) => React.createElement('div', { style: Object.assign({ flex: w.indexOf(" ") >= 0 ? w : "0 0 " + w, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, extra || {}) }, contenu);
+
+                  // ----- Ligne d'un poste (format tableau) -----
+                  const lignePoste = (p, cat) => {
+                    const n = njPostes[String(p.hostname || "").toUpperCase()];
+                    const hm = healthMeta(p.health);
+                    const muet = !!(p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet);
+                    const detailVisible = cat.k === "menace" || cat.k === "casse";
+                    const sophosTxt = muet ? "muet " + depuisTxt(p.last_seen_at).replace("il y a ", "depuis ") : "vu " + depuisTxt(p.last_seen_at);
+                    let njCell;
+                    if (!n) njCell = React.createElement('span', { style: { color: "#AAA" } }, nj && nj.loading ? "…" : "—");
+                    else if (n.erreur) njCell = React.createElement('span', { style: { color: "#B7791F" } }, "erreur");
+                    else if (!n.trouve) njCell = React.createElement('span', { style: { color: "#999" } }, "introuvable");
+                    else njCell = React.createElement('span', null,
+                      React.createElement('span', { style: { color: n.en_ligne ? "#2F855A" : "#A0AEC0", marginRight: 5 } }, "●"),
+                      n.en_ligne ? React.createElement('b', { style: { color: "#2F855A" } }, "En ligne") : React.createElement('span', null, "Vu ", React.createElement('b', null, depuisTxt(n.dernier_contact))));
+                    const problemes = [];
+                    if (p.threats_status && p.threats_status !== "good") problemes.push("menaces : " + p.threats_status);
+                    if (p.services_status && p.services_status !== "good") problemes.push("services : " + p.services_status);
+                    if (p.tamper_protection === false) problemes.push("anti-altération désactivée");
+                    return React.createElement('div', { key: p.hostname, style: { borderTop: "1px solid #F0F0F5", padding: "7px 12px", background: "white" } },
+                      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
+                        cell("200px", React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e" }, title: p.hostname }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?"))),
+                        cell("78px", pastille(hm.l, hm.c, hm.bg)),
+                        cell("150px", React.createElement('span', { style: { color: muet ? "#C05621" : "#666", fontWeight: muet ? 600 : 400 }, title: p.last_seen_at ? "Dernière remontée Sophos : " + fmtDateHeureFr2(p.last_seen_at) : "" }, sophosTxt.charAt(0).toUpperCase() + sophosTxt.slice(1))),
+                        cell("150px", njCell),
+                        cell("1 1 160px", n && n.utilisateur ? "👤 " + n.utilisateur : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
+                        React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+                          n && n.doublons && pastille("doublon ×" + n.doublons, "#B7791F", "#FFF6E5"),
+                          n && n.lien && React.createElement('a', { href: n.lien, target: "_blank", rel: "noopener noreferrer", title: "Ouvrir dans NinjaOne", style: { color: G2, fontWeight: 600, textDecoration: "none", fontSize: 12 } }, "NinjaOne ↗")
                         )
-                        )];
-                      })
-                    )
+                      ),
+                      detailVisible && (problemes.length > 0 || (n && n.trouve)) && React.createElement('div', { style: { display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: "#777", marginTop: 4, paddingLeft: 22 } },
+                        problemes.length > 0 && React.createElement('span', { style: { color: "#C53030", fontWeight: 600 } }, "⚠ " + problemes.join(" · ")),
+                        n && n.dernier_contact && React.createElement('span', null, "Dernier contact NinjaOne : " + fmtDateHeureFr2(n.dernier_contact)),
+                        n && n.dernier_demarrage && React.createElement('span', null, "Démarré le " + fmtDateHeureFr2(n.dernier_demarrage)),
+                        n && n.ip_publique && React.createElement('span', null, "IP " + n.ip_publique),
+                        n && n.modele && React.createElement('span', null, n.modele),
+                        p.os && React.createElement('span', null, p.os)
+                      )
+                    );
+                  };
+
+                  const nbPb = postes.length - ((groupes.ok || []).length);
+                  return React.createElement('div', null,
+                    // Synthèse cliquable
+                    React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 } },
+                      React.createElement('span', { style: { fontSize: 12.5, color: "#555", marginRight: 4 } }, React.createElement('b', null, postes.length + " postes"), nbPb ? " — " + nbPb + " à traiter" : " — tout est en ordre ✅"),
+                      CATS.filter(cat => (groupes[cat.k] || []).length).map(cat =>
+                        React.createElement('button', { key: cat.k, onClick: () => { setSoSecOuvertes(prev => ({ ...prev, [secKey(cat.k)]: true })); const el = document.getElementById("sec-" + h.id + "-" + cat.k); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); },
+                          style: { border: "1px solid " + cat.bd, background: cat.bg, color: cat.c, borderRadius: 20, padding: "4px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" } },
+                          cat.ico + " " + (groupes[cat.k] || []).length + " " + cat.t.toLowerCase()))
+                    ),
+                    nj && nj.err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 10px", marginBottom: 10 } }, "NinjaOne indisponible : " + nj.err),
+                    // Sections
+                    CATS.filter(cat => (groupes[cat.k] || []).length).map(cat => {
+                      const liste = groupes[cat.k];
+                      const open = estOuverte(cat);
+                      return React.createElement('div', { key: cat.k, id: "sec-" + h.id + "-" + cat.k, style: { border: "1px solid " + cat.bd, borderLeft: "5px solid " + cat.c, borderRadius: 9, overflow: "hidden", marginBottom: 10, background: "white" } },
+                        React.createElement('div', { onClick: () => basculer(cat), style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: cat.bg, cursor: "pointer", userSelect: "none" } },
+                          React.createElement('span', { style: { fontSize: 11, color: cat.c, width: 10 } }, open ? "▼" : "▶"),
+                          React.createElement('span', { style: { fontSize: 13.5, fontWeight: 700, color: cat.c } }, cat.ico + " " + cat.t),
+                          React.createElement('span', { style: { fontSize: 12, fontWeight: 700, color: "white", background: cat.c, borderRadius: 20, padding: "1px 9px" } }, liste.length),
+                          React.createElement('span', { style: { fontSize: 11.5, color: "#666", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: open ? "normal" : "nowrap" } }, cat.aide)
+                        ),
+                        open && React.createElement('div', null,
+                          // En-tête de colonnes
+                          React.createElement('div', { style: { display: "flex", gap: 10, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".03em", background: "#FAFAFC", borderTop: "1px solid #F0F0F5" } },
+                            cell("200px", "Poste"), cell("78px", "Santé"), cell("150px", "Sophos"), cell("150px", "NinjaOne"), cell("1 1 160px", "Utilisateur / détail")),
+                          liste.map(p => lignePoste(p, cat))
+                        )
+                      );
+                    })
                   );
                 })()
             )
