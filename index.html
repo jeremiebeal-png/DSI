@@ -3224,15 +3224,26 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const colsComptes = "id,hotel_id,client_id,tenant_id,actif,dernier_controle,dernier_statut,derniere_erreur,nb_postes,nb_postes_ko,nb_postes_suspects,nb_postes_muets,nb_alertes,nb_alertes_hautes";
       let [c, a] = await Promise.all([
-        sb.from("sophos_comptes").select(colsComptes + ",nb_licences"),
+        sb.from("sophos_comptes").select(colsComptes + ",nb_licences,regles,principal"),
         sb.from("sophos_alertes").select("*").order("raised_at", { ascending: false }).limit(1000),
       ]);
-      // Repli si la colonne nb_licences n'existe pas encore (sophos_licences.sql non exécuté)
+      // Replis si les migrations SQL (licences / compte partagé) ne sont pas encore passées
+      if (c.error) c = await sb.from("sophos_comptes").select(colsComptes + ",nb_licences");
       if (c.error) c = await sb.from("sophos_comptes").select(colsComptes);
       if (c.error) throw c.error;
       if (a.error) throw a.error;
       setSoComptes(c.data || []);
       setSoAlertes(a.data || []);
+      // PC des comptes Sophos partagés qui ne sont rattachés à aucun hôtel
+      const parTenant = {};
+      (c.data || []).forEach(x => { if (x.tenant_id) parTenant[x.tenant_id] = (parTenant[x.tenant_id] || 0) + 1; });
+      const partages = Object.keys(parTenant).filter(t => parTenant[t] > 1);
+      if (partages.length) {
+        const na = await sb.from("sophos_postes")
+          .select("sophos_id,tenant_id,hostname,type,os,health,last_seen_at,dernier_utilisateur,ips,affectation")
+          .is("hotel_id", null).in("tenant_id", partages).order("hostname");
+        setSoNonAffectes(na.error ? [] : (na.data || []));
+      } else setSoNonAffectes([]);
     } catch (e) {
       setSoErr("Erreur de chargement : " + (e.message || e) + " — le script SQL Sophos a-t-il été exécuté ?");
     } finally {
@@ -3242,7 +3253,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const loadSoPostes = async (hotelId) => {
     const { data, error } = await sb.from("sophos_postes")
-      .select("hostname,type,os,health,threats_status,services_status,tamper_protection,last_seen_at")
+      .select("*")
       .eq("hotel_id", hotelId).order("hostname");
     if (!error) {
       setSoPostes(prev => ({ ...prev, [hotelId]: data || [] }));
@@ -3257,6 +3268,35 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // NinjaOne : état des postes problématiques (muets / mauvaise santé), par hôtel
   const [soNinja, setSoNinja] = useState({});
+  // Compte Sophos partagé : PC non affectés, suggestions NinjaOne, affichage des ignorés
+  const [soNonAffectes, setSoNonAffectes] = useState([]);
+  const [soSuggest, setSoSuggest] = useState({ loading: false, err: "", parPoste: {} });
+  const [soVoirIgnores, setSoVoirIgnores] = useState(false);
+  const soAffecter = async (tenantId, items, msgOk) => {
+    setSoMsg("");
+    try {
+      const r = await callSophosApi("/affecter", { tenantId, items });
+      setSoMsg("✅ " + (msgOk || "Affectation enregistrée") + (r.non_affectes != null ? " — reste " + r.non_affectes + " PC non affecté(s) sur ce compte." : "."));
+      await loadSophos(true);
+      if (soOpenHotel) loadSoPostes(soOpenHotel);
+    } catch (e) { setSoMsg("❌ " + (e.message || e)); }
+  };
+  // Interroge NinjaOne pour proposer l'hôtel de chaque PC non affecté
+  // (organisation NinjaOne = champ « Nom NinjaOne » de la fiche établissement).
+  const soSuggererNinja = async (postesNA) => {
+    const noms = [...new Set(postesNA.map(p => p.hostname).filter(Boolean))];
+    setSoSuggest({ loading: true, err: "", parPoste: {} });
+    const parPoste = {};
+    let err = "";
+    for (let i = 0; i < noms.length; i += 20) {
+      try {
+        const r = await callSophosApi("/ninja-postes", { hostnames: noms.slice(i, i + 20), detail: false });
+        (r.postes || []).forEach(x => { parPoste[String(x.hostname || "").toUpperCase()] = x; });
+        setSoSuggest({ loading: true, err: "", parPoste: { ...parPoste } });
+      } catch (e) { err = e.message || String(e); break; }
+    }
+    setSoSuggest({ loading: false, err, parPoste });
+  };
   const [soSecOuvertes, setSoSecOuvertes] = useState({}); // sections repliées/dépliées par hôtel
   // Postes à problème : fiche détaillée (10 par appel) ; postes OK : état +
   // dernier contact seulement (20 par appel). Affichage au fil des lots.
@@ -3297,16 +3337,25 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const soEnregistrerCompte = async () => {
     const f = soModal;
     if (!f) return;
-    if (!String(f.clientId || "").trim()) { setSoModal({ ...f, err: "L'ID client est obligatoire." }); return; }
-    if (!f.existe && !String(f.clientSecret || "").trim()) { setSoModal({ ...f, err: "Le secret est obligatoire pour un nouveau compte." }); return; }
+    if (!f.copierDe && !String(f.clientId || "").trim()) { setSoModal({ ...f, err: "L'ID client est obligatoire." }); return; }
+    if (!f.copierDe && !f.existe && !String(f.clientSecret || "").trim()) { setSoModal({ ...f, err: "Le secret est obligatoire pour un nouveau compte." }); return; }
     setSoModal({ ...f, busy: true, err: "" });
     try {
-      const r = await callSophosApi("/compte", { hotelId: f.hotelId, clientId: f.clientId.trim(), clientSecret: (f.clientSecret || "").trim(), actif: f.actif !== false });
+      const decoupe = (v) => String(v || "").split(/[\n,;]/).map(x => x.trim()).filter(Boolean);
+      const r = await callSophosApi("/compte", {
+        hotelId: f.hotelId,
+        clientId: (f.clientId || "").trim(), clientSecret: (f.clientSecret || "").trim(),
+        copierDe: f.copierDe || undefined,
+        actif: f.actif !== false,
+        principal: !!f.principal,
+        regles: { groupes: decoupe(f.rGroupes), prefixes: decoupe(f.rPrefixes), domaines: decoupe(f.rDomaines), ips: decoupe(f.rIps) },
+      });
       setSoModal(null);
       const s = r.synchro;
       setSoMsg(s && s.ok
         ? "✅ Compte Sophos enregistré et testé — " + (s.nb_postes || 0) + " poste(s), " + (s.nb_alertes || 0) + " alerte(s) de sécurité" + (s.nb_licences ? ", " + s.nb_licences + " alerte(s) de licence" : "") + "."
-        : "✅ Compte Sophos enregistré." + (s && s.erreur ? " ⚠️ Première synchro : " + s.erreur : ""));
+        : "✅ Compte Sophos enregistré." + (s && s.erreur ? " ⚠️ Première synchro : " + s.erreur : ""))
+        + (s && s.partage ? " Compte partagé : " + (s.non_affectes || 0) + " PC non affecté(s) à répartir." : "");
       await loadSophos(true);
     } catch (e) {
       setSoModal({ ...f, busy: false, err: e.message || String(e) });
@@ -8178,6 +8227,71 @@ const nav = isAdmin
 
       // ----- Onglet ÉTABLISSEMENTS -----
       soTab === "hotels" && React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        // ===== Comptes Sophos partagés : PC non affectés =====
+        (() => {
+          const tenants = {};
+          soComptes.forEach(x => { if (x.tenant_id) (tenants[x.tenant_id] = tenants[x.tenant_id] || []).push(x); });
+          const partages = Object.keys(tenants).filter(t => tenants[t].length > 1);
+          if (!partages.length) return null;
+          const norm = (v) => String(v || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+          return partages.map(t => {
+            const hotelsT = tenants[t].map(x => hotels.find(hh => hh.id === x.hotel_id)).filter(Boolean);
+            const tous = soNonAffectes.filter(p => p.tenant_id === t);
+            const ignores = tous.filter(p => p.affectation === "ignore");
+            const liste = tous.filter(p => p.affectation !== "ignore");
+            // Suggestion : organisation NinjaOne du PC = « Nom NinjaOne » (ou nom) d'un hôtel du compte
+            const suggestion = (p) => {
+              const n = soSuggest.parPoste[String(p.hostname || "").toUpperCase()];
+              if (!n || !n.trouve || !n.organisation) return null;
+              const o = norm(n.organisation);
+              const hh = hotelsT.find(x => (x.ninjaone_nom && norm(x.ninjaone_nom) === o) || norm(x.name) === o)
+                || hotelsT.find(x => o && (norm(x.name).includes(o) || o.includes(norm(x.name))));
+              return { org: n.organisation, hotel: hh || null };
+            };
+            const avecSugg = liste.map(p => ({ p, sg: suggestion(p) })).filter(x => x.sg && x.sg.hotel);
+            const selS = { padding: "4px 7px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, maxWidth: 210 };
+            const ligne = (p, ignore) => {
+              const sg = !ignore && suggestion(p);
+              const j = p.last_seen_at ? Math.floor((Date.now() - new Date(p.last_seen_at).getTime()) / 86400000) : null;
+              return React.createElement('div', { key: p.sophos_id, style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderTop: "1px solid #F0F0F5", fontSize: 12.5, flexWrap: "wrap", background: "white" } },
+                React.createElement('span', { style: { flex: "0 0 190px", fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.hostname }, "💻 " + (p.hostname || "?")),
+                React.createElement('span', { style: { flex: "0 0 200px", color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.dernier_utilisateur || "" }, p.dernier_utilisateur ? "👤 " + p.dernier_utilisateur : "—"),
+                React.createElement('span', { style: { flex: "0 0 120px", color: "#888", fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: p.ips || "" }, p.ips || ""),
+                React.createElement('span', { style: { flex: "0 0 90px", color: j !== null && j > 7 ? "#C05621" : "#888", fontSize: 11.5 } }, j === null ? "" : j === 0 ? "vu aujourd'hui" : "vu il y a " + j + " j"),
+                sg && React.createElement('span', { style: { fontSize: 11.5, color: sg.hotel ? "#2F855A" : "#999" } }, "NinjaOne : " + sg.org + (sg.hotel ? "" : " (aucun hôtel correspondant)")),
+                React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" } },
+                  sg && sg.hotel && btn("✓ " + sg.hotel.name, () => soAffecter(t, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: sg.hotel.id }], p.hostname + " → " + sg.hotel.name), { style: { border: "1px solid #9AE6B4", color: "#2F855A", fontWeight: 600, padding: "4px 9px" } }),
+                  ignore
+                    ? btn("↩ Ne plus ignorer", () => soAffecter(t, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: null }], p.hostname + " remis dans les PC à affecter"), { style: { padding: "4px 9px" } })
+                    : React.createElement('select', { value: "", onChange: e => {
+                        const v = e.target.value; if (!v) return;
+                        if (v === "__ignore") soAffecter(t, [{ sophosId: p.sophos_id, hostname: p.hostname, ignorer: true }], p.hostname + " ignoré");
+                        else soAffecter(t, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: v }], p.hostname + " → " + (hotelsT.find(x => x.id === v) || {}).name);
+                      }, style: selS },
+                        React.createElement('option', { value: "" }, "Affecter à…"),
+                        hotelsT.map(x => React.createElement('option', { key: x.id, value: x.id }, x.name)),
+                        React.createElement('option', { value: "__ignore" }, "🚫 Ignorer (pas un de nos hôtels)"))
+                )
+              );
+            };
+            return React.createElement('div', { key: t, style: { background: "white", border: "1px solid #F0D98A", borderLeft: "5px solid #B7791F", borderRadius: 10, overflow: "hidden", marginBottom: 6 } },
+              React.createElement('div', { style: { padding: "11px 15px", background: "#FFFBEB", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                React.createElement('div', { style: { flex: "1 1 260px" } },
+                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#8A6D1F" } }, "🔗 Compte Sophos partagé — " + liste.length + " PC non affecté" + (liste.length > 1 ? "s" : "")),
+                  React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 2 } }, "Hôtels du compte : " + hotelsT.map(x => x.name).join(" · ") + ". Affinez les règles via « Configurer » ou affectez les PC ci-dessous (mémorisé).")),
+                liste.length > 0 && btn(soSuggest.loading ? "🔎 Recherche…" : "🔎 Suggérer via NinjaOne", () => soSuggererNinja(liste), { disabled: soSuggest.loading }),
+                avecSugg.length > 0 && btn("✓ Appliquer " + avecSugg.length + " suggestion" + (avecSugg.length > 1 ? "s" : ""), () => soAffecter(t, avecSugg.map(x => ({ sophosId: x.p.sophos_id, hostname: x.p.hostname, hotelId: x.sg.hotel.id })), avecSugg.length + " PC affecté(s) selon NinjaOne"), { style: { background: "#2F855A", border: "none", color: "white", fontWeight: 600 } })
+              ),
+              soSuggest.err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", padding: "6px 15px" } }, "NinjaOne : " + soSuggest.err),
+              liste.length === 0
+                ? React.createElement('div', { style: { padding: "10px 15px", fontSize: 12.5, color: "#2F855A" } }, "✅ Tous les PC de ce compte sont affectés.")
+                : React.createElement('div', { style: { maxHeight: 420, overflowY: "auto" } }, liste.map(p => ligne(p, false))),
+              ignores.length > 0 && React.createElement('div', { style: { borderTop: "1px solid #F0E6C8" } },
+                React.createElement('div', { onClick: () => setSoVoirIgnores(!soVoirIgnores), style: { padding: "7px 15px", fontSize: 12, color: "#888", cursor: "pointer" } }, (soVoirIgnores ? "▼ " : "▶ ") + "🚫 " + ignores.length + " PC ignoré" + (ignores.length > 1 ? "s" : "") + " (hors de nos hôtels)"),
+                soVoirIgnores && ignores.map(p => ligne(p, true)))
+            );
+          });
+        })(),
         hotelsTries.map(h => {
           const c = compteDe(h.id);
           const et = etatHotel(c);
@@ -8193,6 +8307,7 @@ const nav = isAdmin
               ),
               c && c.actif && c.dernier_statut !== "erreur" && React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 } },
                 React.createElement('span', { style: { background: "#F0F0F8", color: "#555", padding: "3px 9px", borderRadius: 20 } }, "💻 " + (c.nb_postes || 0) + " postes"),
+                c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1 && React.createElement('span', { title: "Compte Sophos partagé avec : " + soComptes.filter(x => x.tenant_id === c.tenant_id && x.hotel_id !== c.hotel_id).map(x => nomHotel(x.hotel_id)).join(", "), style: { background: "#FFFBEB", color: "#8A6D1F", padding: "3px 9px", borderRadius: 20 } }, "🔗 partagé" + (c.principal ? " · principal" : "")),
                 (c.nb_postes_ko || 0) > 0 && React.createElement('span', { style: { background: "#FDECEC", color: "#C53030", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_ko + " mauvais"),
                 (c.nb_postes_suspects || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_suspects + " suspects"),
                 (c.nb_postes_muets || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_muets + " muets"),
@@ -8201,7 +8316,14 @@ const nav = isAdmin
               ),
               React.createElement('div', { style: { display: "flex", gap: 6 } },
                 c && btn(soBusy === h.id ? "Synchro…" : "🔄 Synchroniser", () => soSynchroniser(h.id), { disabled: !!soBusy }),
-                btn(c ? "⚙️ Configurer" : "+ Configurer Sophos", () => setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "" }),
+                btn(c ? "⚙️ Configurer" : "+ Configurer Sophos", () => {
+                  const rg = (c && c.regles) || {};
+                  const j = (k) => (Array.isArray(rg[k]) ? rg[k] : []).join(", ");
+                  setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "",
+                    copierDe: "", principal: c ? c.principal !== false : true,
+                    rGroupes: j("groupes"), rPrefixes: j("prefixes"), rDomaines: j("domaines"), rIps: j("ips"),
+                    partageOuvert: !!(c && c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1) });
+                },
                   c ? null : { style: { border: "1px solid " + G, color: G2, fontWeight: 600 } })
               )
             ),
@@ -8245,6 +8367,7 @@ const nav = isAdmin
                   const cell = (w, contenu, extra) => React.createElement('div', { style: Object.assign({ flex: w.indexOf(" ") >= 0 ? w : "0 0 " + w, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, extra || {}) }, contenu);
 
                   // ----- Ligne d'un poste (format tableau) -----
+                  const partageH = !!(c && c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1);
                   const lignePoste = (p, cat) => {
                     const n = njPostes[String(p.hostname || "").toUpperCase()];
                     const hm = healthMeta(p.health);
@@ -8268,9 +8391,19 @@ const nav = isAdmin
                         cell("78px", pastille(hm.l, hm.c, hm.bg)),
                         cell("150px", React.createElement('span', { style: { color: muet ? "#C05621" : "#666", fontWeight: muet ? 600 : 400 }, title: p.last_seen_at ? "Dernière remontée Sophos : " + fmtDateHeureFr2(p.last_seen_at) : "" }, sophosTxt.charAt(0).toUpperCase() + sophosTxt.slice(1))),
                         cell("150px", njCell),
-                        cell("1 1 160px", n && n.utilisateur ? "👤 " + n.utilisateur : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
+                        cell("1 1 160px", (n && n.utilisateur) || p.dernier_utilisateur ? "👤 " + ((n && n.utilisateur) || p.dernier_utilisateur) : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
                         React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
                           n && n.doublons && pastille("doublon ×" + n.doublons, "#B7791F", "#FFF6E5"),
+                          partageH && React.createElement('select', { value: "", title: "Ce PC n'est pas de cet hôtel ? Déplacez-le (mémorisé)", onChange: e => {
+                              const v = e.target.value; if (!v) return;
+                              if (v === "__auto") soAffecter(c.tenant_id, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: null }], p.hostname + " : retour aux règles automatiques");
+                              else if (v === "__ignore") soAffecter(c.tenant_id, [{ sophosId: p.sophos_id, hostname: p.hostname, ignorer: true }], p.hostname + " ignoré");
+                              else soAffecter(c.tenant_id, [{ sophosId: p.sophos_id, hostname: p.hostname, hotelId: v }], p.hostname + " → " + nomHotel(v));
+                            }, style: { padding: "2px 4px", border: "1px solid #E2E2EA", borderRadius: 6, fontSize: 11, color: "#777", maxWidth: 110 } },
+                              React.createElement('option', { value: "" }, "↔ Déplacer"),
+                              soComptes.filter(x => x.tenant_id === c.tenant_id && x.hotel_id !== h.id).map(x => React.createElement('option', { key: x.hotel_id, value: x.hotel_id }, nomHotel(x.hotel_id))),
+                              p.affectation === "manuel" && React.createElement('option', { value: "__auto" }, "↺ Règles automatiques"),
+                              React.createElement('option', { value: "__ignore" }, "🚫 Ignorer")),
                           n && n.lien && React.createElement('a', { href: n.lien, target: "_blank", rel: "noopener noreferrer", title: "Ouvrir dans NinjaOne", style: { color: G2, fontWeight: 600, textDecoration: "none", fontSize: 12 } }, "NinjaOne ↗")
                         )
                       ),
@@ -8329,12 +8462,34 @@ const nav = isAdmin
           React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14 } }, soModal.nom),
           React.createElement('div', { style: { fontSize: 11.5, color: "#2B6CB0", background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 7, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5 } },
             "Dans le Sophos Central de l'hôtel : Paramètres généraux → Gestion des identifiants API → Ajouter, rôle « Service Principal ReadOnly ». Copiez l'ID client et le secret ici."),
-          React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "ID client *"),
-          React.createElement('input', { value: soModal.clientId, onChange: e => setSoModal({ ...soModal, clientId: e.target.value, err: "" }), placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style: { ...inputS, marginBottom: 12, fontFamily: "monospace" } }),
-          React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Secret client " + (soModal.existe ? "(laisser vide pour conserver l'actuel)" : "*")),
-          React.createElement('input', { type: "password", autoComplete: "new-password", value: soModal.clientSecret, onChange: e => setSoModal({ ...soModal, clientSecret: e.target.value, err: "" }), placeholder: soModal.existe ? "•••••••• (inchangé)" : "Secret client", style: { ...inputS, marginBottom: 12 } }),
+          // Compte partagé : reprendre les identifiants d'un hôtel déjà configuré
+          !soModal.existe && soComptes.length > 0 && React.createElement('div', { style: { marginBottom: 12 } },
+            React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Même compte Sophos qu'un autre hôtel ?"),
+            React.createElement('select', { value: soModal.copierDe || "", onChange: e => setSoModal({ ...soModal, copierDe: e.target.value, partageOuvert: !!e.target.value || soModal.partageOuvert, principal: e.target.value ? false : soModal.principal, err: "" }), style: inputS },
+              React.createElement('option', { value: "" }, "Non — nouveaux identifiants"),
+              soComptes.map(x => React.createElement('option', { key: x.hotel_id, value: x.hotel_id }, "Oui — comme " + nomHotel(x.hotel_id))))
+          ),
+          !soModal.copierDe && React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "ID client *"),
+          !soModal.copierDe && React.createElement('input', { value: soModal.clientId, onChange: e => setSoModal({ ...soModal, clientId: e.target.value, err: "" }), placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", style: { ...inputS, marginBottom: 12, fontFamily: "monospace" } }),
+          !soModal.copierDe && React.createElement('label', { style: { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Secret client " + (soModal.existe ? "(laisser vide pour conserver l'actuel)" : "*")),
+          !soModal.copierDe && React.createElement('input', { type: "password", autoComplete: "new-password", value: soModal.clientSecret, onChange: e => setSoModal({ ...soModal, clientSecret: e.target.value, err: "" }), placeholder: soModal.existe ? "•••••••• (inchangé)" : "Secret client", style: { ...inputS, marginBottom: 12 } }),
           React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#444", cursor: "pointer", marginBottom: 12 } },
             React.createElement('input', { type: "checkbox", checked: soModal.actif !== false, onChange: e => setSoModal({ ...soModal, actif: e.target.checked }) }), "Supervision active"),
+          // Règles de reconnaissance des PC (compte Sophos partagé par plusieurs hôtels)
+          React.createElement('div', { style: { border: "1px solid #E8E8F0", borderRadius: 8, marginBottom: 12, overflow: "hidden" } },
+            React.createElement('div', { onClick: () => setSoModal({ ...soModal, partageOuvert: !soModal.partageOuvert }), style: { padding: "8px 10px", background: "#FAFAFC", cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: "#1a1a3e" } },
+              (soModal.partageOuvert ? "▼ " : "▶ ") + "🔗 Compte Sophos partagé avec d'autres hôtels"),
+            soModal.partageOuvert && React.createElement('div', { style: { padding: "10px 10px 4px" } },
+              React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 9, lineHeight: 1.5 } }, "Règles pour reconnaître les PC de cet hôtel (séparer par des virgules). La 1re règle qui correspond l'emporte ; les PC reconnus par aucun hôtel apparaissent dans « PC non affectés »."),
+              [["rPrefixes", "Début du nom du PC", "ex. HEDIJON, HEDTDIJON"], ["rDomaines", "Domaine de l'utilisateur", "ex. DIJON (pour DIJON\\reception)"], ["rIps", "Début de l'adresse IP", "ex. 10.47.150."], ["rGroupes", "Groupe Sophos Central", "ex. Holiday Inn Dijon"]].map(([k, lbl, ph]) =>
+                React.createElement('div', { key: k, style: { marginBottom: 8 } },
+                  React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 3 } }, lbl),
+                  React.createElement('input', { value: soModal[k] || "", onChange: e => setSoModal({ ...soModal, [k]: e.target.value }), placeholder: ph, style: { ...inputS, padding: "6px 9px", fontSize: 12.5 } }))),
+              React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#444", cursor: "pointer", margin: "4px 0 8px" } },
+                React.createElement('input', { type: "checkbox", checked: !!soModal.principal, onChange: e => setSoModal({ ...soModal, principal: e.target.checked }) }),
+                "Hôtel principal du compte (reçoit les alertes générales : licences, PC non affectés…)")
+            )
+          ),
           React.createElement('div', { style: { fontSize: 11, color: "#999", marginBottom: 12, lineHeight: 1.5 } }, "🔒 Le secret est chiffré par le Worker et n'est jamais réaffiché. Les identifiants sont testés à l'enregistrement."),
           soModal.err && React.createElement('div', { style: { fontSize: 12.5, color: "#C53030", background: "#FDECEC", borderRadius: 7, padding: "8px 10px", marginBottom: 12 } }, soModal.err),
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
