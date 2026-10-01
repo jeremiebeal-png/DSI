@@ -517,7 +517,7 @@ function App() {
   const toggleSound = () => { const v = !soundOn; setSoundOn(v); dsiSetSound(v); };
   const [groupsOpen, setGroupsOpen] = useState({});
   // Config des menus deroulants de la sidebar (ordre = position du 1er sous-item)
-  const NAV_GROUPS = { cli: { icon: "🏨", label: "Clients" }, sup: { icon: "🎧", label: "Support" }, pil: { icon: "📅", label: "Pilotage" }, rap: { icon: "📁", label: "Rapports" }, adm: { icon: "🛡️", label: "Administration" } };
+  const NAV_GROUPS = { assist: { icon: "🎧", label: "Assistance" }, hotel: { icon: "🏨", label: "Mon établissement" }, cli: { icon: "🏨", label: "Clients" }, sup: { icon: "🎧", label: "Support" }, pil: { icon: "📅", label: "Pilotage" }, rap: { icon: "📁", label: "Rapports" }, adm: { icon: "🛡️", label: "Administration" } };
   const toggleTheme = () => { const m = theme === "dark" ? "light" : "dark"; dsiApplyTheme(m); setTheme(m); };
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -5473,16 +5473,17 @@ const nav = isAdmin
       })()
     : [
         { p: "accueil", icon: "🏠", label: "Accueil" },
-        { p: "knowledge", icon: "📖", label: "Procédures" },
-        { p: "mon-installation", icon: "🗂️", label: "Mon infrastructure" },
-        { p: "contact", icon: "📧", label: "Nouvelle demande" },
-        { p: "templates", icon: "📋", label: "Modèles de demande" },
-        ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes" }] : []),
-        ...(isSupervisor ? [{ p: "historique-comptes", icon: "🗃️", label: "Historique des comptes" }] : []),
+        // Côté client : même présentation en groupes dépliables que l'espace admin
+        { p: "contact", icon: "📧", label: "Nouvelle demande", grp: "assist" },
+        ...(isSupervisor ? [{ p: "tickets-client", icon: "🎫", label: "Mes demandes", grp: "assist" }] : []),
+        { p: "templates", icon: "📋", label: "Modèles de demande", grp: "assist" },
+        { p: "knowledge", icon: "📖", label: "Procédures", grp: "assist" },
+        { p: "mon-installation", icon: "🗂️", label: "Mon infrastructure", grp: "hotel" },
+        ...(isSupervisor ? [{ p: "historique-comptes", icon: "🗃️", label: "Historique des comptes", grp: "hotel" }] : []),
+        ...(isSupervisor ? [{ p: "securite", icon: "🔐", label: "Mes téléphones (MFA)", grp: "hotel" }] : []),
         ...(isSupervisor ? [{ p: "rapport-tickets", icon: "📈", label: "Suivi des tickets", grp: "rap" }] : []),
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapports de sécurité", grp: "rap" }] : []),
-        ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapports d'intervention", grp: "rap" }] : []),
-        ...(isSupervisor ? [{ p: "securite", icon: "🔐", label: "Mes téléphones (MFA)" }] : [])
+        ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapports d'intervention", grp: "rap" }] : [])
       ];
   let content = null;
 
@@ -9298,7 +9299,8 @@ const nav = isAdmin
         const els = [];
         const groupDone = {};
         nav.forEach(({ p, icon, label, grp }) => {
-          if (grp && NAV_GROUPS[grp]) {
+          // Un groupe qui ne contient qu'une entrée s'affiche comme une entrée simple
+          if (grp && NAV_GROUPS[grp] && nav.filter(i => i.grp === grp).length > 1) {
             if (groupDone[grp]) return; // sous-items deja rendus via l'en-tete
             groupDone[grp] = true;
             const cfg = NAV_GROUPS[grp];
