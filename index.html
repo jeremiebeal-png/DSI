@@ -9830,28 +9830,23 @@ const nav = isAdmin
     : { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto" };
 
   const sidebar = React.createElement('div', { style: sidebarStyle },
-    React.createElement('div', { style: { padding: "16px 14px 13px", borderBottom: `1px solid ${G}22`, display: "flex", alignItems: "center", justifyContent: "space-between" } },
-      React.createElement('div', null,
-        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 9 } },
-          React.createElement('a', { href: "https://www.dsihotel.com", target: "_blank", rel: "noopener noreferrer", title: "www.dsihotel.com" },
-            React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 48, maxWidth: 190, objectFit: "contain", display: "block" } })
-          )
+    React.createElement('div', { style: { padding: "20px 16px 14px", borderBottom: "1px solid rgba(255,255,255,.07)" } },
+      React.createElement('div', { style: { display: "flex", alignItems: "center", justifyContent: isMobile ? "space-between" : "flex-start" } },
+        React.createElement('a', { href: "https://www.dsihotel.com", target: "_blank", rel: "noopener noreferrer", title: "www.dsihotel.com", style: { display: "block" } },
+          React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 40, maxWidth: 180, objectFit: "contain", display: "block" } })
         ),
-        React.createElement('div', { style: { color: "rgba(255,255,255,.35)", fontSize: 10.5, marginTop: 7 } }, isAdmin ? "Espace Admin" : "Intranet Client"),
-        React.createElement('a', { href: "https://www.dsihotel.com", target: "_blank", rel: "noopener noreferrer", style: { display: "inline-block", marginTop: 5, color: G, fontSize: 11.5, fontWeight: 600, textDecoration: "none" } }, "🌐 www.dsihotel.com")
+        isMobile && React.createElement('button', { onClick: () => setMenuOpen(false), style: { background: "none", border: "none", color: "rgba(255,255,255,.6)", fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 4 } }, "✕")
       ),
-      isMobile && React.createElement('button', { onClick: () => setMenuOpen(false), style: { background: "none", border: "none", color: "rgba(255,255,255,.6)", fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 4 } }, "✕")
-    ),
-    React.createElement('div', { style: { padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
-      React.createElement('button', { onClick: toggleTheme, title: theme === "dark" ? "Passer en mode jour" : "Passer en mode nuit",
-        style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 10px", background: "rgba(255,255,255,.06)", border: `1px solid ${G}30`, color: "rgba(255,255,255,.75)", borderRadius: 8, fontSize: 12.5, fontWeight: 500, cursor: "pointer" } },
-        React.createElement('span', { style: { fontSize: 15 } }, theme === "dark" ? "☀️" : "🌙"),
-        React.createElement('span', null, theme === "dark" ? "Mode jour" : "Mode nuit")
-      ),
-      isAdmin && React.createElement('button', { onClick: toggleSound, title: soundOn ? "Couper les notifications sonores" : "Activer les notifications sonores",
-        style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 10px", marginTop: 8, background: "rgba(255,255,255,.06)", border: `1px solid ${soundOn ? G + "30" : "rgba(255,255,255,.14)"}`, color: soundOn ? "rgba(255,255,255,.75)" : "rgba(255,255,255,.45)", borderRadius: 8, fontSize: 12.5, fontWeight: 500, cursor: "pointer" } },
-        React.createElement('span', { style: { fontSize: 15 } }, soundOn ? "🔔" : "🔕"),
-        React.createElement('span', null, soundOn ? "Son : activé" : "Son : coupé")
+      React.createElement('div', { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14, gap: 8 } },
+        React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.4px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap" } }, isAdmin ? "Espace Admin" : "Intranet Client"),
+        React.createElement('div', { style: { display: "flex", gap: 6 } },
+          React.createElement('button', { onClick: toggleTheme, title: theme === "dark" ? "Passer en mode jour" : "Passer en mode nuit", "aria-label": theme === "dark" ? "Mode jour" : "Mode nuit",
+            style: { width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.12)", cursor: "pointer", fontSize: 14, lineHeight: 1 } },
+            theme === "dark" ? "☀️" : "🌙"),
+          isAdmin && React.createElement('button', { onClick: toggleSound, title: soundOn ? "Couper les notifications sonores" : "Activer les notifications sonores", "aria-label": soundOn ? "Son activé" : "Son coupé",
+            style: { width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, background: soundOn ? "rgba(255,255,255,.06)" : "transparent", border: "1px solid " + (soundOn ? "rgba(255,255,255,.12)" : "rgba(255,255,255,.08)"), cursor: "pointer", fontSize: 14, lineHeight: 1, opacity: soundOn ? 1 : 0.55 } },
+            soundOn ? "🔔" : "🔕")
+        )
       )
     ),
     !isAdmin && client?.logo_url && React.createElement('div', { style: { padding: "18px 16px", display: "flex", justifyContent: "center", borderBottom: "1px solid rgba(255,255,255,.06)" } },
