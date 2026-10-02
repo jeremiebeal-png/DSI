@@ -1304,6 +1304,32 @@ function App() {
       if (!error && Array.isArray(data)) setTechniciens(data.map(t => ({ id: t.id, nom: (t.full_name || "").trim() || t.email || "?", email: t.email || "" })).sort((a, b) => a.nom.localeCompare(b.nom, "fr")));
     });
   }, [isAdmin]);
+  // ---------- MULTI-HÔTELS (superviseur de groupe) ----------
+  const [mesHotels, setMesHotels] = useState([]); // [{ id, name, city, logo_url }]
+  const [hotelChoisi, setHotelChoisi] = useState(() => { try { return sessionStorage.getItem("dsi-hotel-choisi") === "1"; } catch (e) { return false; } });
+  const [hotelSwitchBusy, setHotelSwitchBusy] = useState(false);
+  useEffect(() => {
+    if (!profile || profile.role !== "supervisor" || mfaState !== "ok") { setMesHotels([]); return; }
+    sb.rpc("mes_hotels").then(({ data, error }) => { setMesHotels((!error && Array.isArray(data)) ? data : []); });
+  }, [profile, mfaState]);
+  const multiHotel = isSupervisor && mesHotels.length > 1;
+  const changerHotelActif = async (hid) => {
+    if (!hid) return;
+    setHotelSwitchBusy(true);
+    try {
+      if (hid !== profile?.hotel_id) {
+        const { error } = await sb.rpc("changer_hotel_actif", { p_hotel_id: hid });
+        if (error) throw error;
+      }
+      try { sessionStorage.setItem("dsi-hotel-choisi", "1"); } catch (e) {}
+      // Rechargement complet : toutes les données (tickets, procédures, rapports…)
+      // sont relues pour le nouvel hôtel. La session MFA (AAL2) est conservée.
+      window.location.href = window.location.pathname;
+    } catch (e) {
+      alert("Impossible de changer d'établissement : " + (e.message || e));
+      setHotelSwitchBusy(false);
+    }
+  };
   const nomTechnicien = (id) => { if (!id) return ""; const t = techniciens.find(x => x.id === id); return t ? t.nom : "Technicien inconnu"; };
   const assignerTechnicien = async (ticket, techId) => {
     const val = techId || null;
@@ -1801,6 +1827,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     window.__dsiLoggedToken = null;
     window.__dsiPageInit = false;
     try { localStorage.removeItem("dsi-last-activity"); } catch (e) {}
+    try { sessionStorage.removeItem("dsi-hotel-choisi"); } catch (e) {}
     // Déconnexion automatique : on ne ferme QUE la session de ce navigateur
     // (scope "local"). Sinon, sur un compte hôtel partagé, l'inactivité d'un
     // poste déconnecterait tous les collègues connectés avec le même compte.
@@ -5571,6 +5598,39 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       )
     );
   }
+
+// ---------- SÉLECTEUR D'ÉTABLISSEMENT (superviseur multi-hôtels) ----------
+  if (multiHotel && !hotelChoisi) {
+    return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
+      React.createElement('div', { style: { width: 760, maxWidth: "100%" } },
+        React.createElement('div', { style: { textAlign: "center", marginBottom: 26 } },
+          React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 54 } }),
+          React.createElement('div', { style: { color: "white", fontSize: 18, fontWeight: 600, marginTop: 14 } }, "Bonjour" + (profile && profile.full_name ? " " + String(profile.full_name).split(/\s+/)[0] : "")),
+          React.createElement('div', { style: { color: "rgba(255,255,255,.5)", fontSize: 13, marginTop: 4 } }, "Choisissez l'établissement à consulter")
+        ),
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill,minmax(220px,1fr))", gap: 14 } },
+          mesHotels.map(h => React.createElement('button', { key: h.id, onClick: () => changerHotelActif(h.id), disabled: hotelSwitchBusy,
+              style: { background: "rgba(255,255,255,.05)", border: "1px solid " + (h.id === profile?.hotel_id ? G : G + "30"), borderRadius: 14, padding: "20px 16px", cursor: hotelSwitchBusy ? "wait" : "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, opacity: hotelSwitchBusy ? 0.6 : 1 } },
+            React.createElement('div', { style: { background: "white", borderRadius: 10, width: "100%", height: 74, display: "flex", alignItems: "center", justifyContent: "center", padding: 8, boxSizing: "border-box" } },
+              h.logo_url ? React.createElement('img', { src: h.logo_url, alt: h.name, style: { maxHeight: 58, maxWidth: "100%", objectFit: "contain" } }) : React.createElement('span', { style: { fontSize: 30 } }, "🏨")),
+            React.createElement('div', { style: { color: "white", fontSize: 14, fontWeight: 600, textAlign: "center" } }, h.name),
+            h.city && React.createElement('div', { style: { color: "rgba(255,255,255,.45)", fontSize: 12, marginTop: -6 } }, h.city)
+          ))
+        ),
+        React.createElement('div', { style: { textAlign: "center", marginTop: 22 } },
+          React.createElement('button', { onClick: doLogout, style: { background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 16px" } }, "Se déconnecter"))
+      )
+    );
+  }
+
+  // Sélecteur compact pour changer d'hôtel depuis l'en-tête (superviseur multi-hôtels)
+  const hotelSwitcher = (dark) => multiHotel && React.createElement('select', {
+    value: profile?.hotel_id || "", disabled: hotelSwitchBusy, onChange: e => changerHotelActif(e.target.value),
+    title: "Changer d'établissement",
+    style: { padding: "6px 9px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", maxWidth: 230,
+      border: "1px solid " + (dark ? G + "55" : G), background: dark ? "rgba(255,255,255,.08)" : "#FFFDF5", color: dark ? "white" : "#1a1a3e" } },
+    mesHotels.map(h => React.createElement('option', { key: h.id, value: h.id, style: { color: "#111" } }, "🏨 " + h.name))
+  );
 
 const nav = isAdmin
     ? (() => {
@@ -9580,7 +9640,8 @@ const nav = isAdmin
       React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
         React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
         React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
+        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : "")),
+        multiHotel && React.createElement('div', { style: { marginTop: 8 } }, hotelSwitcher(true))
       )
     ),
     React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
@@ -9764,6 +9825,7 @@ const nav = isAdmin
           React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
           React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
         ),
+        hotelSwitcher(false),
         (isAdmin || isSupervisor) && React.createElement('button', {
           onClick: () => { setChangePwErr(""); setChangePwValue(""); setChangePwValue2(""); setChangePwOpen(true); },
           title: "Changer mon mot de passe",
