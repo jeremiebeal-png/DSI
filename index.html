@@ -1880,9 +1880,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ---------- DÉCONNEXION AUTOMATIQUE APRÈS INACTIVITÉ ----------
   // Délai selon le rôle :
-  //   - Admin : 15 min d'inactivité -> déconnexion (avertissement 1 min avant).
-  //   - Superviseur / compte standard client : 3 min -> déconnexion
-  //     (avertissement 30 s avant).
+  //   - Admin : 6 h d'inactivité -> déconnexion (avertissement 2 min avant).
+  //   - Superviseur / compte standard client : 15 min -> déconnexion
+  //     (avertissement 1 min avant).
   // La dernière activité est mémorisée dans le navigateur (localStorage) :
   //   - le décompte continue quand l'onglet est en arrière-plan ou la fenêtre
   //     réduite (avant : il était suspendu, la session ne expirait jamais) ;
@@ -1893,10 +1893,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // navigateur ralentit les minuteurs des onglets en arrière-plan.
   useEffect(() => {
     if (!session || recoveryMode) return; // uniquement quand l'utilisateur est connecté
+    // On attend le profil (rôle) : sinon, pendant son chargement, un admin serait
+    // contrôlé avec le délai court (15 min) et pourrait être déconnecté à tort.
+    if (!profile) return;
 
     const KEY = "dsi-last-activity";
-    const LOGOUT_AFTER = isAdmin ? 15 * 60 * 1000 : 3 * 60 * 1000;
-    const WARN_BEFORE = isAdmin ? 60 * 1000 : 30 * 1000;
+    const LOGOUT_AFTER = isAdmin ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000;
+    const WARN_BEFORE = isAdmin ? 2 * 60 * 1000 : 60 * 1000;
     let lastWrite = 0;
     let done = false;
 
@@ -1943,7 +1946,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onVisibility);
     };
-  }, [session, isAdmin, recoveryMode]);
+  }, [session, isAdmin, recoveryMode, !!profile]);
 
   // Bouton "Je suis toujours là" : relance simplement l'activité
   const stayConnected = () => {
@@ -10100,7 +10103,7 @@ const nav = isAdmin
       React.createElement('div', { style: { background: "white", borderRadius: 14, padding: 26, width: 380, maxWidth: "100%", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,.3)" } },
         React.createElement('div', { style: { fontSize: 34, marginBottom: 10 } }, "⏰"),
         React.createElement('div', { style: { fontSize: 16, fontWeight: 600, color: "#1a1a3e", marginBottom: 8 } }, "Toujours là ?"),
-        React.createElement('div', { style: { fontSize: 13, color: "#666", marginBottom: 20, lineHeight: 1.5 } }, "Vous allez être déconnecté dans " + (isAdmin ? "1 minute" : "30 secondes") + " pour cause d'inactivité."),
+        React.createElement('div', { style: { fontSize: 13, color: "#666", marginBottom: 20, lineHeight: 1.5 } }, "Vous allez être déconnecté dans " + (isAdmin ? "2 minutes" : "1 minute") + " pour cause d'inactivité."),
         React.createElement('div', { style: { display: "flex", gap: 10, justifyContent: "center" } },
           React.createElement('button', { onClick: doLogout, style: { padding: "10px 18px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 8, fontSize: 13, cursor: "pointer" } }, "Se déconnecter"),
           React.createElement('button', { onClick: stayConnected, style: { padding: "10px 22px", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "Rester connecté")
@@ -10154,4 +10157,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
- 
