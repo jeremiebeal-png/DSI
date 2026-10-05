@@ -763,6 +763,8 @@ function App() {
   const [adminErr, setAdminErr] = useState("");
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [editingAdminPerms, setEditingAdminPerms] = useState(null);
+  // Gestion des téléphones MFA d'un autre administrateur (super-admin) : { admin, factors, loading, busy, msg }
+  const [adminMfa, setAdminMfa] = useState(null);
   const [editingClientId, setEditingClientId] = useState(null);
   const [clientForm, setClientForm] = useState({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "" });
   const [addAccountHotel, setAddAccountHotel] = useState(null);
@@ -1403,7 +1405,7 @@ function App() {
     const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => s.page);
     if (isSuperAdmin) allowedPages.push("admins");
     if (isSuperAdmin) allowedPages.push("login-logs");
-    if (isSuperAdmin) allowedPages.push("securite");
+    allowedPages.push("securite");
     if (isSuperAdmin) allowedPages.push("suppr-ticket");
     const adminPages = [...ADMIN_SECTIONS.map(s => s.page), "admins", "login-logs", "securite", "suppr-ticket"];
     if (adminPages.includes(page) && !allowedPages.includes(page) && page !== "proc-detail") {
@@ -2042,6 +2044,48 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       await loadAdmins();
     } catch (e) {
       alert("Erreur : " + e.message);
+    }
+  };
+
+  // ---------- MFA d'un autre administrateur (super-admin) ----------
+  // Supabase ne permet pas d'enrôler un téléphone à la place d'un autre compte :
+  // le QR code est lié à la session de la personne. Le super-admin retire donc
+  // l'ancien téléphone (ou réinitialise la MFA) ; à sa prochaine connexion,
+  // l'admin voit automatiquement un nouveau QR code à scanner.
+  const openAdminMfa = async (a) => {
+    setAdminMfa({ admin: a, factors: [], loading: true, busy: false, msg: "" });
+    try {
+      const res = await callAdminApi("/admin/list-admin-factors", { adminId: a.id });
+      setAdminMfa({ admin: a, factors: (res.factors || []).filter(f => f.status === "verified"), loading: false, busy: false, msg: "" });
+    } catch (e) {
+      setAdminMfa({ admin: a, factors: [], loading: false, busy: false, msg: "❌ " + (e.message || e) });
+    }
+  };
+  const removeAdminFactor = async (f) => {
+    if (!adminMfa) return;
+    const a = adminMfa.admin;
+    const dernier = adminMfa.factors.length <= 1;
+    if (!confirm("Retirer le téléphone « " + (f.friendly_name || "sans nom") + " » de " + a.email + " ?" +
+      (dernier ? "\n\nC'est son dernier téléphone : à sa prochaine connexion, un nouveau QR code lui sera demandé." : ""))) return;
+    setAdminMfa(m => ({ ...m, busy: true, msg: "" }));
+    try {
+      await callAdminApi("/admin/delete-admin-factor", { adminId: a.id, factorId: f.id });
+      const res = await callAdminApi("/admin/list-admin-factors", { adminId: a.id });
+      setAdminMfa(m => ({ ...m, busy: false, factors: (res.factors || []).filter(x => x.status === "verified"), msg: "✓ Téléphone retiré." }));
+    } catch (e) {
+      setAdminMfa(m => ({ ...m, busy: false, msg: "❌ " + (e.message || e) }));
+    }
+  };
+  const resetAdminMfa = async () => {
+    if (!adminMfa) return;
+    const a = adminMfa.admin;
+    if (!confirm("Réinitialiser la double authentification de " + a.email + " ?\n\nTous ses téléphones seront retirés. À sa prochaine connexion (email + mot de passe), un nouveau QR code s'affichera : il le scanne avec son nouveau téléphone.")) return;
+    setAdminMfa(m => ({ ...m, busy: true, msg: "" }));
+    try {
+      await callAdminApi("/admin/reset-admin-mfa", { adminId: a.id });
+      setAdminMfa(m => ({ ...m, busy: false, factors: [], msg: "✓ MFA réinitialisée. " + a.email + " scannera un nouveau QR code à sa prochaine connexion." }));
+    } catch (e) {
+      setAdminMfa(m => ({ ...m, busy: false, msg: "❌ " + (e.message || e) }));
     }
   };
 
@@ -3758,7 +3802,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "admins" && isSuperAdmin) loadAdmins();
     if (page === "login-logs" && isSuperAdmin) loadLoginLogs();
-    if (page === "securite" && (isSuperAdmin || isSupervisor)) loadSecFactors();
+    if (page === "securite" && (isAdmin || isSupervisor)) loadSecFactors();
     if ((page === "ninjaone" || page === "rapport-securite") && profile) loadNjRapports();
     if (page === "rapport-intervention" && isSupervisor) loadRapportsClient();
     if (page === "rapport-tickets" && isSupervisor && myHotelId) genererRapportTickets(myHotelId);
@@ -5680,6 +5724,8 @@ const nav = isAdmin
             { p: "securite", icon: "🔐", label: "Double authentification", grp: "adm" },
             { p: "suppr-ticket", icon: "🗑️", label: "Suppression de ticket", grp: "adm" }
           );
+        } else {
+          items.push({ p: "securite", icon: "🔐", label: "Mes téléphones (MFA)" });
         }
         return items;
       })()
@@ -6432,6 +6478,33 @@ const nav = isAdmin
         )
       ),
 
+      adminMfa && React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !adminMfa.busy) setAdminMfa(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: 16 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 480, maxWidth: "100%" } },
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 3 } }, "📱 Téléphones de double authentification"),
+          React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14 } }, adminMfa.admin.email),
+          React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "9px 12px", fontSize: 11.5, color: "#2B6CB0", marginBottom: 14, lineHeight: 1.55 } },
+            React.createElement('b', null, "Changement de téléphone : "),
+            "cliquez sur « Réinitialiser la MFA ». À sa prochaine connexion, l'administrateur verra un nouveau QR code à scanner avec son nouveau téléphone. ",
+            "S'il a encore l'ancien téléphone, il peut aussi ajouter lui-même le nouveau depuis « Mes téléphones (MFA) »."),
+          adminMfa.loading
+            ? React.createElement('div', { style: { padding: 12, color: "#999", fontSize: 13 } }, "Chargement…")
+            : (adminMfa.factors.length === 0
+                ? React.createElement('div', { style: { padding: "12px 14px", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, fontSize: 12.5, color: "#8A6D1F", marginBottom: 6 } }, "Aucun téléphone enregistré : un QR code lui sera présenté à sa prochaine connexion.")
+                : adminMfa.factors.map(f => React.createElement('div', { key: f.id, style: { display: "flex", alignItems: "center", gap: 10, border: "1px solid #E8E8F0", borderRadius: 9, padding: "10px 13px", marginBottom: 7 } },
+                    React.createElement('span', { style: { fontSize: 18 } }, "📱"),
+                    React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                      React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e" } }, f.friendly_name || "Appareil sans nom"),
+                      React.createElement('div', { style: { fontSize: 11, color: "#999" } }, "Ajouté le " + (f.created_at ? new Date(f.created_at).toLocaleDateString("fr-FR") : "—"))
+                    ),
+                    React.createElement('button', { onClick: () => removeAdminFactor(f), disabled: adminMfa.busy, style: { background: "none", border: "1px solid #E8B4B4", color: "#C53030", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "5px 11px" } }, "Retirer")
+                  ))),
+          adminMfa.msg && React.createElement('div', { style: { fontSize: 12.5, marginTop: 8, color: adminMfa.msg.startsWith("✓") ? "#2F855A" : "#C53030" } }, adminMfa.msg),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, flexWrap: "wrap" } },
+            React.createElement('button', { onClick: resetAdminMfa, disabled: adminMfa.busy || adminMfa.loading, style: { marginRight: "auto", background: "#C53030", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", opacity: (adminMfa.busy || adminMfa.loading) ? 0.6 : 1 } }, adminMfa.busy ? "…" : "🔄 Réinitialiser la MFA"),
+            React.createElement('button', { onClick: () => setAdminMfa(null), disabled: adminMfa.busy, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 14px" } }, "Fermer")
+          )
+        )
+      ),
       adminsLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement..."),
       React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
         admins.map(a => React.createElement('div', { key: a.id, style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", padding: 15 } },
@@ -6441,6 +6514,7 @@ const nav = isAdmin
               React.createElement('div', { style: { fontWeight: 500, fontSize: 13, color: "#1a1a3e" } }, a.email),
               React.createElement('div', { style: { fontSize: 11, color: "#888" } }, a.is_superadmin ? "Super-administrateur \u2014 acc\u00e8s complet" : "Administrateur")
             ),
+            !a.is_superadmin && React.createElement('button', { onClick: () => openAdminMfa(a), title: "Gérer les téléphones de double authentification", style: { padding: "6px 10px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 11, cursor: "pointer", fontWeight: 500 } }, "📱 Téléphones (MFA)"),
             !a.is_superadmin && React.createElement('button', { onClick: () => deleteAdmin(a), style: { padding: "6px 10px", background: "none", border: "1px solid #FFCDD2", color: "#E53E3E", borderRadius: 7, fontSize: 11, cursor: "pointer" } }, "\u2715 Supprimer")
           ),
           a.is_superadmin
@@ -6513,7 +6587,7 @@ const nav = isAdmin
   }
 
   // ---------- SUPER-ADMIN : SÉCURITÉ (appareils MFA) ----------
-  if (page === "securite" && (isSuperAdmin || isSupervisor)) {
+  if (page === "securite" && (isAdmin || isSupervisor)) {
     content = React.createElement('div', { style: { maxWidth: 640 } },
       React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#2B6CB0", marginBottom: 18, lineHeight: 1.6 } },
         isSupervisor
