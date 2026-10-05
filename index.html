@@ -3593,6 +3593,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [plLoading, setPlLoading] = useState(false);
   const [plErr, setPlErr] = useState("");
   const [plWeekend, setPlWeekend] = useState(false);
+  // Mobile : jour affiché dans la vue « jour par jour » (null = aujourd'hui / 1er jour)
+  const [plJourM, setPlJourM] = useState(null);
   const [plModal, setPlModal] = useState(null);   // formulaire RDV (création / édition) ou null
   const [plSaving, setPlSaving] = useState(false);
   const [plModalErr, setPlModalErr] = useState("");
@@ -8356,7 +8358,83 @@ const nav = isAdmin
     const lblS = { fontSize: 11.5, fontWeight: 600, color: "#666", margin: "10px 0 4px", display: "block" };
     const f = plModal;
     const setF = (patch) => setPlModal(prev => ({ ...prev, ...patch }));
-    content = React.createElement('div', null,
+    // ---------- MOBILE : vue jour par jour (une carte par technicien) ----------
+    let contenuMobile = null;
+    if (isMobile) {
+      const jourSel = plJourM && jours.includes(plJourM) ? plJourM : (jours.includes(auj) ? auj : jours[0]);
+      const estWE = (d) => { const x = new Date(d + "T12:00:00").getDay(); return x === 0 || x === 6; };
+      const allerJour = (delta) => {
+        let d = plAjout(jourSel, delta);
+        while (!plWeekend && estWE(d)) d = plAjout(d, delta);
+        const lundi = plLundi(new Date(d + "T12:00:00"));
+        if (lundi !== plSemaine) setPlSemaine(lundi);
+        setPlJourM(d);
+      };
+      const nomsLongs = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+      const dSel = new Date(jourSel + "T12:00:00");
+      const titreJour = nomsLongs[(dSel.getDay() + 6) % 7] + " " + dSel.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+      const nbRdvJour = lignes.reduce((n, l) => n + evtsDe(l, jourSel).length, 0);
+      const btnRond = { width: 42, height: 42, borderRadius: 10, border: "1px solid #DDD", background: "white", fontSize: 15, cursor: "pointer", color: "#333", flexShrink: 0 };
+      contenuMobile = React.createElement('div', null,
+        // Navigation jour précédent / suivant
+        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+          React.createElement('button', { onClick: () => allerJour(-1), style: btnRond, "aria-label": "Jour précédent" }, "◀"),
+          React.createElement('div', { style: { flex: 1, textAlign: "center", minWidth: 0 } },
+            React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: jourSel === auj ? G2 : "#1a1a3e" } }, titreJour),
+            React.createElement('div', { style: { fontSize: 11.5, color: "#888" } }, (jourSel === auj ? "Aujourd'hui · " : "") + nbRdvJour + " RDV")
+          ),
+          React.createElement('button', { onClick: () => allerJour(1), style: btnRond, "aria-label": "Jour suivant" }, "▶")
+        ),
+        // Bandeau des jours de la semaine (point = au moins un RDV)
+        React.createElement('div', { style: { display: "flex", gap: 6, marginBottom: 12 } },
+          jours.map(j => {
+            const d = new Date(j + "T12:00:00");
+            const sel = j === jourSel;
+            const nb = lignes.reduce((n, l) => n + evtsDe(l, j).length, 0);
+            return React.createElement('button', { key: j, onClick: () => setPlJourM(j),
+              style: { flex: 1, minWidth: 0, padding: "7px 0", borderRadius: 10, cursor: "pointer", border: "1px solid " + (sel ? G : (j === auj ? G + "88" : "#E2E2EA")), background: sel ? G : "white", color: sel ? "#111" : "#444", lineHeight: 1.2 } },
+              React.createElement('div', { style: { fontSize: 10.5, textTransform: "uppercase", opacity: .75 } }, nomsJ[(d.getDay() + 6) % 7].replace(".", "")),
+              React.createElement('div', { style: { fontSize: 15, fontWeight: 700 } }, d.getDate()),
+              React.createElement('div', { style: { height: 5, display: "flex", justifyContent: "center", marginTop: 2 } }, nb > 0 && React.createElement('span', { style: { width: 5, height: 5, borderRadius: 3, background: sel ? "#111" : G } }))
+            );
+          })
+        ),
+        // Actions
+        React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 } },
+          React.createElement('button', { onClick: () => { setPlSemaine(plLundi(new Date())); setPlJourM(auj); }, style: btnS }, "Aujourd'hui"),
+          React.createElement('label', { style: { fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 5, cursor: "pointer" } },
+            React.createElement('input', { type: "checkbox", checked: plWeekend, onChange: e => setPlWeekend(e.target.checked) }), "Week-end"),
+          React.createElement('button', { onClick: loadPlanning, style: btnS, disabled: plLoading, "aria-label": "Actualiser" }, plLoading ? "…" : "↻"),
+          React.createElement('button', { onClick: () => plOuvrirNouveau(jourSel, null), style: { ...btnS, marginLeft: "auto", background: G, border: "none", color: "#111", fontWeight: 600 } }, "+ Nouveau RDV")
+        ),
+        plErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, plErr),
+        // Une carte par technicien
+        React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8, opacity: plLoading ? 0.6 : 1 } },
+          lignes.map(l => {
+            const evts = evtsDe(l, jourSel);
+            if (l.id === "_na" && evts.length === 0) return null; // « Non assigné » seulement s'il a des RDV
+            return React.createElement('div', { key: l.id, style: { background: "white", border: "1px solid #E8E8F0", borderLeft: "4px solid " + l.couleur, borderRadius: 10, padding: "9px 12px" } },
+              React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8 } },
+                React.createElement('div', { style: { flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: "#1a1a3e" } }, l.nom),
+                evts.length === 0 && React.createElement('span', { style: { fontSize: 11.5, color: "#AAA" } }, "Disponible"),
+                React.createElement('button', { onClick: () => plOuvrirNouveau(jourSel, l.email ? l : null), "aria-label": "Ajouter un RDV", style: { width: 32, height: 32, borderRadius: 8, border: "1px solid " + G + "66", background: "#FFFCF3", color: G2, fontSize: 18, lineHeight: 1, cursor: "pointer", flexShrink: 0 } }, "+")
+              ),
+              evts.map(e => React.createElement('div', { key: e.id, onClick: () => plOuvrirEdition(e),
+                style: { display: "flex", gap: 10, background: l.couleur + "14", borderRadius: 7, padding: "7px 9px", marginTop: 6, cursor: "pointer" } },
+                React.createElement('div', { style: { fontSize: 11.5, fontWeight: 700, color: l.couleur, width: 46, flexShrink: 0, lineHeight: 1.35 } },
+                  e.journee ? "Journée" : [(e.debut || "").slice(11, 16), React.createElement('br', { key: "br" }), (e.fin || "").slice(11, 16)]),
+                React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+                  React.createElement('div', { style: { fontSize: 13, color: "#222", fontWeight: 500, overflowWrap: "anywhere" } }, e.titre),
+                  e.lieu && React.createElement('div', { style: { fontSize: 11.5, color: "#777", marginTop: 2, overflowWrap: "anywhere" } }, "📍 " + e.lieu)
+                )
+              ))
+            );
+          })
+        ),
+        React.createElement('div', { style: { fontSize: 11, color: "#AAA", marginTop: 12, lineHeight: 1.5 } }, "Synchronisé avec le calendrier Outlook de " + (plData.boite || "info@dsihotel.fr") + ". Touchez un RDV pour le modifier.")
+      );
+    }
+    const contenuBureau = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
         "Planning de l'équipe, synchronisé en direct avec le calendrier Outlook de ", React.createElement('b', null, plData.boite || "info@dsihotel.fr"),
         ". Cliquez dans une case pour ajouter un RDV, sur un RDV pour le modifier. Les RDV saisis dans Outlook apparaissent ici ; un RDV est rattaché à un technicien par sa catégorie Outlook (= son nom), s'il est invité, ou si ses initiales figurent en majuscules dans le titre (ex. « MP GDN »)."
@@ -8433,6 +8511,13 @@ const nav = isAdmin
         )
       )
     );
+    // Mobile : vue jour + la même fenêtre d'ajout / modification de RDV (dernier enfant du rendu bureau)
+    if (isMobile) {
+      const enfants = [].concat(contenuBureau.props.children);
+      content = React.createElement('div', null, contenuMobile, enfants[enfants.length - 1] || null);
+    } else {
+      content = contenuBureau;
+    }
   }
 
   if (page === "backups" && isAdmin) {
@@ -9912,7 +9997,7 @@ const nav = isAdmin
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
-    ? { width: 250, maxWidth: "80%", background: SB, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 60, transform: menuOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s ease", boxShadow: menuOpen ? "0 0 30px rgba(0,0,0,.4)" : "none" }
+    ? { width: 230, maxWidth: "80%", background: SB, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, overflowY: "auto", zIndex: 60, transform: menuOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s ease", boxShadow: menuOpen ? "0 0 30px rgba(0,0,0,.4)" : "none" }
     : { width: 230, background: SB, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto" };
 
   const sidebar = React.createElement('div', { style: sidebarStyle },
@@ -9940,17 +10025,12 @@ const nav = isAdmin
         React.createElement('img', { src: client.logo_url, alt: client.name, style: { maxHeight: 70, maxWidth: "100%", objectFit: "contain" } })
       )
     ),
-    isMobile && React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
-      React.createElement('div', { style: { background: "rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 10px" } },
-        React.createElement('div', { style: { color: "rgba(255,255,255,.4)", fontSize: 10, marginBottom: 3 } }, "CONNECTÉ"),
-        React.createElement('div', { style: { color: "white", fontSize: 12, fontWeight: 500 } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
-        React.createElement('div', { style: { color: G, fontSize: 10, marginTop: 2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : "")),
-        multiHotel && React.createElement('div', { style: { marginTop: 8 } }, hotelSwitcher(true))
-      )
+    isMobile && multiHotel && React.createElement('div', { style: { padding: "10px 13px", borderBottom: "1px solid rgba(255,255,255,.06)" } },
+      hotelSwitcher(true)
     ),
     React.createElement('nav', { style: { flex: 1, padding: "6px 0" } },
       (() => {
-        const btnStyle = (p) => ({ width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: page === p ? "rgba(201,168,76,.13)" : "transparent", color: page === p ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${page === p ? G : "transparent"}` });
+        const btnStyle = (p) => ({ width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: page === p ? "rgba(201,168,76,.13)" : "transparent", color: page === p ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${page === p ? G : "transparent"}` });
         const els = [];
         const groupDone = {};
         nav.forEach(({ p, icon, label, grp }) => {
@@ -9966,7 +10046,7 @@ const nav = isAdmin
             // En-tete du groupe deroulant
             els.push(React.createElement('button', {
               key: "grp-" + grp, onClick: () => setGroupsOpen(s => ({ ...s, [grp]: !(s[grp] || onGPage) })),
-              style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "13px 16px" : "9px 14px", fontSize: isMobile ? 15 : 13, background: (onGPage && !show) ? "rgba(201,168,76,.13)" : "transparent", color: onGPage ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${onGPage ? G : "transparent"}` }
+              style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: (onGPage && !show) ? "rgba(201,168,76,.13)" : "transparent", color: onGPage ? G : "rgba(255,255,255,.65)", borderLeft: `3px solid ${onGPage ? G : "transparent"}` }
             },
               React.createElement('span', { style: { fontSize: 16, flexShrink: 0 } }, cfg.icon),
               React.createElement('span', { style: { flex: 1 } }, cfg.label),
@@ -9975,7 +10055,7 @@ const nav = isAdmin
             if (show) {
               gItems.forEach(it => els.push(React.createElement('button', {
                 key: it.p, onClick: () => go(it.p),
-                style: { ...btnStyle(it.p), paddingLeft: isMobile ? 40 : 34, fontSize: isMobile ? 14 : 12.5 }
+                style: { ...btnStyle(it.p), paddingLeft: 34, fontSize: 12.5 }
               },
                 React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, it.icon),
                 React.createElement('span', { style: { flex: 1 } }, it.label)
@@ -9994,15 +10074,15 @@ const nav = isAdmin
         return els;
       })()
     ),
-    isMobile && React.createElement('div', { style: { padding: "10px 13px", borderTop: "1px solid rgba(255,255,255,.06)" } },
+    isMobile && React.createElement('div', { style: { padding: "6px 0 10px", borderTop: "1px solid rgba(255,255,255,.06)" } },
       (isAdmin || isSupervisor) && React.createElement('button', {
         onClick: () => { setChangePwErr(""); setChangePwValue(""); setChangePwValue2(""); setChangePwOpen(true); setMenuOpen(false); },
-        style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "13px 16px", fontSize: 15, background: "transparent", color: "rgba(255,255,255,.65)" }
-      }, React.createElement('span', null, "🔑"), React.createElement('span', null, "Mot de passe")),
+        style: { width: "100%", textAlign: "left", border: "none", borderLeft: "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: "transparent", color: "rgba(255,255,255,.65)" }
+      }, React.createElement('span', { style: { fontSize: 16 } }, "🔑"), React.createElement('span', null, "Mot de passe")),
       React.createElement('button', {
         onClick: doLogout,
-        style: { width: "100%", textAlign: "left", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "13px 16px", fontSize: 15, background: "transparent", color: "rgba(255,255,255,.65)" }
-      }, React.createElement('span', null, "🚪"), React.createElement('span', null, "Déconnexion"))
+        style: { width: "100%", textAlign: "left", border: "none", borderLeft: "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", fontSize: 13, background: "transparent", color: "rgba(255,255,255,.65)" }
+      }, React.createElement('span', { style: { fontSize: 16 } }, "🚪"), React.createElement('span', null, "Déconnexion"))
     )
   );
 
