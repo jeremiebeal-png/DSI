@@ -7774,8 +7774,10 @@ const nav = isAdmin
                   m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
-              React.createElement('div', { style: { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: "#5A7DA0", marginBottom: 5 } }, "DEMANDE INITIALE"),
+              React.createElement('div', { style: t.source === "checkcentral"
+                  ? { background: "#FFF5F5", border: "2px solid #E53E3E", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12 }
+                  : { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: t.source === "checkcentral" ? "#C53030" : "#5A7DA0", marginBottom: 5 } }, t.source === "checkcentral" ? "ALERTE AUTOMATIQUE — SAUVEGARDE" : "DEMANDE INITIALE"),
                 (() => {
                   // Le "À :" / "Cc :" de la demande initiale vient du 1er message du fil
                   // (retiré de l'affichage du fil pour éviter le doublon, mais il porte
@@ -7787,7 +7789,10 @@ const nav = isAdmin
                     prem.cc && React.createElement('div', { style: { fontSize: 10, color: "#5A7DA0", marginBottom: 5, whiteSpace: "normal" } }, "Cc : " + prem.cc)
                   );
                 })(),
-                nettoyerSignature(t.message)
+                // Alerte sauvegarde : le détail mis en forme (bandeau rouge) est dans le 1er message du fil
+                (t.source === "checkcentral" && (ticketMsgs[t.id] || [])[0] && (ticketMsgs[t.id] || [])[0].body_html)
+                  ? React.createElement(RichHtml, { html: (ticketMsgs[t.id] || [])[0].body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } })
+                  : nettoyerSignature(t.message)
               ),
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" } },
