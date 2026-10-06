@@ -8611,7 +8611,7 @@ const nav = isAdmin
       // Barre d'actions
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
         React.createElement('button', { onClick: loadBackups, disabled: bkLoading, style: { padding: "8px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: bkLoading ? 0.6 : 1 } }, bkLoading ? "Actualisation..." : "🔄 Actualiser"),
-        React.createElement('button', { onClick: () => lancerAlertesBackup("test", 24), style: { padding: "8px 15px", background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🚨 Alertes + de 24 h"),
+        React.createElement('button', { onClick: () => lancerAlertesBackup("run", 24), title: "Crée directement un ticket pour chaque sauvegarde en défaut depuis plus de 24 h (sans doublon)", style: { padding: "8px 15px", background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🚨 Alertes + de 24 h"),
         bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt))
       ),
       // Fenêtre de test / lancement des alertes sauvegardes
@@ -8623,9 +8623,9 @@ const nav = isAdmin
           ),
           React.createElement('div', { style: { fontSize: 12, color: "#777", marginBottom: 14, lineHeight: 1.5 } },
             bkAlerte.mode === "run"
-              ? "Lancement réel : les tickets ci-dessous ont été créés dans Support → Tickets."
+              ? "Les tickets ci-dessous ont été créés directement dans Support → Tickets. La vérification tourne aussi automatiquement toutes les heures."
               : "Simulation : rien n'a été créé. Vérifiez la liste, puis cliquez sur « Créer les tickets ». Ensuite, la vérification tourne automatiquement toutes les heures."),
-          bkAlerte.loading && React.createElement('div', { style: { padding: 20, textAlign: "center", color: "#999", fontSize: 13 } }, "Interrogation de CheckCentral…"),
+          bkAlerte.loading && React.createElement('div', { style: { padding: 20, textAlign: "center", color: "#999", fontSize: 13 } }, "Vérification des sauvegardes et création des tickets…"),
           bkAlerte.err && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, "Erreur : " + bkAlerte.err),
           !bkAlerte.loading && bkAlerte.data && (() => {
             const d = bkAlerte.data;
