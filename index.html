@@ -3686,6 +3686,25 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     );
   };
 
+  // ---------- Alertes sauvegardes > 24 h (Worker CheckCentral, route /alertes) ----------
+  // mode "test" = simulation (rien n'est créé) ; mode "run" = création des tickets.
+  const [bkAlerte, setBkAlerte] = useState(null); // { loading, data, err, mode, heures }
+  const lancerAlertesBackup = async (mode, heures) => {
+    const h = heures == null ? 24 : heures;
+    setBkAlerte(prev => ({ ...(prev || {}), loading: true, err: "", mode, heures: h }));
+    try {
+      const { data: sessA } = await sb.auth.getSession();
+      const url = CHECKCENTRAL_API_URL.replace(/\/status$/, "/alertes") + "?mode=" + mode + "&heures=" + h;
+      const res = await fetch(url, { method: "GET", headers: { Authorization: "Bearer " + (sessA.session?.access_token || "") } });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.error) throw new Error((d.error || ("Erreur " + res.status)) + (d.detail ? " — " + d.detail : ""));
+      setBkAlerte({ loading: false, data: d, err: "", mode, heures: h });
+      if (mode === "run") loadTickets();
+    } catch (e) {
+      setBkAlerte(prev => ({ ...(prev || {}), loading: false, err: e.message || String(e) }));
+    }
+  };
+
   const loadBackups = async () => {
     setBkLoading(true);
     setBkNote("");
@@ -8592,7 +8611,51 @@ const nav = isAdmin
       // Barre d'actions
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
         React.createElement('button', { onClick: loadBackups, disabled: bkLoading, style: { padding: "8px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: bkLoading ? 0.6 : 1 } }, bkLoading ? "Actualisation..." : "🔄 Actualiser"),
+        React.createElement('button', { onClick: () => lancerAlertesBackup("test", 24), style: { padding: "8px 15px", background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🚨 Alertes + de 24 h"),
         bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt))
+      ),
+      // Fenêtre de test / lancement des alertes sauvegardes
+      bkAlerte && React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !bkAlerte.loading) setBkAlerte(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", zIndex: 90, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? 12 : "40px 20px", overflowY: "auto" } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, width: "100%", maxWidth: 760, padding: isMobile ? 16 : 22, boxShadow: "0 12px 40px rgba(0,0,0,.25)", marginBottom: 30 } },
+          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 } },
+            React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#C53030", flex: 1 } }, "🚨 Sauvegardes en défaut depuis plus de " + (bkAlerte.heures != null ? bkAlerte.heures : 24) + " h"),
+            React.createElement('button', { onClick: () => !bkAlerte.loading && setBkAlerte(null), style: { border: "none", background: "none", fontSize: 18, cursor: "pointer", color: "#888" } }, "✕")
+          ),
+          React.createElement('div', { style: { fontSize: 12, color: "#777", marginBottom: 14, lineHeight: 1.5 } },
+            bkAlerte.mode === "run"
+              ? "Lancement réel : les tickets ci-dessous ont été créés dans Support → Tickets."
+              : "Simulation : rien n'a été créé. Vérifiez la liste, puis cliquez sur « Créer les tickets ». Ensuite, la vérification tourne automatiquement toutes les heures."),
+          bkAlerte.loading && React.createElement('div', { style: { padding: 20, textAlign: "center", color: "#999", fontSize: 13 } }, "Interrogation de CheckCentral…"),
+          bkAlerte.err && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, "Erreur : " + bkAlerte.err),
+          !bkAlerte.loading && bkAlerte.data && (() => {
+            const d = bkAlerte.data;
+            const section = (titre, couleur, lignes, rendu) => React.createElement('div', { style: { marginBottom: 14 } },
+              React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: couleur, marginBottom: 6 } }, titre + " (" + lignes.length + ")"),
+              lignes.length === 0
+                ? React.createElement('div', { style: { fontSize: 12, color: "#AAA", fontStyle: "italic" } }, "Aucune")
+                : React.createElement('div', { style: { border: "1px solid #EEE", borderRadius: 8, overflow: "hidden" } },
+                    lignes.map((x, i) => React.createElement('div', { key: i, style: { display: "flex", gap: 10, alignItems: "center", padding: "8px 11px", borderTop: i ? "1px solid #F2F2F5" : "none", fontSize: 12.5, flexWrap: "wrap" } }, rendu(x)))
+                  )
+            );
+            const badge = (st) => React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: "#fff", background: String(st).toLowerCase() === "failure" ? "#C53030" : "#DD6B20", padding: "2px 8px", borderRadius: 12, flexShrink: 0 } }, String(st).toLowerCase() === "failure" ? "Échec" : "Avertissement");
+            const ligneStd = (x) => [badge(x.statut), React.createElement('b', { key: "n", style: { flex: 1, minWidth: 160 } }, x.sauvegarde), React.createElement('span', { key: "h", style: { color: "#555" } }, x.hotel), React.createElement('span', { key: "d", style: { color: "#C53030", fontWeight: 600, whiteSpace: "nowrap" } }, x.duree), x.ticket && React.createElement('span', { key: "t", style: { fontFamily: "monospace", color: G2, fontWeight: 700 } }, x.ticket)];
+            const aCreer = d.ticketsCrees || [];
+            const recents = (d.enDefaut || []).filter(x => !aCreer.some(y => y.sauvegarde === x.sauvegarde) && !(d.dejaSignalees || []).some(y => y.sauvegarde === x.sauvegarde));
+            return React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 12 } }, d.verifiees + " sauvegardes vérifiées · " + (d.enDefaut || []).length + " en défaut"),
+              section(bkAlerte.mode === "run" ? "Tickets créés" : "Tickets qui seront créés", "#C53030", aCreer, ligneStd),
+              section("Déjà signalées (ticket ouvert)", "#DD6B20", d.dejaSignalees || [], ligneStd),
+              section("En défaut depuis moins de " + bkAlerte.heures + " h (pas encore de ticket)", "#718096", recents, ligneStd),
+              section("Ignorées (justifiées par une note)", "#718096", d.ignorees || [], (x) => [React.createElement('b', { key: "n", style: { flex: 1 } }, x.sauvegarde), React.createElement('span', { key: "h", style: { color: "#888" } }, x.hotel + " — " + x.raison)]),
+              (d.retablies || []).length > 0 && section("Rétablies", "#2F855A", d.retablies, (x) => [React.createElement('b', { key: "n", style: { flex: 1 } }, x.sauvegarde), React.createElement('span', { key: "t", style: { fontFamily: "monospace", color: G2 } }, x.ticket)]),
+              (d.erreurs || []).length > 0 && section("Erreurs", "#C53030", d.erreurs, (x) => [React.createElement('b', { key: "n" }, x.sauvegarde), React.createElement('span', { key: "e", style: { color: "#C53030" } }, x.erreur)]),
+              React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 6 } },
+                React.createElement('button', { onClick: () => setBkAlerte(null), style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer"),
+                bkAlerte.mode === "test" && aCreer.length > 0 && React.createElement('button', { onClick: () => { if (confirm("Créer " + aCreer.length + " ticket(s) d'alerte maintenant ?")) lancerAlertesBackup("run", bkAlerte.heures); }, style: { padding: "8px 16px", background: "#C53030", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer" } }, "Créer les " + aCreer.length + " ticket(s)")
+              )
+            );
+          })()
+        )
       ),
       bkNote && React.createElement('div', { style: { fontSize: 12, color: bkNote.startsWith("Erreur") ? "#C53030" : "#666", marginBottom: 14, background: bkNote.startsWith("Erreur") ? "#FDECEC" : "#F6F6FA", border: "1px solid " + (bkNote.startsWith("Erreur") ? "#F5C6C6" : "#E8E8F0"), borderRadius: 8, padding: "9px 12px" } }, bkNote),
       // Liste des groupes
