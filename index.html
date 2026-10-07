@@ -2770,6 +2770,37 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } catch (e) { /* silencieux : l'éditeur s'ouvre vide */ }
   };
 
+  // Alerte sauvegarde : le technicien indique qu'il a relancé la sauvegarde.
+  // Ajoute un message daté et signé dans le fil du ticket (aucun email n'est envoyé).
+  const [relanceBusy, setRelanceBusy] = useState(null);
+  const marquerBackupRelance = async (t) => {
+    if (!isAdmin || !t) return;
+    const commentaire = window.prompt("Sauvegarde relancée — commentaire (facultatif) :\n(ex. espace libéré sur le datastore, job relancé manuellement)", "");
+    if (commentaire === null) return; // annulé
+    const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
+    const quand = new Date().toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    const esc = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const body = "Sauvegarde relancée par " + qui + " le " + quand + (commentaire.trim() ? " — " + commentaire.trim() : "");
+    const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
+      '<div style="background:#2B6CB0;color:#fff;border-radius:8px;padding:11px 15px;">' +
+        '<div style="font-size:15px;font-weight:bold;">🔄 SAUVEGARDE RELANCÉE</div>' +
+        '<div style="font-size:13px;margin-top:3px;">Par <b>' + esc(qui) + '</b> le ' + esc(quand) + '</div>' +
+      '</div>' +
+      (commentaire.trim() ? '<div style="margin-top:8px;padding:8px 12px;background:#EBF8FF;border-left:3px solid #2B6CB0;font-size:13px;">' + esc(commentaire.trim()) + '</div>' : '') +
+      '<div style="font-size:12px;color:#666;margin-top:6px;">En attente de la prochaine remontée CheckCentral : un message « Sauvegarde rétablie » s\'ajoutera automatiquement si elle repasse OK.</div>' +
+    '</div>';
+    setRelanceBusy(t.id);
+    try {
+      const { error } = await sb.from("ticket_messages").insert({ ticket_id: t.id, sender_role: "admin", sender_name: qui, body, body_html });
+      if (error) throw error;
+      loadTicketMsgs(t.id);
+    } catch (e) {
+      alert("Impossible d'enregistrer la relance : " + (e.message || e));
+    } finally {
+      setRelanceBusy(null);
+    }
+  };
+
   const enregistrerNote = async (ticket) => {
     if (!isAdmin) return;
     setNoteBusy(true);
@@ -7790,7 +7821,7 @@ const nav = isAdmin
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                   React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
-                  m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
+                  m.sender_role === "admin" && !/^Sauvegarde relancée/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
               React.createElement('div', { style: t.source === "checkcentral"
@@ -7811,7 +7842,19 @@ const nav = isAdmin
                 // Alerte sauvegarde : le détail mis en forme (bandeau rouge) est dans le 1er message du fil
                 (t.source === "checkcentral" && (ticketMsgs[t.id] || [])[0] && (ticketMsgs[t.id] || [])[0].body_html)
                   ? React.createElement(RichHtml, { html: (ticketMsgs[t.id] || [])[0].body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } })
-                  : nettoyerSignature(t.message)
+                  : nettoyerSignature(t.message),
+                // Bouton « Sauvegarde relancée » (alertes sauvegarde, ticket ouvert)
+                t.source === "checkcentral" && (() => {
+                  const relances = (ticketMsgs[t.id] || []).filter(m => m.sender_role === "admin" && /^Sauvegarde relancée/.test(String(m.body || "")));
+                  const derniere = relances[relances.length - 1];
+                  return React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" } },
+                    derniere && React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", fontWeight: 600 } },
+                      "🔄 Relancée " + (relances.length > 1 ? relances.length + " fois — dernière : " : "") + new Date(derniere.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + (derniere.sender_name ? " par " + derniere.sender_name : "")),
+                    t.status !== "closed" && React.createElement('button', { onClick: () => marquerBackupRelance(t), disabled: relanceBusy === t.id,
+                      style: { padding: "9px 16px", background: "#2B6CB0", border: "none", color: "white", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: relanceBusy === t.id ? 0.6 : 1 } },
+                      relanceBusy === t.id ? "Enregistrement…" : (derniere ? "🔄 Relancée à nouveau" : "🔄 J'ai relancé la sauvegarde"))
+                  );
+                })()
               ),
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" } },
@@ -7882,7 +7925,7 @@ const nav = isAdmin
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                       m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                       React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
-                      m.sender_role === "admin" && React.createElement(SignatureBlock, { key: "sig" })
+                      m.sender_role === "admin" && !/^Sauvegarde relancée/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
                     ))
                   )
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
