@@ -3460,6 +3460,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [ckPoints, setCkPoints] = useState([]);
   const [ckLoading, setCkLoading] = useState(false);
   const [ckErr, setCkErr] = useState("");
+  const [ckInv, setCkInv] = useState([]);
   const CK_STATUTS = [
     { v: "OK", c: "#2F855A", bg: "#E6F6EA" },
     { v: "KO", c: "#C53030", bg: "#FDE2E2" },
@@ -3474,6 +3475,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (error) throw error;
       const liste = data || [];
       setCkServeurs(liste);
+      // Infos de l'inventaire serveurs (OS, rôle, IP, hôte) pour les serveurs reliés
+      try {
+        const { data: inv } = await sb.from("inventaire_serveurs").select("*").eq("hotel_id", hotelId);
+        setCkInv(inv || []);
+      } catch (e) { setCkInv([]); }
       const sel = (garder && liste.find(x => x.id === garder)) || liste[0] || null;
       setCkServeur(sel ? sel.id : null);
       if (sel) await loadCkPoints(sel.id); else setCkPoints([]);
@@ -3537,6 +3543,28 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const { error } = await sb.from("checklist_points").delete().eq("id", pt.id);
     if (error) { alert("Erreur : " + error.message); return; }
     setCkPoints(prev => prev.filter(x => x.id !== pt.id));
+  };
+  // Copie les intitulés (catégorie + tâche) d'un autre serveur ou du modèle VEEAM, statuts vides
+  const ckCopierPoints = async (source) => {
+    if (!ckServeur || !source) return;
+    try {
+      let pts = [];
+      if (source === "__modele") {
+        const { data, error } = await sb.from("checklist_modele").select("ordre,categorie,tache").order("ordre");
+        if (error) throw error; pts = data || [];
+      } else {
+        const { data, error } = await sb.from("checklist_points").select("ordre,categorie,tache").eq("serveur_id", source).order("ordre");
+        if (error) throw error; pts = data || [];
+      }
+      if (!pts.length) { alert("Aucun point à copier."); return; }
+      const existants = new Set(ckPoints.map(p => (p.categorie || "") + "|" + p.tache));
+      const nouveaux = pts.filter(p => !existants.has((p.categorie || "") + "|" + p.tache));
+      if (!nouveaux.length) { alert("Ces points sont déjà présents sur ce serveur."); return; }
+      let ordre = ckPoints.length ? Math.max(...ckPoints.map(p => p.ordre || 0)) : 0;
+      const { error } = await sb.from("checklist_points").insert(nouveaux.map(p => ({ serveur_id: ckServeur, hotel_id: ckHotel, ordre: ++ordre, categorie: p.categorie, tache: p.tache })));
+      if (error) throw error;
+      await loadCkPoints(ckServeur);
+    } catch (e) { alert("Erreur : " + (e.message || e)); }
   };
   const ckViderServeur = async (srv) => {
     if (!srv || !confirm("Supprimer TOUS les points de contrôle du serveur « " + srv.nom + " » ?\n\nLe serveur reste dans la liste, avec une check-list vide.")) return;
@@ -9261,7 +9289,18 @@ const nav = isAdmin
         React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
           React.createElement('div', { style: { flex: 1, minWidth: 200 } },
             React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, (hotel ? hotel.name : "") + " — " + srv.nom),
-            React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 2 } }, total + " points de contrôle" + (dernier ? " · dernier contrôle le " + new Date(dernier + "T12:00:00").toLocaleDateString("fr-FR") : " · jamais contrôlé"))),
+            React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 2 } }, total + " points de contrôle" + (dernier ? " · dernier contrôle le " + new Date(dernier + "T12:00:00").toLocaleDateString("fr-FR") : " · jamais contrôlé")),
+            (() => {
+              const iv = ckInv.find(x => x.id === srv.inventaire_id) || ckInv.find(x => x.type === "VM" && String(x.nom || "").trim().toUpperCase() === String(srv.nom || "").trim().toUpperCase());
+              if (!iv) return null;
+              const hote = iv.parent_id ? ckInv.find(x => x.id === iv.parent_id) : null;
+              const bout = [iv.role, iv.os, iv.version, iv.ip, hote ? "sur " + hote.nom : null].filter(Boolean);
+              const pastille = (t, ok) => React.createElement('span', { style: { fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 20, color: ok ? "#2F855A" : "#C53030", background: ok ? "#E6F6EA" : "#FDE2E2" } }, t);
+              return React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6, fontSize: 12, color: "#555" } },
+                React.createElement('span', { title: "Informations de l'onglet Inventaire serveurs" }, "🗄️ " + (bout.join(" · ") || "Inventaire")),
+                iv.a_jour && pastille(iv.a_jour === "Oui" ? "À jour" : "Pas à jour", iv.a_jour === "Oui"),
+                iv.antivirus && pastille(iv.antivirus === "Oui" ? "AV " + (iv.antivirus_nom || "OK") : "Sans antivirus", iv.antivirus === "Oui"));
+            })()),
           React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
             tuile("OK", nOk, "#2F855A", "#E6F6EA"), tuile("KO", nKo, "#C53030", "#FDE2E2"), tuile("En cours", nEc, "#8A6D1F", "#FFF3C4"), tuile("À faire", nVide, "#555", "#F1F1F6"))
         ),
@@ -9271,6 +9310,11 @@ const nav = isAdmin
             total > 0 && React.createElement('div', { style: { width: (100 * nEc / total) + "%", background: "#E2B93B" } }),
             total > 0 && React.createElement('div', { style: { width: (100 * nKo / total) + "%", background: "#C53030" } })),
           React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: "#1a1a3e", whiteSpace: "nowrap" } }, pct + " % conforme"),
+          React.createElement('select', { value: "", title: "Copier les points de contrôle (sans les statuts) d'un autre serveur, puis les modifier si besoin", onChange: e => { const v = e.target.value; if (v) ckCopierPoints(v); },
+              style: { marginLeft: 6, padding: "4px 6px", border: "1px solid " + G, color: G2, borderRadius: 6, fontSize: 11, fontWeight: 600, background: "white", cursor: "pointer", maxWidth: 200 } },
+            React.createElement('option', { value: "" }, "📋 Copier les points de…"),
+            ckServeurs.filter(x => x.id !== srv.id).map(x => React.createElement('option', { key: x.id, value: x.id }, x.nom)),
+            React.createElement('option', { value: "__modele" }, "Modèle standard (VEEAM)")),
           total > 0 && React.createElement('button', { onClick: () => ckViderServeur(srv), title: "Retirer tous les points de ce serveur (check-list vide)", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #E2E2EA", color: "#777", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Vider"),
           React.createElement('button', { onClick: () => ckSupprimerServeur(srv), title: "Supprimer ce serveur de la check-list", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Supprimer")
         )
