@@ -3695,7 +3695,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const iVer = idx(/version|build/i, [iNom, iRole, iIp, iParent, iOs]);
       if (iNom < 0 && iRole < 0) return;
       const contexte = titreCourant + " " + entetes.join(" ");
-      if (!RE_SRV.test(contexte)) return;
+      const douteux = !RE_SRV.test(contexte);
+      if (douteux && iIp < 0) return;
       const physique = RE_PHYS.test(titreCourant) && !RE_VM.test(titreCourant) && iParent < 0;
       rows.slice(1).forEach((tr, ri) => {
         const c = Array.from(tr.cells).map(txt);
@@ -3710,7 +3711,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         if (!ip) { const m2 = nom.match(RE_IP); if (m2) ip = m2[0]; }
         out.push({
           key: hotelId + ":" + ti + ":" + ri, hotel_id: hotelId, source: titre, section: titreCourant,
-          sel: true, type: physique ? "Physique" : "VM", nom: nom.slice(0, 80), role: role.slice(0, 80) || (physique ? "Hôte VMware" : ""),
+          sel: !douteux, douteux, type: physique ? "Physique" : "VM", nom: nom.slice(0, 80), role: role.slice(0, 80) || (physique ? "Hôte VMware" : ""),
           ip, os: val(iOs) || (physique && /esxi|vmware/i.test(contexte) ? "VMware ESXi" : ""), version: val(iVer), parentRef: val(iParent),
         });
       });
@@ -3736,9 +3737,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const items = [];
       (docs || []).forEach(d => invParseInfra(d.description, d.hotel_id, d.titre).forEach(x => {
         const deja = existants.some(e => e.hotel_id === x.hotel_id && ((x.ip && e.ip === x.ip) || String(e.nom || "").toLowerCase() === x.nom.toLowerCase() || (x.ip && String(e.nom || "") === x.ip)));
-        items.push({ ...x, deja, sel: !deja });
+        items.push({ ...x, deja, sel: !deja && !x.douteux });
       }));
-      setInvImport({ loading: false, err: "", items, hotelId: hotelId || null, nbDocs: (docs || []).length });
+      const fiches = (docs || []).map(d => ({ hotel_id: d.hotel_id, titre: d.titre || "(sans titre)", tableaux: (String(d.description || "").match(/<table/gi) || []).length }));
+      setInvImport({ loading: false, err: "", items, hotelId: hotelId || null, nbDocs: fiches.length, fiches });
     } catch (e) { setInvImport({ loading: false, err: invErrMsg(e), items: [], hotelId: hotelId || null }); }
   };
   const invLancerImport = async () => {
@@ -9503,8 +9505,14 @@ const nav = isAdmin
                 "Serveurs trouvés dans les tableaux des fiches (hôtes ESXi, serveurs / VM). Vérifiez, corrigez le type ou le nom si besoin, décochez ce qui n'est pas un serveur, puis importez. Les comptes et mots de passe ne sont jamais repris ; les lignes déjà présentes dans l'inventaire sont décochées.")),
             React.createElement('div', { style: { flex: 1, overflow: "auto", padding: "10px 20px" } },
               invImport.loading && React.createElement('div', { style: { padding: 20, color: "#999" } }, "Lecture des fiches Infrastructure…"),
-              !invImport.loading && !items.length && !invImport.err && React.createElement('div', { style: { padding: 20, color: "#888", fontSize: 13 } },
-                (invImport.nbDocs ? invImport.nbDocs + " fiche(s) Infrastructure lue(s), mais " : "") + "aucun tableau de serveurs reconnu. Il faut un tableau avec une colonne « Hôte », « Serveur », « Nom » ou « Rôle », sous un titre parlant d'ESXi, de serveurs ou de VM."),
+              !invImport.loading && !items.length && !invImport.err && React.createElement('div', { style: { padding: "14px 4px", color: "#555", fontSize: 13, lineHeight: 1.6 } },
+                !invImport.nbDocs
+                  ? React.createElement('div', null, React.createElement('b', null, "Aucune fiche de catégorie « Infrastructure » " + (invImport.hotelId ? "pour cet établissement." : "trouvée.")),
+                      React.createElement('div', { style: { color: "#888" } }, "Créez-la dans Clients → Infrastructure (catégorie « Infrastructure »), avec un tableau des hôtes ESXi et un tableau des serveurs / VM, puis relancez la reprise."))
+                  : React.createElement('div', null,
+                      React.createElement('b', null, invImport.nbDocs + " fiche(s) Infrastructure lue(s), mais aucun tableau de serveurs reconnu :"),
+                      React.createElement('ul', { style: { margin: "6px 0", paddingLeft: 20, color: "#666" } }, (invImport.fiches || []).map((f, i) => React.createElement('li', { key: i }, (invImport.hotelId ? "" : ((hotels.find(h => h.id === f.hotel_id) || {}).name || "?") + " — ") + f.titre + " : " + (f.tableaux ? f.tableaux + " tableau(x)" : "aucun tableau (texte libre ou pièce jointe)")))),
+                      React.createElement('div', { style: { color: "#888" } }, "La reprise lit les tableaux ayant une colonne « Hôte », « Serveur », « Nom » ou « Rôle ». Envoyez une capture de la fiche à l'équipe pour adapter la lecture."))),
               Object.keys(groupes).map(hid => {
                 const lst = groupes[hid];
                 const h = hotels.find(x => x.id === hid);
@@ -9522,7 +9530,7 @@ const nav = isAdmin
                       React.createElement('td', { style: { ...cellS, color: "#555" } }, x.role || React.createElement('span', { style: { color: "#BBB" } }, "—")),
                       React.createElement('td', { style: { ...cellS, width: 120, fontFamily: "monospace", fontSize: 12, color: "#2B6CB0" } }, x.ip || ""),
                       React.createElement('td', { style: { ...cellS, width: 150, color: "#777", fontSize: 12 } }, x.type === "VM" && x.parentRef ? "sur " + x.parentRef : ""),
-                      React.createElement('td', { style: { ...cellS, width: 170, color: "#999", fontSize: 11.5 } }, x.deja ? React.createElement('b', { style: { color: "#B7791F" } }, "déjà dans l'inventaire") : (x.section || x.source))
+                      React.createElement('td', { style: { ...cellS, width: 170, color: "#999", fontSize: 11.5 } }, x.deja ? React.createElement('b', { style: { color: "#B7791F" } }, "déjà dans l'inventaire") : x.douteux ? React.createElement('span', { title: "Tableau qui ne parle pas explicitement de serveurs : cochez si c'en est un" }, "à vérifier · " + (x.section || x.source)) : (x.section || x.source))
                     ))))
                 );
               })),
