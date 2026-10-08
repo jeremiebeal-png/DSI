@@ -3660,6 +3660,131 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (error) alert("Notes non enregistrées : " + error.message);
   };
   useEffect(() => { if (page === "inventaire" && isAdmin && !invHotel) loadInvSynthese(); }, [page, invHotel]);
+  // ----- Pré-remplissage de l'inventaire depuis les fiches « Infrastructure » -----
+  // Lit les tableaux des fiches (hôtes ESXi, serveurs / VM), propose les lignes
+  // trouvées (aperçu à valider) puis crée uniquement celles cochées.
+  // Les colonnes de comptes / mots de passe ne sont JAMAIS reprises.
+  const [invImport, setInvImport] = useState(null); // { loading, err, items, busy, fait }
+  const invParseInfra = (html, hotelId, titre) => {
+    const out = [];
+    let doc;
+    try { doc = new DOMParser().parseFromString(String(html || ""), "text/html"); } catch (e) { return out; }
+    const txt = (el) => String((el && el.textContent) || "").replace(/\s+/g, " ").trim();
+    const RE_SRV = /esxi|serveur|server|\bvm\b|virtuel|h[oô]te|hyperviseur|\bnas\b|vmware|hyper-v|proxmox/i;
+    const RE_PHYS = /esxi|physique|hyperviseur|h[oô]tes?\b|\bnas\b|hyper-v|proxmox/i;
+    const RE_VM = /\bvms?\b|virtuel/i;
+    const RE_IP = /\b(\d{1,3}\.){3}\d{1,3}\b/;
+    let titreCourant = "";
+    doc.body.querySelectorAll("h1,h2,h3,h4,h5,h6,p,strong,b,table").forEach((el, ti) => {
+      const tag = el.tagName.toLowerCase();
+      if (tag !== "table") {
+        if (el.closest("table")) return;
+        const t = txt(el);
+        if (t && t.length <= 90 && (/^h\d$/.test(tag) || el.querySelector("strong,b") || tag === "strong" || tag === "b")) titreCourant = t;
+        return;
+      }
+      const rows = Array.from(el.rows || []);
+      if (rows.length < 2) return;
+      const entetes = Array.from(rows[0].cells).map(txt);
+      const idx = (re, sauf) => entetes.findIndex((h, i) => re.test(h) && !(sauf || []).includes(i));
+      const iNom = idx(/^(nom|h[oô]te|serveur|machine|vm|hostname|[ée]quipement|appareil)/i);
+      const iRole = idx(/r[oô]le|fonction|usage|description|application/i, [iNom]);
+      const iIp = idx(/\bip\b|adresse/i, [iNom, iRole]);
+      const iParent = idx(/esxi|h[oô]te|hyperviseur|host/i, [iNom, iRole, iIp]);
+      const iOs = idx(/\bos\b|syst[eè]me|windows/i, [iNom, iRole, iIp, iParent]);
+      const iVer = idx(/version|build/i, [iNom, iRole, iIp, iParent, iOs]);
+      if (iNom < 0 && iRole < 0) return;
+      const contexte = titreCourant + " " + entetes.join(" ");
+      if (!RE_SRV.test(contexte)) return;
+      const physique = RE_PHYS.test(titreCourant) && !RE_VM.test(titreCourant) && iParent < 0;
+      rows.slice(1).forEach((tr, ri) => {
+        const c = Array.from(tr.cells).map(txt);
+        const val = (i) => (i >= 0 && c[i]) ? c[i] : "";
+        let nom = val(iNom), role = val(iRole);
+        if (!nom && role) {
+          const m = role.match(/\(([A-Za-z0-9_.-]{2,40})\)\s*$/);
+          if (m) { nom = m[1]; role = role.replace(m[0], "").trim(); } else { nom = role; role = ""; }
+        }
+        if (!nom) return;
+        let ip = val(iIp); const mIp = ip.match(RE_IP); ip = mIp ? mIp[0] : "";
+        if (!ip) { const m2 = nom.match(RE_IP); if (m2) ip = m2[0]; }
+        out.push({
+          key: hotelId + ":" + ti + ":" + ri, hotel_id: hotelId, source: titre, section: titreCourant,
+          sel: true, type: physique ? "Physique" : "VM", nom: nom.slice(0, 80), role: role.slice(0, 80) || (physique ? "Hôte VMware" : ""),
+          ip, os: val(iOs) || (physique && /esxi|vmware/i.test(contexte) ? "VMware ESXi" : ""), version: val(iVer), parentRef: val(iParent),
+        });
+      });
+    });
+    // Un seul hôte dans la fiche et des VM sans colonne « ESXi » : on les rattache à cet hôte
+    const hotes = out.filter(x => x.type === "Physique");
+    if (hotes.length === 1) out.forEach(x => { if (x.type === "VM" && !x.parentRef) x.parentRef = hotes[0].ip || hotes[0].nom; });
+    return out;
+  };
+  const invOuvrirImport = async (hotelId) => {
+    setInvImport({ loading: true, err: "", items: [], hotelId: hotelId || null });
+    try {
+      let q = sb.from("hotel_docs").select("hotel_id,titre,categorie,description").eq("categorie", "Infrastructure");
+      if (hotelId) q = q.eq("hotel_id", hotelId);
+      const { data: docs, error } = await q;
+      if (error) throw error;
+      let q2 = sb.from("inventaire_serveurs").select("hotel_id,nom,ip");
+      if (hotelId) q2 = q2.eq("hotel_id", hotelId);
+      let ex = await q2;
+      if (ex.error) ex = await (hotelId ? sb.from("inventaire_serveurs").select("hotel_id,nom").eq("hotel_id", hotelId) : sb.from("inventaire_serveurs").select("hotel_id,nom"));
+      if (ex.error) throw ex.error;
+      const existants = ex.data || [];
+      const items = [];
+      (docs || []).forEach(d => invParseInfra(d.description, d.hotel_id, d.titre).forEach(x => {
+        const deja = existants.some(e => e.hotel_id === x.hotel_id && ((x.ip && e.ip === x.ip) || String(e.nom || "").toLowerCase() === x.nom.toLowerCase() || (x.ip && String(e.nom || "") === x.ip)));
+        items.push({ ...x, deja, sel: !deja });
+      }));
+      setInvImport({ loading: false, err: "", items, hotelId: hotelId || null, nbDocs: (docs || []).length });
+    } catch (e) { setInvImport({ loading: false, err: invErrMsg(e), items: [], hotelId: hotelId || null }); }
+  };
+  const invLancerImport = async () => {
+    const choisis = (invImport.items || []).filter(x => x.sel && x.nom.trim());
+    if (!choisis.length) return;
+    setInvImport(prev => ({ ...prev, busy: true, err: "" }));
+    let crees = 0; const erreurs = [];
+    const parHotel = {};
+    choisis.forEach(x => { (parHotel[x.hotel_id] = parHotel[x.hotel_id] || []).push(x); });
+    for (const hid of Object.keys(parHotel)) {
+      try {
+        const lot = parHotel[hid];
+        const { data: ex } = await sb.from("inventaire_serveurs").select("id,nom,ip,ordre,parent_id,type").eq("hotel_id", hid);
+        const existants = ex || [];
+        let ordre = existants.filter(e => !e.parent_id).reduce((m, e) => Math.max(m, e.ordre || 0), 0);
+        const champs = (x) => ({ hotel_id: hid, nom: x.nom.trim(), type: x.type, role: x.role || null, ip: x.ip || null, os: x.os || null, version: x.version || null,
+          commentaire: "Repris de la fiche Infrastructure « " + x.source + " »", maj_le: new Date().toISOString(), maj_par: adminFromName() });
+        // 1) hôtes physiques
+        const hotes = lot.filter(x => x.type === "Physique");
+        const refs = {}; // ip / nom -> id d'hôte
+        existants.filter(e => e.type === "Physique").forEach(e => { if (e.ip) refs[e.ip] = e.id; refs[String(e.nom).toLowerCase()] = e.id; });
+        if (hotes.length) {
+          const lignes = hotes.map(x => { ordre += 10; return { ...champs(x), ordre }; });
+          const { data, error } = await sb.from("inventaire_serveurs").insert(lignes).select("id,nom,ip");
+          if (error) throw error;
+          (data || []).forEach((d, i) => { if (d.ip) refs[d.ip] = d.id; refs[String(d.nom).toLowerCase()] = d.id; refs[String(hotes[i].nom).toLowerCase()] = d.id; });
+          crees += (data || []).length;
+        }
+        // 2) VM, rattachées à leur hôte quand on le reconnaît
+        const vms = lot.filter(x => x.type !== "Physique");
+        if (vms.length) {
+          const trouverHote = (ref) => {
+            const r = String(ref || "").trim(); if (!r) return null;
+            const mIp = r.match(/\b(\d{1,3}\.){3}\d{1,3}\b/);
+            return (mIp && refs[mIp[0]]) || refs[r.toLowerCase()] || null;
+          };
+          const lignes = vms.map(x => { const p = trouverHote(x.parentRef); ordre += 1; return { ...champs(x), parent_id: p, ordre }; });
+          const { data, error } = await sb.from("inventaire_serveurs").insert(lignes).select("id");
+          if (error) throw error;
+          crees += (data || []).length;
+        }
+      } catch (e) { erreurs.push((hotels.find(h => h.id === hid) || {}).name + " : " + invErrMsg(e)); }
+    }
+    setInvImport(prev => ({ ...prev, busy: false, fait: crees, err: erreurs.join(" | ") }));
+    if (invHotel) loadInv(invHotel); else loadInvSynthese();
+  };
   const [soNinja, setSoNinja] = useState({});
   // Inventaire NinjaOne complet de l'organisation de chaque hôtel (pour « Sophos manquant »)
   const [soNinjaOrg, setSoNinjaOrg] = useState({});
@@ -9207,7 +9332,9 @@ const nav = isAdmin
           React.createElement('option', { value: "" }, "— Choisir un établissement —"),
           [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
         invHotel && React.createElement('button', { onClick: () => invAjouter(null), style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un hôte physique"),
-        invHotel && React.createElement('button', { onClick: () => invChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels")
+        invHotel && React.createElement('button', { onClick: () => invChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels"),
+        React.createElement('button', { onClick: () => invOuvrirImport(invHotel || null), title: "Lire les tableaux des fiches Infrastructure (hôtes ESXi, serveurs / VM) et proposer les serveurs à ajouter", style: { padding: "8px 14px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
+          invHotel ? "📥 Reprendre depuis Infrastructure" : "📥 Pré-remplir tous les hôtels depuis Infrastructure")
       ),
       invErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, invErr),
 
@@ -9310,9 +9437,9 @@ const nav = isAdmin
           invRows.length > 0 && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "auto", maxHeight: "70vh", marginBottom: 12 } },
             React.createElement('table', { style: { borderCollapse: "separate", borderSpacing: 0, width: "100%", fontSize: 12.5 } },
               React.createElement('thead', null,
-                React.createElement('tr', null, grp("SERVEUR", 6, "#2D3748"), grp("MISES À JOUR", 2, "#2B6CB0"), grp("CARE PACK", 5, "#6B46C1"), grp("ANTIVIRUS", 3, "#C05621"), grp("CONTRÔLE", 4, "#2F855A")),
+                React.createElement('tr', null, grp("SERVEUR", 7, "#2D3748"), grp("MISES À JOUR", 2, "#2B6CB0"), grp("CARE PACK", 5, "#6B46C1"), grp("ANTIVIRUS", 3, "#C05621"), grp("CONTRÔLE", 4, "#2F855A")),
                 React.createElement('tr', null,
-                  th("Serveur", { left: 0, zIndex: 3, minWidth: 190 }), th("Physique / VM"), th("Rôle"), th("OS / Hyperviseur"), th("Version / Build"), th(""),
+                  th("Serveur", { left: 0, zIndex: 3, minWidth: 190 }), th("Adresse IP"), th("Physique / VM"), th("Rôle"), th("OS / Hyperviseur"), th("Version / Build"), th(""),
                   th("À jour ?"), th("Dernière MAJ"),
                   th("Care Pack ?"), th("N° série / Réf."), th("Fin Care Pack"), th("Jours"), th("Statut"),
                   th("Antivirus ?"), th("Nom"), th("À jour ?"),
@@ -9329,6 +9456,7 @@ const nav = isAdmin
                         txt(r, "nom", "Nom", 120, { style: { ...inS, minWidth: 120, fontWeight: 700, color: "#1a1a3e", background: fond } }),
                         pb.length > 0 && React.createElement('span', { title: pb.join(" · "), style: { color: "#C53030", fontSize: 13, cursor: "help" } }, "⚠")),
                       { position: "sticky", left: 0, zIndex: 1, background: fond, borderLeft: "4px solid " + (pb.length ? "#C53030" : r.type === "Physique" ? "#2D3748" : "transparent") }),
+                    td(txt(r, "ip", "IP", 110, { style: { ...inS, minWidth: 110, fontFamily: "monospace", fontSize: 12 } })),
                     td(React.createElement('select', { value: r.type || "", onChange: e => invMaj(r, { type: e.target.value || null }), style: { ...inS, minWidth: 92 } },
                       React.createElement('option', { value: "" }, "—"), ["Physique", "VM"].map(o => React.createElement('option', { key: o, value: o }, o)))),
                     td(txt(r, "role", "Rôle", 110)),
@@ -9356,6 +9484,55 @@ const nav = isAdmin
           React.createElement('datalist', { id: "inv-av" }, ["SOPHOS", "Windows Defender", "Aucun"].map(n => React.createElement('option', { key: n, value: n }))),
           React.createElement('datalist', { id: "inv-techs" }, nomsTech.map(n => React.createElement('option', { key: n, value: n })))
         );
+      })(),
+
+      // ===== Aperçu de la reprise depuis les fiches Infrastructure =====
+      invImport && (() => {
+        const items = invImport.items || [];
+        const maj = (key, champs) => setInvImport(prev => ({ ...prev, items: prev.items.map(x => x.key === key ? { ...x, ...champs } : x) }));
+        const groupes = {};
+        items.forEach(x => { (groupes[x.hotel_id] = groupes[x.hotel_id] || []).push(x); });
+        const nbSel = items.filter(x => x.sel).length;
+        const cellS = { padding: "4px 6px", borderTop: "1px solid #F0F0F5", fontSize: 12.5, verticalAlign: "middle" };
+        const fermer = () => { if (!invImport.busy) setInvImport(null); };
+        return React.createElement('div', { onClick: e => { if (e.target === e.currentTarget) fermer(); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 } },
+          React.createElement('div', { style: { background: "white", borderRadius: 12, width: 1100, maxWidth: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column" } },
+            React.createElement('div', { style: { padding: "16px 20px", borderBottom: "1px solid #EEE" } },
+              React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, "📥 Reprise depuis les fiches Infrastructure"),
+              React.createElement('div', { style: { fontSize: 12.5, color: "#777", marginTop: 4, lineHeight: 1.5 } },
+                "Serveurs trouvés dans les tableaux des fiches (hôtes ESXi, serveurs / VM). Vérifiez, corrigez le type ou le nom si besoin, décochez ce qui n'est pas un serveur, puis importez. Les comptes et mots de passe ne sont jamais repris ; les lignes déjà présentes dans l'inventaire sont décochées.")),
+            React.createElement('div', { style: { flex: 1, overflow: "auto", padding: "10px 20px" } },
+              invImport.loading && React.createElement('div', { style: { padding: 20, color: "#999" } }, "Lecture des fiches Infrastructure…"),
+              !invImport.loading && !items.length && !invImport.err && React.createElement('div', { style: { padding: 20, color: "#888", fontSize: 13 } },
+                (invImport.nbDocs ? invImport.nbDocs + " fiche(s) Infrastructure lue(s), mais " : "") + "aucun tableau de serveurs reconnu. Il faut un tableau avec une colonne « Hôte », « Serveur », « Nom » ou « Rôle », sous un titre parlant d'ESXi, de serveurs ou de VM."),
+              Object.keys(groupes).map(hid => {
+                const lst = groupes[hid];
+                const h = hotels.find(x => x.id === hid);
+                const tous = lst.every(x => x.sel);
+                return React.createElement('div', { key: hid, style: { marginBottom: 14, border: "1px solid #E8E8F0", borderRadius: 9, overflow: "hidden" } },
+                  React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "#F7F7FB" } },
+                    React.createElement('input', { type: "checkbox", checked: tous, onChange: e => setInvImport(prev => ({ ...prev, items: prev.items.map(x => x.hotel_id === hid ? { ...x, sel: e.target.checked } : x) })) }),
+                    React.createElement('b', { style: { fontSize: 13.5, color: "#1a1a3e" } }, h ? h.name : "?"),
+                    React.createElement('span', { style: { fontSize: 12, color: "#888" } }, lst.filter(x => x.sel).length + " / " + lst.length + " sélectionné(s)")),
+                  React.createElement('table', { style: { width: "100%", borderCollapse: "collapse" } },
+                    React.createElement('tbody', null, lst.map(x => React.createElement('tr', { key: x.key, style: { opacity: x.sel ? 1 : .5 } },
+                      React.createElement('td', { style: { ...cellS, width: 26 } }, React.createElement('input', { type: "checkbox", checked: x.sel, onChange: e => maj(x.key, { sel: e.target.checked }) })),
+                      React.createElement('td', { style: { ...cellS, width: 100 } }, React.createElement('select', { value: x.type, onChange: e => maj(x.key, { type: e.target.value }), style: { ...inS, padding: "3px 5px" } }, ["Physique", "VM"].map(o => React.createElement('option', { key: o, value: o }, o)))),
+                      React.createElement('td', { style: { ...cellS, width: 170 } }, React.createElement('input', { value: x.nom, onChange: e => maj(x.key, { nom: e.target.value }), style: { ...inS, padding: "3px 6px", fontWeight: 700 } })),
+                      React.createElement('td', { style: { ...cellS, color: "#555" } }, x.role || React.createElement('span', { style: { color: "#BBB" } }, "—")),
+                      React.createElement('td', { style: { ...cellS, width: 120, fontFamily: "monospace", fontSize: 12, color: "#2B6CB0" } }, x.ip || ""),
+                      React.createElement('td', { style: { ...cellS, width: 150, color: "#777", fontSize: 12 } }, x.type === "VM" && x.parentRef ? "sur " + x.parentRef : ""),
+                      React.createElement('td', { style: { ...cellS, width: 170, color: "#999", fontSize: 11.5 } }, x.deja ? React.createElement('b', { style: { color: "#B7791F" } }, "déjà dans l'inventaire") : (x.section || x.source))
+                    ))))
+                );
+              })),
+            React.createElement('div', { style: { padding: "12px 20px", borderTop: "1px solid #EEE", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+              invImport.err && React.createElement('div', { style: { flex: "1 1 100%", fontSize: 12.5, color: "#C53030" } }, "⚠️ " + invImport.err),
+              invImport.fait != null && React.createElement('div', { style: { flex: "1 1 100%", fontSize: 12.5, color: "#2F855A", fontWeight: 600 } }, "✅ " + invImport.fait + " serveur(s) ajouté(s) à l'inventaire. Complétez maintenant les versions, mises à jour, Care Pack et antivirus."),
+              React.createElement('span', { style: { fontSize: 12.5, color: "#555", marginRight: "auto" } }, nbSel + " serveur(s) à importer"),
+              React.createElement('button', { onClick: fermer, style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, invImport.fait != null ? "Fermer" : "Annuler"),
+              invImport.fait == null && React.createElement('button', { onClick: invLancerImport, disabled: !nbSel || invImport.busy, style: { padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: nbSel ? "pointer" : "default", opacity: nbSel && !invImport.busy ? 1 : .5 } }, invImport.busy ? "Import…" : "Importer la sélection"))
+          ));
       })()
     );
   }
