@@ -3602,6 +3602,51 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setSoSuggest({ loading: false, err, parPoste });
   };
   const [soSecOuvertes, setSoSecOuvertes] = useState({}); // sections repliées/dépliées par hôtel
+  // Protection anti-altération : sélection de PC par hôtel { hotelId: { sophos_id: hostname } }
+  const [soTpSel, setSoTpSel] = useState({});
+  const [soTpBusy, setSoTpBusy] = useState("");
+  const [soTpMsg, setSoTpMsg] = useState({});
+  const soTpBasculer = (hotelId, liste, val) => setSoTpSel(prev => {
+    const cur = { ...(prev[hotelId] || {}) };
+    liste.forEach(p => { if (val) cur[p.sophos_id] = p.hostname; else delete cur[p.sophos_id]; });
+    return { ...prev, [hotelId]: cur };
+  });
+  const soTamper = async (hotelId, action) => {
+    const sel = soTpSel[hotelId] || {};
+    const ids = Object.keys(sel);
+    if (!ids.length) return;
+    if (ids.length > 25) { alert("25 PC maximum par opération (" + ids.length + " sélectionnés)."); return; }
+    const noms = Object.values(sel).join(", ");
+    const q = action === "desactiver"
+      ? "Désactiver la protection anti-altération sur " + ids.length + " PC ?\n\n" + noms + "\n\nLes PC restent protégés par Sophos, mais l'agent pourra être désinstallé. Pensez à la réactiver (ou réinstallez Sophos : la politique la réactive)."
+      : "Réactiver la protection anti-altération sur " + ids.length + " PC ?\n\n" + noms;
+    if (!window.confirm(q)) return;
+    setSoTpBusy(hotelId); setSoTpMsg(prev => ({ ...prev, [hotelId]: null }));
+    try {
+      const r = await callSophosApi("/tamper", { hotelId, sophosIds: ids, action });
+      const okIds = new Set((r.resultats || []).filter(x => x.ok).map(x => x.sophosId));
+      const echecs = (r.resultats || []).filter(x => !x.ok);
+      setSoPostes(prev => ({ ...prev, [hotelId]: (prev[hotelId] || []).map(p => okIds.has(String(p.sophos_id)) ? { ...p, tamper_protection: action === "activer" } : p) }));
+      setSoTpSel(prev => ({ ...prev, [hotelId]: Object.fromEntries(Object.entries(prev[hotelId] || {}).filter(([k]) => !okIds.has(k))) }));
+      setSoTpMsg(prev => ({ ...prev, [hotelId]: {
+        ok: !echecs.length,
+        txt: (okIds.size ? "✅ Anti-altération " + (action === "activer" ? "réactivée" : "désactivée") + " sur " + okIds.size + " PC. Le PC applique la consigne à son prochain contact avec Sophos Central (2 à 5 min)." : "")
+          + (echecs.length ? (okIds.size ? "\n" : "") + "⚠️ " + echecs.length + " échec(s) : " + echecs.map(x => (x.hostname || x.sophosId) + " — " + x.erreur).join(" | ") : ""),
+      } }));
+    } catch (e) {
+      setSoTpMsg(prev => ({ ...prev, [hotelId]: { ok: false, txt: "⚠️ " + (e.message || e) } }));
+    }
+    setSoTpBusy("");
+  };
+  const soTamperMdp = async (hotelId, p) => {
+    setSoTpBusy(hotelId + ":" + p.sophos_id);
+    try {
+      const r = await callSophosApi("/tamper", { hotelId, sophosIds: [p.sophos_id], action: "motdepasse" });
+      if (!r.motDePasse) alert("Aucun mot de passe renvoyé par Sophos pour " + p.hostname + (r.active ? "" : " (anti-altération désactivée)."));
+      else window.prompt("Mot de passe anti-altération de " + p.hostname + (r.active ? "" : " (actuellement désactivée)") + " — à copier :", r.motDePasse);
+    } catch (e) { alert(e.message || String(e)); }
+    setSoTpBusy("");
+  };
   // Postes à problème : fiche détaillée (10 par appel) ; postes OK : état +
   // dernier contact seulement (20 par appel). Affichage au fil des lots.
   const soLoadNinja = async (hotelId, pbNoms, okNoms) => {
@@ -9352,7 +9397,10 @@ const nav = isAdmin
                     if (p.tamper_protection === false) problemes.push("anti-altération désactivée");
                     return React.createElement('div', { key: p.hostname, style: { borderTop: "1px solid #F0F0F5", padding: "7px 12px", background: "white" } },
                       React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
-                        cell("200px", React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e" }, title: p.hostname }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?"))),
+                        cell("200px", React.createElement('label', { style: { display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", maxWidth: "100%" }, title: "Sélectionner pour agir sur la protection anti-altération" },
+                          React.createElement('input', { type: "checkbox", checked: !!((soTpSel[h.id] || {})[p.sophos_id]), onChange: e => soTpBasculer(h.id, [p], e.target.checked), style: { margin: 0, flexShrink: 0 } }),
+                          React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis" }, title: p.hostname }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?")),
+                          p.tamper_protection === false && React.createElement('span', { title: "Protection anti-altération désactivée", style: { fontSize: 11 } }, "🔓"))),
                         cell("78px", pastille(hm.l, hm.c, hm.bg)),
                         cell("150px", React.createElement('span', { style: { color: muet ? "#C05621" : "#666", fontWeight: muet ? 600 : 400 }, title: p.last_seen_at ? "Dernière remontée Sophos : " + fmtDateHeureFr2(p.last_seen_at) : "" }, sophosTxt.charAt(0).toUpperCase() + sophosTxt.slice(1))),
                         cell("150px", njCell),
@@ -9360,6 +9408,8 @@ const nav = isAdmin
                         cell("1 1 160px", (n && n.utilisateur) || p.dernier_utilisateur ? "👤 " + ((n && n.utilisateur) || p.dernier_utilisateur) : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
                         React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
                           n && n.doublons && pastille("doublon ×" + n.doublons, "#B7791F", "#FFF6E5"),
+                          React.createElement('button', { onClick: () => soTamperMdp(h.id, p), disabled: soTpBusy === h.id + ":" + p.sophos_id, title: "Afficher le mot de passe anti-altération (pour désinstaller Sophos sur place ou via le script NinjaOne, utile si l'agent ne communique plus avec Sophos Central)",
+                            style: { border: "1px solid #E8E8F0", background: "white", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: "#777", cursor: "pointer" } }, soTpBusy === h.id + ":" + p.sophos_id ? "…" : "🔑"),
                           caseSuppr(p),
                           partageH && React.createElement('select', { value: "", title: "Ce PC n'est pas de cet hôtel ? Déplacez-le (mémorisé)", onChange: e => {
                               const v = e.target.value; if (!v) return;
@@ -9410,6 +9460,27 @@ const nav = isAdmin
                           style: { border: "1px solid " + cat.bd, background: cat.bg, color: cat.c, borderRadius: 20, padding: "4px 11px", fontSize: 12, fontWeight: 700, cursor: "pointer" } },
                           cat.ico + " " + (groupes[cat.k] || []).length + " " + cat.t.toLowerCase()))
                     ),
+                    (() => {
+                      const sel = soTpSel[h.id] || {};
+                      const nb = Object.keys(sel).length;
+                      const msg = soTpMsg[h.id];
+                      if (!nb && !msg) return null;
+                      const busy = soTpBusy === h.id;
+                      const btn = (txt, action, c) => React.createElement('button', { onClick: () => soTamper(h.id, action), disabled: busy || !nb,
+                        style: { border: "none", background: c, color: "white", borderRadius: 7, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy || !nb ? "default" : "pointer", opacity: busy || !nb ? .6 : 1 } }, txt);
+                      return React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 5, background: "#1a1a3e", color: "white", borderRadius: 9, padding: "9px 12px", marginBottom: 12 } },
+                        nb > 0 && React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+                          React.createElement('b', { style: { fontSize: 12.5 } }, "🛡️ " + nb + " PC sélectionné" + (nb > 1 ? "s" : "")),
+                          React.createElement('span', { style: { fontSize: 11.5, opacity: .75, flex: "1 1 200px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: Object.values(sel).join(", ") }, Object.values(sel).join(", ")),
+                          btn(busy ? "Envoi…" : "🔓 Désactiver l'anti-altération", "desactiver", "#C05621"),
+                          btn("🔒 Réactiver", "activer", "#2F855A"),
+                          React.createElement('button', { onClick: () => setSoTpSel(prev => ({ ...prev, [h.id]: {} })), style: { border: "1px solid rgba(255,255,255,.35)", background: "transparent", color: "white", borderRadius: 7, padding: "5px 10px", fontSize: 12, cursor: "pointer" } }, "Désélectionner")),
+                        nb > 0 && React.createElement('div', { style: { fontSize: 11, opacity: .7, marginTop: 5 } }, "Sophos Central transmet la consigne au PC à son prochain contact. Un agent qui ne communique plus (« à réparer ») ne la recevra pas : utilisez alors 🔑 pour obtenir son mot de passe."),
+                        msg && React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "flex-start", marginTop: nb ? 8 : 0, fontSize: 12, whiteSpace: "pre-wrap", color: msg.ok ? "#9AE6B4" : "#FEB2B2" } },
+                          React.createElement('span', { style: { flex: 1 } }, msg.txt),
+                          React.createElement('button', { onClick: () => setSoTpMsg(prev => ({ ...prev, [h.id]: null })), style: { border: "none", background: "transparent", color: "white", cursor: "pointer", fontSize: 14, lineHeight: 1 } }, "×"))
+                      );
+                    })(),
                     nj && nj.err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 10px", marginBottom: 10 } }, "NinjaOne indisponible : " + nj.err),
                     no && (() => {
                       const box = (txt, warn) => React.createElement('div', { style: { fontSize: 11.5, color: warn ? "#B7791F" : "#777", background: warn ? "#FFFBEB" : "#F7F7FB", border: "1px solid " + (warn ? "#F0D98A" : "#E8E8F0"), borderRadius: 7, padding: "6px 10px", marginBottom: 10 } }, txt);
@@ -9427,7 +9498,14 @@ const nav = isAdmin
                           React.createElement('span', { style: { fontSize: 11, color: cat.c, width: 10 } }, open ? "▼" : "▶"),
                           React.createElement('span', { style: { fontSize: 13.5, fontWeight: 700, color: cat.c } }, cat.ico + " " + cat.t),
                           React.createElement('span', { style: { fontSize: 12, fontWeight: 700, color: "white", background: cat.c, borderRadius: 20, padding: "1px 9px" } }, liste.length),
-                          React.createElement('span', { style: { fontSize: 11.5, color: "#666", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: open ? "normal" : "nowrap" } }, cat.aide)
+                          React.createElement('span', { style: { fontSize: 11.5, color: "#666", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: open ? "normal" : "nowrap" } }, cat.aide),
+                          cat.k !== "sansSophos" && (() => {
+                            const sel = soTpSel[h.id] || {};
+                            const tous = liste.length > 0 && liste.every(p => sel[p.sophos_id]);
+                            return React.createElement('button', { onClick: e => { e.stopPropagation(); soTpBasculer(h.id, liste, !tous); },
+                              title: "Sélectionner tous les PC de cette section (protection anti-altération)",
+                              style: { flexShrink: 0, border: "1px solid " + cat.bd, background: "white", color: cat.c, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" } }, tous ? "☐ Aucun" : "☑ Tous");
+                          })()
                         ),
                         open && React.createElement('div', null,
                           // En-tête de colonnes
