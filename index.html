@@ -3512,19 +3512,37 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const ckChoisirHotel = (hid) => { setCkHotel(hid); setCkServeur(null); setCkPoints([]); setCkServeurs([]); if (hid) loadCkServeurs(hid); };
   const ckAjouterServeur = async () => {
     if (!ckHotel) return;
-    const nom = (window.prompt("Nom du serveur à contrôler (ex. VEEAM, ESXi-01, AD) :", "") || "").trim();
+    const nom = (window.prompt("Nom du serveur à contrôler (ex. DC, ESXi-01, OPERA) :\n\nLa check-list sera créée VIDE : ajoutez ensuite vos propres points de contrôle.", "") || "").trim();
     if (!nom) return;
     try {
       const { data: srv, error } = await sb.from("checklist_serveurs").insert({ hotel_id: ckHotel, nom }).select().single();
       if (error) throw error;
-      const { data: modele, error: e2 } = await sb.from("checklist_modele").select("*").order("ordre");
-      if (e2) throw e2;
-      if ((modele || []).length) {
-        const { error: e3 } = await sb.from("checklist_points").insert(modele.map(m => ({ serveur_id: srv.id, hotel_id: ckHotel, ordre: m.ordre, categorie: m.categorie, tache: m.tache })));
-        if (e3) throw e3;
-      }
       await loadCkServeurs(ckHotel, srv.id);
     } catch (e) { alert("Erreur : " + (e.message || e)); }
+  };
+  // Points de contrôle libres : ajout, suppression, vidage
+  const [ckNouveau, setCkNouveau] = useState({ categorie: "", tache: "" });
+  const ckAjouterPoint = async () => {
+    const tache = (ckNouveau.tache || "").trim();
+    const categorie = (ckNouveau.categorie || "").trim() || "Général";
+    if (!ckServeur || !tache) return;
+    const ordre = (ckPoints.length ? Math.max(...ckPoints.map(p => p.ordre || 0)) : 0) + 1;
+    const { data, error } = await sb.from("checklist_points").insert({ serveur_id: ckServeur, hotel_id: ckHotel, ordre, categorie, tache }).select().single();
+    if (error) { alert("Erreur : " + error.message); return; }
+    setCkPoints(prev => [...prev, data]);
+    setCkNouveau({ categorie, tache: "" });
+  };
+  const ckSupprimerPoint = async (pt) => {
+    if (!confirm("Supprimer le point « " + pt.tache + " » ?")) return;
+    const { error } = await sb.from("checklist_points").delete().eq("id", pt.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    setCkPoints(prev => prev.filter(x => x.id !== pt.id));
+  };
+  const ckViderServeur = async (srv) => {
+    if (!srv || !confirm("Supprimer TOUS les points de contrôle du serveur « " + srv.nom + " » ?\n\nLe serveur reste dans la liste, avec une check-list vide.")) return;
+    const { error } = await sb.from("checklist_points").delete().eq("serveur_id", srv.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    setCkPoints([]);
   };
   const ckSupprimerServeur = async (srv) => {
     if (!srv || !confirm("Supprimer la check-list du serveur « " + srv.nom + " » et tous ses contrôles ?")) return;
@@ -9116,13 +9134,15 @@ const nav = isAdmin
             total > 0 && React.createElement('div', { style: { width: (100 * nEc / total) + "%", background: "#E2B93B" } }),
             total > 0 && React.createElement('div', { style: { width: (100 * nKo / total) + "%", background: "#C53030" } })),
           React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: "#1a1a3e", whiteSpace: "nowrap" } }, pct + " % conforme"),
+          total > 0 && React.createElement('button', { onClick: () => ckViderServeur(srv), title: "Retirer tous les points de ce serveur (check-list vide)", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #E2E2EA", color: "#777", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Vider"),
           React.createElement('button', { onClick: () => ckSupprimerServeur(srv), title: "Supprimer ce serveur de la check-list", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Supprimer")
         )
       ),
       // Tableau des points
       srv && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
-        !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: "40px minmax(0,1fr) 130px 140px 130px minmax(0,0.8fr)", gap: 10, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
-          React.createElement('div', null, "N°"), React.createElement('div', null, "Tâche / point de contrôle"), React.createElement('div', null, "Statut"), React.createElement('div', null, "Date contrôle"), React.createElement('div', null, "Technicien"), React.createElement('div', null, "Commentaire")),
+        !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: "40px minmax(0,1fr) 130px 140px 130px minmax(0,0.8fr) 30px", gap: 10, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
+          React.createElement('div', null, "N°"), React.createElement('div', null, "Tâche / point de contrôle"), React.createElement('div', null, "Statut"), React.createElement('div', null, "Date contrôle"), React.createElement('div', null, "Technicien"), React.createElement('div', null, "Commentaire"), React.createElement('div', null, "")),
+        total === 0 && React.createElement('div', { style: { padding: "22px 14px", textAlign: "center", color: "#888", fontSize: 13 } }, "Check-list vide : ajoutez ci-dessous les points à contrôler sur ce serveur."),
         cats.map(cat => React.createElement(React.Fragment, { key: cat },
           React.createElement('div', { style: { padding: "7px 14px", background: "#F7F7FB", borderTop: "1px solid #ECECF2", fontSize: 11.5, fontWeight: 700, color: G2, textTransform: "uppercase", letterSpacing: ".05em" } }, cat),
           ckPoints.filter(p => (p.categorie || "Autre") === cat).map(p => {
@@ -9133,17 +9153,29 @@ const nav = isAdmin
               React.createElement('input', { key: "d", type: "date", value: p.date_controle || "", onChange: e => ckMaj(p, { date_controle: e.target.value || null }), style: inS }),
               React.createElement('input', { key: "t", list: "ck-techs", defaultValue: p.technicien || "", onBlur: e => { if ((e.target.value || "") !== (p.technicien || "")) ckMaj(p, { technicien: e.target.value.trim() || null }); }, placeholder: "Technicien", style: inS }),
               React.createElement('input', { key: "c", defaultValue: p.commentaire || "", onBlur: e => { if ((e.target.value || "") !== (p.commentaire || "")) ckMaj(p, { commentaire: e.target.value.trim() || null }); }, placeholder: "Commentaire", style: inS })
+            ,
+              React.createElement('button', { key: "x", onClick: () => ckSupprimerPoint(p), title: "Supprimer ce point", style: { padding: "3px 6px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "🗑")
             ];
+            const tacheEdit = React.createElement('input', { key: p.id + "t" + (p.maj_le || ""), defaultValue: p.tache, title: "Cliquez pour modifier l'intitulé",
+              onBlur: e => { const v = e.target.value.trim(); if (v && v !== p.tache) ckMaj(p, { tache: v }); else e.target.value = p.tache; },
+              style: { width: "100%", boxSizing: "border-box", border: "1px solid transparent", background: "transparent", fontSize: 13, color: "#1a1a3e", fontFamily: "inherit", padding: "4px 6px", borderRadius: 6 },
+              onFocus: e => { e.target.style.borderColor = "#E2E2EA"; e.target.style.background = "white"; } });
             return isMobile
               ? React.createElement('div', { key: p.id, style: { padding: "10px 14px", borderTop: "1px solid #F0F0F5", borderLeft: "4px solid " + (p.statut ? m.c : "#E2B93B") } },
-                  React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e", marginBottom: 8 } }, p.ordre + ". " + p.tache),
+                  React.createElement('div', { style: { display: "flex", gap: 6, alignItems: "center", fontWeight: 600, marginBottom: 8 } }, tacheEdit, champs[4]),
                   React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, champs[0], champs[1], champs[2], champs[3]))
-              : React.createElement('div', { key: p.id, style: { display: "grid", gridTemplateColumns: "40px minmax(0,1fr) 130px 140px 130px minmax(0,0.8fr)", gap: 10, padding: "8px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", borderLeft: "4px solid " + (p.statut ? m.c : "transparent") } },
+              : React.createElement('div', { key: p.id, style: { display: "grid", gridTemplateColumns: "40px minmax(0,1fr) 130px 140px 130px minmax(0,0.8fr) 30px", gap: 10, padding: "8px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", borderLeft: "4px solid " + (p.statut ? m.c : "transparent") } },
                   React.createElement('div', { style: { fontSize: 12.5, color: "#999", fontWeight: 700 } }, p.ordre),
-                  React.createElement('div', { style: { fontSize: 13, color: "#1a1a3e", lineHeight: 1.4 } }, p.tache),
-                  champs[0], champs[1], champs[2], champs[3]);
+                  tacheEdit,
+                  champs[0], champs[1], champs[2], champs[3], champs[4]);
           })
         )),
+        React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "10px 14px", borderTop: "1px solid #ECECF2", background: "#FBFBFD" } },
+          React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: G2 } }, "+ Nouveau point"),
+          React.createElement('input', { value: ckNouveau.categorie, onChange: e => setCkNouveau({ ...ckNouveau, categorie: e.target.value }), list: "ck-cats", placeholder: "Catégorie (ex. Système, Active Directory)", style: { ...inS, width: isMobile ? "100%" : 230 } }),
+          React.createElement('input', { value: ckNouveau.tache, onChange: e => setCkNouveau({ ...ckNouveau, tache: e.target.value }), onKeyDown: e => { if (e.key === "Enter") ckAjouterPoint(); }, placeholder: "Point de contrôle à vérifier", style: { ...inS, flex: "1 1 260px", width: "auto" } }),
+          React.createElement('button', { onClick: ckAjouterPoint, disabled: !(ckNouveau.tache || "").trim(), style: { padding: "7px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: (ckNouveau.tache || "").trim() ? 1 : .5 } }, "Ajouter")),
+        React.createElement('datalist', { id: "ck-cats" }, [...new Set(cats.concat(["Système", "Active Directory", "Sauvegarde", "Réseau", "Sécurité", "Veeam"]))].map(n => React.createElement('option', { key: n, value: n }))),
         React.createElement('datalist', { id: "ck-techs" }, nomsTech.map(n => React.createElement('option', { key: n, value: n })))
       )
     );
