@@ -3442,11 +3442,23 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const pbNoms = (data || []).filter(estPb).map(p => p.hostname);
       const okNoms = (data || []).filter(p => !estPb(p)).map(p => p.hostname);
       if (pbNoms.length || okNoms.length) soLoadNinja(hotelId, pbNoms, okNoms);
+      soLoadNinjaOrg(hotelId);
     }
   };
 
   // NinjaOne : état des postes problématiques (muets / mauvaise santé), par hôtel
   const [soNinja, setSoNinja] = useState({});
+  // Inventaire NinjaOne complet de l'organisation de chaque hôtel (pour « Sophos manquant »)
+  const [soNinjaOrg, setSoNinjaOrg] = useState({});
+  const soLoadNinjaOrg = async (hotelId) => {
+    setSoNinjaOrg(prev => ({ ...prev, [hotelId]: { ...(prev[hotelId] || {}), loading: true, err: "" } }));
+    try {
+      const r = await callSophosApi("/ninja-org", { hotelId });
+      setSoNinjaOrg(prev => ({ ...prev, [hotelId]: { loading: false, err: "", ...r } }));
+    } catch (e) {
+      setSoNinjaOrg(prev => ({ ...prev, [hotelId]: { loading: false, err: e.message || String(e) } }));
+    }
+  };
   // Compte Sophos partagé : PC non affectés, suggestions NinjaOne, affichage des ignorés
   const [soNonAffectes, setSoNonAffectes] = useState([]);
   const [soSuggest, setSoSuggest] = useState({ loading: false, err: "", parPoste: {} });
@@ -9039,6 +9051,8 @@ const nav = isAdmin
                   const CATS = [
                     { k: "menace",  ico: "🔴", t: "Menace ou protection dégradée", aide: "Sophos signale une menace, un service arrêté ou la protection anti-altération désactivée sur un PC actif. À traiter en priorité.", c: "#C53030", bg: "#FDECEC", bd: "#F5B5B5", ouvert: true },
                     { k: "casse",   ico: "🟠", t: "Agent Sophos à réparer", aide: "Le PC est actif (vu récemment par NinjaOne) mais Sophos ne remonte plus : il n'est probablement plus protégé. Réinstaller ou réparer l'agent Sophos.", c: "#C05621", bg: "#FFF3E8", bd: "#F6C9A0", ouvert: true },
+                    { k: "sansSophos", ico: "🟣", t: "Sophos manquant", aide: "Présent dans NinjaOne (organisation de l'hôtel, vu ces 30 derniers jours) mais absent de Sophos : ce PC n'est probablement pas protégé. Installer l'agent Sophos.", c: "#6B46C1", bg: "#F3EEFC", bd: "#D6C8F5", ouvert: true },
+                    { k: "sansNinja", ico: "🟡", t: "NinjaOne manquant", aide: "Actif dans Sophos mais introuvable dans NinjaOne : ce PC n'est pas supervisé. Installer l'agent NinjaOne, ou vérifier que le nom du PC est le même dans les deux outils.", c: "#B7791F", bg: "#FFFBEB", bd: "#F0D98A", ouvert: true },
                     { k: "analyse", ico: "⏳", t: "Analyse NinjaOne en cours", aide: "Recherche des PC dans NinjaOne…", c: "#718096", bg: "#F4F4F8", bd: "#E2E2EA", ouvert: true },
                     { k: "eteint",  ico: "🔵", t: "Éteints ou absents", aide: "Hors ligne dans Sophos ET dans NinjaOne depuis plus de 7 jours : PC éteint, rangé, en panne ou retiré. À vérifier sur place.", c: "#2B6CB0", bg: "#EBF4FF", bd: "#BEE3F8", ouvert: false },
                     { k: "fantome", ico: "👻", t: "Probablement retirés", aide: "Muets dans Sophos et introuvables dans NinjaOne : anciens PC, renommés ou réinstallés. À supprimer de Sophos Central pour garder un inventaire propre.", c: "#6B6B80", bg: "#F4F4F8", bd: "#E2E2EA", ouvert: false },
@@ -9048,7 +9062,7 @@ const nav = isAdmin
                     const n = njPostes[String(p.hostname || "").toUpperCase()];
                     const muet = !!(p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet);
                     const degrade = p.health === "bad" || p.health === "suspicious" || p.tamper_protection === false;
-                    if (!muet) return degrade ? "menace" : "ok";
+                    if (!muet) return degrade ? "menace" : (n && !n.erreur && n.trouve === false ? "sansNinja" : "ok");
                     if (!n || n.erreur) return (nj && nj.loading) ? "analyse" : "fantome";
                     if (!n.trouve) return "fantome";
                     const jNinja = ilYa(n.dernier_contact);
@@ -9057,6 +9071,16 @@ const nav = isAdmin
                   };
                   const groupes = {};
                   postes.forEach(p => { const k = classer(p); (groupes[k] = groupes[k] || []).push(p); });
+                  // PC présents dans NinjaOne (organisation de l'hôtel) mais absents de Sophos
+                  const no = soNinjaOrg[h.id];
+                  const nomCourtPc = (v) => String(v || "").trim().split(".")[0].toUpperCase();
+                  const nomsSophos = new Set(postes.map(p => nomCourtPc(p.hostname)));
+                  const seuilNinja = Date.now() - 30 * JOUR;
+                  const njOrgDevices = (no && no.trouve && no.devices) || [];
+                  const absentsSophos = njOrgDevices.filter(d => !nomsSophos.has(nomCourtPc(d.hostname)));
+                  const absentsRecents = absentsSophos.filter(d => d.en_ligne || (d.dernier_contact && new Date(d.dernier_contact).getTime() >= seuilNinja));
+                  const absentsAnciens = absentsSophos.length - absentsRecents.length;
+                  if (absentsRecents.length) groupes.sansSophos = absentsRecents;
                   // Tri interne : plus récemment vus par NinjaOne en premier, puis par nom
                   Object.values(groupes).forEach(arr => arr.sort((a, b) => String(a.hostname).localeCompare(String(b.hostname))));
                   const secKey = (k) => h.id + ":" + k;
@@ -9118,7 +9142,21 @@ const nav = isAdmin
                     );
                   };
 
-                  const nbPb = postes.length - ((groupes.ok || []).length);
+                  const ligneNinja = (d) => React.createElement('div', { key: "nj-" + d.hostname, style: { borderTop: "1px solid #F0F0F5", padding: "7px 12px", background: "white" } },
+                    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
+                      cell("200px", React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e" }, title: d.nom }, (d.serveur ? "🖥️ " : "💻 ") + d.hostname)),
+                      cell("78px", pastille(d.serveur ? "Serveur" : "Poste", "#6B46C1", "#F3EEFC")),
+                      cell("150px", React.createElement('b', { style: { color: "#C53030" } }, "Absent de Sophos")),
+                      cell("150px", React.createElement('span', null,
+                        React.createElement('span', { style: { color: d.en_ligne ? "#2F855A" : "#A0AEC0", marginRight: 5 } }, "●"),
+                        d.en_ligne ? React.createElement('b', { style: { color: "#2F855A" } }, "En ligne") : React.createElement('span', null, "Vu ", React.createElement('b', null, depuisTxt(d.dernier_contact))))),
+                      cell("1 1 160px", d.nom !== d.hostname ? d.nom : "", { color: "#555", fontSize: 12 }),
+                      React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+                        d.lien && React.createElement('a', { href: d.lien, target: "_blank", rel: "noopener noreferrer", title: "Ouvrir dans NinjaOne", style: { color: G2, fontWeight: 600, textDecoration: "none", fontSize: 12 } }, "NinjaOne ↗"))
+                    )
+                  );
+
+                  const nbPb = postes.length - ((groupes.ok || []).length) + ((groupes.sansSophos || []).length);
                   return React.createElement('div', null,
                     // Synthèse cliquable
                     React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 } },
@@ -9129,6 +9167,13 @@ const nav = isAdmin
                           cat.ico + " " + (groupes[cat.k] || []).length + " " + cat.t.toLowerCase()))
                     ),
                     nj && nj.err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 10px", marginBottom: 10 } }, "NinjaOne indisponible : " + nj.err),
+                    no && (() => {
+                      const box = (txt, warn) => React.createElement('div', { style: { fontSize: 11.5, color: warn ? "#B7791F" : "#777", background: warn ? "#FFFBEB" : "#F7F7FB", border: "1px solid " + (warn ? "#F0D98A" : "#E8E8F0"), borderRadius: 7, padding: "6px 10px", marginBottom: 10 } }, txt);
+                      if (no.loading) return box("🔎 Comparaison avec l'inventaire NinjaOne en cours…");
+                      if (no.err) return box("Inventaire NinjaOne indisponible : " + no.err, true);
+                      if (no.trouve === false) return box("NinjaOne : aucune organisation nommée « " + (no.recherche || h.name) + " ». Renseignez le champ « Nom NinjaOne » de la fiche établissement" + ((no.suggestions || []).length ? " (organisations proches : " + no.suggestions.join(", ") + ")" : "") + " pour repérer les PC sans Sophos.", true);
+                      return box("Comparé à NinjaOne « " + no.organisation + " » : " + njOrgDevices.length + " postes/serveurs, " + absentsRecents.length + " sans Sophos" + (absentsAnciens ? " (+ " + absentsAnciens + " non vus depuis plus de 30 jours, ignorés)" : "") + ", " + ((groupes.sansNinja || []).length) + " sans NinjaOne.");
+                    })(),
                     // Sections
                     CATS.filter(cat => (groupes[cat.k] || []).length).map(cat => {
                       const liste = groupes[cat.k];
@@ -9144,7 +9189,7 @@ const nav = isAdmin
                           // En-tête de colonnes
                           React.createElement('div', { style: { display: "flex", gap: 10, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".03em", background: "#FAFAFC", borderTop: "1px solid #F0F0F5" } },
                             cell("200px", "Poste"), cell("78px", "Santé"), cell("150px", "Sophos"), cell("150px", "NinjaOne"), cell("1 1 160px", "Utilisateur / détail")),
-                          liste.map(p => lignePoste(p, cat))
+                          liste.map(p => cat.k === "sansSophos" ? ligneNinja(p) : lignePoste(p, cat))
                         )
                       );
                     })
