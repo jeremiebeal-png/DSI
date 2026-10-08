@@ -1394,6 +1394,7 @@ function App() {
     { key: "docs",       page: "backups",            icon: "💾", label: "Sauvegardes", grp: "pil" },
     { key: "docs",       page: "sophos",             icon: "🔒", label: "Sécurité Sophos", grp: "pil" },
     { key: "docs",       page: "checklist",          icon: "✅", label: "Check-list", grp: "pil" },
+    { key: "docs",       page: "inventaire",         icon: "🗄️", label: "Inventaire serveurs", grp: "pil" },
     { key: "tickets",    page: "rapport-jour",       icon: "📄", label: "Rapport du jour", grp: "rap" },
     { key: "tickets",    page: "rapport-tickets",    icon: "📈", label: "Suivi des tickets", grp: "rap" },
     { key: "rapports",   page: "rapports",           icon: "📝", label: "Rapports d'intervention", grp: "rap" },
@@ -3547,6 +3548,100 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
   useEffect(() => { if (page === "checklist" && isAdmin && ckHotel && !ckServeurs.length) loadCkServeurs(ckHotel); }, [page]);
   useEffect(() => { if (page === "checklist" && isAdmin && !ckHotel) loadCkSynthese(); }, [page, ckHotel]);
+  // ============================================================
+  //  INVENTAIRE SERVEURS — versions, mises à jour, Care Pack, antivirus.
+  //  Tables : inventaire_serveurs (hôtes physiques + VM via parent_id),
+  //  inventaire_notes (notes / actions par hôtel). Un hôtel à la fois.
+  // ============================================================
+  const [invHotel, setInvHotel] = useState("");
+  const [invRows, setInvRows] = useState([]);
+  const [invNotes, setInvNotes] = useState(null);
+  const [invLoading, setInvLoading] = useState(false);
+  const [invErr, setInvErr] = useState("");
+  const [invSynth, setInvSynth] = useState({ loading: false, rows: [], notes: [] });
+  const [invFiltre, setInvFiltre] = useState("tous");
+  const invErrMsg = (e) => (e.message || String(e)) + (/inventaire_/i.test(e.message || "") ? " — le script inventaire_serveurs.sql a-t-il été exécuté ?" : "");
+  const loadInv = async (hotelId) => {
+    setInvErr(""); setInvLoading(true);
+    try {
+      const [r, n] = await Promise.all([
+        sb.from("inventaire_serveurs").select("*").eq("hotel_id", hotelId).order("ordre"),
+        sb.from("inventaire_notes").select("*").eq("hotel_id", hotelId),
+      ]);
+      if (r.error) throw r.error;
+      setInvRows(r.data || []);
+      setInvNotes((n.data && n.data[0]) || { hotel_id: hotelId, notes: "" });
+    } catch (e) { setInvErr(invErrMsg(e)); setInvRows([]); }
+    finally { setInvLoading(false); }
+  };
+  const loadInvSynthese = async () => {
+    setInvSynth(prev => ({ ...prev, loading: true })); setInvErr("");
+    try {
+      const rows = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien").range(from, from + 999);
+        if (error) throw error;
+        (data || []).forEach(x => rows.push(x));
+        if (!data || data.length < 1000) break;
+      }
+      const { data: notes } = await sb.from("inventaire_notes").select("hotel_id,notes");
+      setInvSynth({ loading: false, rows, notes: notes || [] });
+    } catch (e) { setInvErr(invErrMsg(e)); setInvSynth({ loading: false, rows: [], notes: [] }); }
+  };
+  const invChoisirHotel = (hid) => { setInvHotel(hid); setInvRows([]); setInvNotes(null); if (hid) loadInv(hid); };
+  // Care Pack : jours restants + statut (même calcul que le fichier Excel)
+  const invCarePack = (r) => {
+    if (r.care_pack === "Non") return { j: null, l: "Aucun", c: "#718096", bg: "#EEF0F4" };
+    if (r.care_pack === "N/A") return { j: null, l: "N/A", c: "#A0AEC0", bg: "#F6F6FA" };
+    if (!r.care_pack_fin) return { j: null, l: r.care_pack === "Oui" ? "Date ?" : "", c: "#B7791F", bg: "#FFFBEB" };
+    const j = Math.round((new Date(r.care_pack_fin + "T12:00:00") - new Date(new Date().toISOString().slice(0, 10) + "T12:00:00")) / 86400000);
+    if (j < 0) return { j, l: "Expiré", c: "#C53030", bg: "#FDE2E2" };
+    if (j < 90) return { j, l: "Moins de 90 j", c: "#C05621", bg: "#FFF3E8" };
+    return { j, l: "OK", c: "#2F855A", bg: "#E6F6EA" };
+  };
+  const invEstWindows = (r) => /windows|win\s?1|win\s?serv/i.test(r.os || "");
+  const invMaj = async (row, champs) => {
+    const maj = { ...champs, maj_le: new Date().toISOString(), maj_par: adminFromName() };
+    if (!row.date_controle && !("date_controle" in champs)) maj.date_controle = new Date().toISOString().slice(0, 10);
+    if (!row.technicien && !("technicien" in champs)) maj.technicien = adminFromName().split(" ")[0];
+    setInvRows(prev => prev.map(x => x.id === row.id ? { ...x, ...maj } : x));
+    const { error } = await sb.from("inventaire_serveurs").update(maj).eq("id", row.id);
+    if (error) { alert("Enregistrement impossible : " + error.message); loadInv(row.hotel_id); }
+  };
+  const invAjouter = async (parent) => {
+    if (!invHotel) return;
+    const nom = (window.prompt(parent ? "Nom de la VM sur " + parent.nom + " (ex. DC, OPERA, VEEAM) :" : "Nom ou adresse IP de l'hôte physique (ex. 10.53.160.5, ESXi-01, NAS) :", "") || "").trim();
+    if (!nom) return;
+    let ordre;
+    if (parent) {
+      const enfants = invRows.filter(x => x.parent_id === parent.id).map(x => x.ordre || 0);
+      ordre = (enfants.length ? Math.max(...enfants) : (parent.ordre || 0)) + 1;
+    } else {
+      const tops = invRows.filter(x => !x.parent_id).map(x => x.ordre || 0);
+      ordre = (tops.length ? Math.max(...tops) : 0) + 10;
+    }
+    const ligne = parent
+      ? { hotel_id: invHotel, parent_id: parent.id, ordre, nom, type: "VM" }
+      : { hotel_id: invHotel, ordre, nom, type: "Physique", role: "Hôte VMware", os: "VMware ESXi" };
+    const { error } = await sb.from("inventaire_serveurs").insert(ligne);
+    if (error) { alert("Erreur : " + invErrMsg(error)); return; }
+    loadInv(invHotel);
+  };
+  const invSupprimer = async (row) => {
+    const enfants = invRows.filter(x => x.parent_id === row.id);
+    if (!confirm("Supprimer « " + row.nom + " » de l'inventaire ?" + (enfants.length ? "\n\nSes " + enfants.length + " VM resteront dans la liste, sans hôte." : ""))) return;
+    const { error } = await sb.from("inventaire_serveurs").delete().eq("id", row.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    loadInv(invHotel);
+  };
+  const invEnregNotes = async (texte) => {
+    if (!invHotel || (invNotes && (invNotes.notes || "") === texte)) return;
+    const ligne = { hotel_id: invHotel, notes: texte, maj_le: new Date().toISOString(), maj_par: adminFromName() };
+    setInvNotes(ligne);
+    const { error } = await sb.from("inventaire_notes").upsert(ligne, { onConflict: "hotel_id" });
+    if (error) alert("Notes non enregistrées : " + error.message);
+  };
+  useEffect(() => { if (page === "inventaire" && isAdmin && !invHotel) loadInvSynthese(); }, [page, invHotel]);
   const [soNinja, setSoNinja] = useState({});
   // Inventaire NinjaOne complet de l'organisation de chaque hôtel (pour « Sophos manquant »)
   const [soNinjaOrg, setSoNinjaOrg] = useState({});
@@ -9054,6 +9149,185 @@ const nav = isAdmin
     );
   }
 
+  if (page === "inventaire" && isAdmin) {
+    const hotel = hotels.find(x => x.id === invHotel);
+    const inS = { padding: "5px 7px", border: "1px solid #E2E2EA", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", background: "white", width: "100%", boxSizing: "border-box" };
+    const nomsTech = [...new Set(techniciens.map(t => String(t.nom || "").split(" ")[0]).filter(Boolean))];
+    const fmtD = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("fr-FR") : "";
+    const ouiNon = (v) => v === "Oui" ? { c: "#2F855A", bg: "#E6F6EA" } : v === "Non" ? { c: "#C53030", bg: "#FDE2E2" } : v === "N/A" ? { c: "#718096", bg: "#EEF0F4" } : { c: "#999", bg: "#FFFBEB" };
+    const OS_LISTE = ["VMware ESXi", "Windows Server 2025", "Windows Server 2022", "Windows Server 2019", "Windows Server 2016", "Windows Server 2012 R2", "Windows 11", "Windows 10", "Linux", "Synology DSM", "Autre"];
+    // Problèmes d'une ligne (utilisés par la synthèse et la mise en couleur)
+    const problemes = (r) => {
+      const p = [];
+      if (r.a_jour === "Non") p.push("pas à jour");
+      const cp = invCarePack(r);
+      if (cp.l === "Expiré") p.push("Care Pack expiré");
+      if (r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)) p.push("antivirus ?");
+      if (r.antivirus === "Oui" && r.av_a_jour === "Non") p.push("AV pas à jour");
+      return p;
+    };
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
+        invHotel ? "Une ligne par serveur : hôtes physiques et, en dessous, leurs VM. Les jours restants et le statut du Care Pack sont calculés automatiquement. Une modification renseigne la date du contrôle et votre nom s'ils sont vides."
+          : "Synthèse de tous les établissements : cliquez sur un hôtel pour ouvrir son inventaire."),
+      React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
+        React.createElement('select', { id: "inv-hotel", value: invHotel, onChange: e => invChoisirHotel(e.target.value), style: { ...inS, width: isMobile ? "100%" : 320, padding: "9px 10px", fontSize: 13.5, fontWeight: 600 } },
+          React.createElement('option', { value: "" }, "— Choisir un établissement —"),
+          [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+        invHotel && React.createElement('button', { onClick: () => invAjouter(null), style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un hôte physique"),
+        invHotel && React.createElement('button', { onClick: () => invChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels")
+      ),
+      invErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, invErr),
+
+      // ===== Synthèse de tous les hôtels =====
+      !invHotel && (() => {
+        const ETATS = {
+          vide:     { l: "Non renseigné", c: "#718096", bg: "#EEF0F4", rang: 0 },
+          corriger: { l: "À corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
+          echeance: { l: "Care Pack < 90 j", c: "#C05621", bg: "#FFF3E8", rang: 2 },
+          ok:       { l: "OK", c: "#2F855A", bg: "#E6F6EA", rang: 3 },
+        };
+        const lignes = hotels.map(h => {
+          const rs = invSynth.rows.filter(r => r.hotel_id === h.id);
+          const phys = rs.filter(r => r.type === "Physique").length, vm = rs.filter(r => r.type === "VM").length;
+          const pasAJour = rs.filter(r => r.a_jour === "Non").length;
+          const cps = rs.map(invCarePack);
+          const expires = cps.filter(c => c.l === "Expiré").length, bientot = cps.filter(c => c.l === "Moins de 90 j").length;
+          const sansAv = rs.filter(r => r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)).length;
+          const etat = !rs.length ? "vide" : (pasAJour || expires || sansAv) ? "corriger" : bientot ? "echeance" : "ok";
+          const dates = rs.map(r => r.date_controle).filter(Boolean).sort();
+          const note = (invSynth.notes.find(n => n.hotel_id === h.id) || {}).notes || "";
+          return { h, n: rs.length, phys, vm, pasAJour, expires, bientot, sansAv, etat, dernier: dates.pop() || null, note };
+        }).sort((a, b) => ETATS[a.etat].rang - ETATS[b.etat].rang || String(a.h.name).localeCompare(String(b.h.name)));
+        const compte = (k) => lignes.filter(x => x.etat === k).length;
+        const visibles = invFiltre === "tous" ? lignes : lignes.filter(x => x.etat === invFiltre);
+        const chip = (k, lbl, nbv, c, bg) => React.createElement('button', { key: k, onClick: () => setInvFiltre(k),
+          style: { padding: "6px 13px", borderRadius: 20, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "1px solid " + (invFiltre === k ? c : "#E2E2EA"), background: invFiltre === k ? bg : "white", color: c } }, lbl + " " + nbv);
+        const badge = (txt, c, bg) => React.createElement('span', { style: { fontSize: 11, fontWeight: 700, color: c, background: bg, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, txt);
+        const cols = isMobile ? "1fr" : "minmax(0,1.2fr) 140px 130px minmax(0,1.3fr) 110px minmax(0,1fr)";
+        return React.createElement('div', null,
+          React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
+            chip("tous", "Tous", lignes.length, "#1a1a3e", "#F1F1F6"),
+            chip("corriger", "À corriger", compte("corriger"), ETATS.corriger.c, ETATS.corriger.bg),
+            chip("echeance", "Care Pack < 90 j", compte("echeance"), ETATS.echeance.c, ETATS.echeance.bg),
+            chip("ok", "OK", compte("ok"), ETATS.ok.c, ETATS.ok.bg),
+            chip("vide", "Non renseignés", compte("vide"), ETATS.vide.c, ETATS.vide.bg)),
+          invSynth.loading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…"),
+          !invSynth.loading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
+            !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
+              React.createElement('div', null, "Établissement"), React.createElement('div', null, "État"), React.createElement('div', null, "Serveurs"), React.createElement('div', null, "Points à traiter"), React.createElement('div', null, "Dernier contrôle"), React.createElement('div', null, "Notes / actions")),
+            visibles.length === 0 && React.createElement('div', { style: { padding: 24, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun établissement dans ce filtre."),
+            visibles.map(x => {
+              const e = ETATS[x.etat];
+              const pts = [];
+              if (x.pasAJour) pts.push(badge(x.pasAJour + " pas à jour", "#C53030", "#FDE2E2"));
+              if (x.expires) pts.push(badge(x.expires + " Care Pack expiré" + (x.expires > 1 ? "s" : ""), "#C53030", "#FDE2E2"));
+              if (x.bientot) pts.push(badge(x.bientot + " Care Pack < 90 j", "#C05621", "#FFF3E8"));
+              if (x.sansAv) pts.push(badge(x.sansAv + " sans antivirus", "#6B46C1", "#F3EEFC"));
+              return React.createElement('div', { key: x.h.id, onClick: () => invChoisirHotel(x.h.id),
+                style: { display: "grid", gridTemplateColumns: cols, gap: isMobile ? 6 : 12, padding: "10px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", cursor: "pointer", borderLeft: "4px solid " + e.c },
+                onMouseEnter: ev => ev.currentTarget.style.background = "#FAFAFD", onMouseLeave: ev => ev.currentTarget.style.background = "white" },
+                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#1a1a3e" } }, x.h.name),
+                React.createElement('div', null, badge(e.l, e.c, e.bg)),
+                React.createElement('div', { style: { fontSize: 12.5, color: x.n ? "#333" : "#BBB" } }, x.n ? x.phys + " physique" + (x.phys > 1 ? "s" : "") + " · " + x.vm + " VM" : "—"),
+                React.createElement('div', { style: { display: "flex", gap: 5, flexWrap: "wrap" } }, pts.length ? pts : React.createElement('span', { style: { fontSize: 12, color: "#BBB" } }, "—")),
+                React.createElement('div', { style: { fontSize: 12.5, color: x.dernier ? "#333" : "#BBB" } }, x.dernier ? fmtD(x.dernier) : "jamais"),
+                React.createElement('div', { style: { fontSize: 12, color: "#777", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: x.note }, x.note ? "📝 " + x.note.replace(/\n+/g, " · ") : "—")
+              );
+            })
+          )
+        );
+      })(),
+
+      // ===== Inventaire d'un hôtel =====
+      invHotel && invLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
+      invHotel && !invLoading && !invErr && (() => {
+        // Ordre d'affichage : chaque hôte physique puis ses VM ; VM sans hôte à la fin
+        const tops = invRows.filter(r => !r.parent_id || !invRows.some(p => p.id === r.parent_id)).sort((a, b) => (a.ordre || 0) - (b.ordre || 0));
+        const liste = [];
+        tops.forEach(t => {
+          liste.push({ r: t, vm: false });
+          invRows.filter(r => r.parent_id === t.id).sort((a, b) => (a.ordre || 0) - (b.ordre || 0)).forEach(r => liste.push({ r, vm: true }));
+        });
+        const nPb = invRows.filter(r => problemes(r).length).length;
+        const dernier = invRows.map(r => r.date_controle).filter(Boolean).sort().pop();
+        const sel = (r, champ, options, w) => {
+          const m = ouiNon(r[champ]);
+          return React.createElement('select', { value: r[champ] || "", onChange: e => invMaj(r, { [champ]: e.target.value || null }),
+            style: { ...inS, minWidth: w || 70, fontWeight: 700, color: m.c, background: r[champ] ? m.bg : "white" } },
+            React.createElement('option', { value: "" }, "—"), options.map(o => React.createElement('option', { key: o, value: o }, o)));
+        };
+        const txt = (r, champ, ph, w, extra) => React.createElement('input', Object.assign({ key: r.id + champ + (r.maj_le || ""), defaultValue: r[champ] || "", placeholder: ph || "",
+          onBlur: e => { const v = e.target.value.trim(); if (v !== (r[champ] || "")) invMaj(r, { [champ]: v || null }); }, style: { ...inS, minWidth: w || 90 } }, extra || {}));
+        const date = (r, champ) => React.createElement('input', { type: "date", value: r[champ] || "", onChange: e => invMaj(r, { [champ]: e.target.value || null }), style: { ...inS, minWidth: 128 } });
+        const th = (t, extra) => React.createElement('th', { style: Object.assign({ padding: "7px 8px", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".03em", textAlign: "left", whiteSpace: "nowrap", background: SB, color: "white", position: "sticky", top: 0 }, extra || {}) }, t);
+        const grp = (t, n, c) => React.createElement('th', { colSpan: n, style: { padding: "5px 8px", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textAlign: "left", background: c, color: "white", borderLeft: "2px solid white" } }, t);
+        const td = (contenu, extra) => React.createElement('td', { style: Object.assign({ padding: "5px 6px", borderTop: "1px solid #F0F0F5", verticalAlign: "middle" }, extra || {}) }, contenu);
+        return React.createElement('div', null,
+          // Résumé
+          React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" } },
+            React.createElement('div', { style: { flex: 1, minWidth: 200 } },
+              React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, (hotel ? hotel.name : "") + " — inventaire serveurs"),
+              React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 2 } },
+                invRows.filter(r => r.type === "Physique").length + " hôte(s) physique(s) · " + invRows.filter(r => r.type === "VM").length + " VM" + (dernier ? " · dernier contrôle le " + fmtD(dernier) : " · jamais contrôlé"))),
+            nPb > 0 ? React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: "#C53030", background: "#FDE2E2", padding: "5px 12px", borderRadius: 20 } }, "⚠️ " + nPb + " serveur" + (nPb > 1 ? "s" : "") + " à corriger")
+              : invRows.length > 0 && React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: "#2F855A", background: "#E6F6EA", padding: "5px 12px", borderRadius: 20 } }, "✅ Rien à corriger")),
+          invRows.length === 0 && React.createElement('div', { style: { padding: 32, textAlign: "center", color: "#888", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0", marginBottom: 12 } },
+            "Aucun serveur inventorié pour " + (hotel ? hotel.name : "cet hôtel") + ". Cliquez sur « + Ajouter un hôte physique », puis « + VM » sur la ligne de l'hôte."),
+          // Tableau (défilement horizontal, colonne Serveur figée)
+          invRows.length > 0 && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "auto", maxHeight: "70vh", marginBottom: 12 } },
+            React.createElement('table', { style: { borderCollapse: "separate", borderSpacing: 0, width: "100%", fontSize: 12.5 } },
+              React.createElement('thead', null,
+                React.createElement('tr', null, grp("SERVEUR", 6, "#2D3748"), grp("MISES À JOUR", 2, "#2B6CB0"), grp("CARE PACK", 5, "#6B46C1"), grp("ANTIVIRUS", 3, "#C05621"), grp("CONTRÔLE", 4, "#2F855A")),
+                React.createElement('tr', null,
+                  th("Serveur", { left: 0, zIndex: 3, minWidth: 190 }), th("Physique / VM"), th("Rôle"), th("OS / Hyperviseur"), th("Version / Build"), th(""),
+                  th("À jour ?"), th("Dernière MAJ"),
+                  th("Care Pack ?"), th("N° série / Réf."), th("Fin Care Pack"), th("Jours"), th("Statut"),
+                  th("Antivirus ?"), th("Nom"), th("À jour ?"),
+                  th("Date contrôle"), th("Technicien"), th("Commentaire"), th(""))),
+              React.createElement('tbody', null,
+                liste.map(({ r, vm }) => {
+                  const cp = invCarePack(r);
+                  const pb = problemes(r);
+                  const fond = vm ? "white" : "#F7F7FB";
+                  return React.createElement('tr', { key: r.id, style: { background: fond } },
+                    td(React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 6, paddingLeft: vm ? 18 : 0 } },
+                        React.createElement('span', { style: { color: "#BBB" } }, vm ? "└" : ""),
+                        React.createElement('span', null, r.type === "Physique" ? "🖥️" : "▫️"),
+                        txt(r, "nom", "Nom", 120, { style: { ...inS, minWidth: 120, fontWeight: 700, color: "#1a1a3e", background: fond } }),
+                        pb.length > 0 && React.createElement('span', { title: pb.join(" · "), style: { color: "#C53030", fontSize: 13, cursor: "help" } }, "⚠")),
+                      { position: "sticky", left: 0, zIndex: 1, background: fond, borderLeft: "4px solid " + (pb.length ? "#C53030" : r.type === "Physique" ? "#2D3748" : "transparent") }),
+                    td(React.createElement('select', { value: r.type || "", onChange: e => invMaj(r, { type: e.target.value || null }), style: { ...inS, minWidth: 92 } },
+                      React.createElement('option', { value: "" }, "—"), ["Physique", "VM"].map(o => React.createElement('option', { key: o, value: o }, o)))),
+                    td(txt(r, "role", "Rôle", 110)),
+                    td(txt(r, "os", "OS", 160, { list: "inv-os" })),
+                    td(txt(r, "version", "Version / build", 140)),
+                    td(r.type === "Physique" ? React.createElement('button', { onClick: () => invAjouter(r), title: "Ajouter une VM sur cet hôte", style: { padding: "4px 8px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } }, "+ VM") : null),
+                    td(sel(r, "a_jour", ["Oui", "Non"])), td(date(r, "derniere_maj")),
+                    td(sel(r, "care_pack", ["Oui", "Non", "N/A"])), td(txt(r, "care_pack_ref", "N° série / réf.", 120)), td(date(r, "care_pack_fin")),
+                    td(React.createElement('span', { style: { fontWeight: 700, color: cp.c } }, cp.j === null ? "" : String(cp.j)), { textAlign: "right", background: "#F4F4F8" }),
+                    td(cp.l ? React.createElement('span', { style: { fontSize: 11, fontWeight: 700, color: cp.c, background: cp.bg, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, cp.l) : null, { background: "#F4F4F8" }),
+                    td(sel(r, "antivirus", ["Oui", "Non"])), td(txt(r, "antivirus_nom", "Nom", 90, { list: "inv-av" })), td(sel(r, "av_a_jour", ["Oui", "Non"])),
+                    td(date(r, "date_controle")), td(txt(r, "technicien", "Technicien", 90, { list: "inv-techs" })), td(txt(r, "commentaire", "Commentaire", 200)),
+                    td(React.createElement('button', { onClick: () => invSupprimer(r), title: "Supprimer cette ligne", style: { padding: "3px 7px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "🗑"))
+                  );
+                }))
+            )
+          ),
+          // Notes / actions
+          React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, padding: "12px 16px" } },
+            React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e", marginBottom: 6 } }, "📝 Notes / actions à mener"),
+            React.createElement('textarea', { key: invHotel + ":" + (invNotes ? "1" : "0"), defaultValue: (invNotes && invNotes.notes) || "", onBlur: e => invEnregNotes(e.target.value),
+              placeholder: "Ex. : NAS à inventorier, mettre à jour ESXi / Unifi / Veeam…", rows: 4, style: { ...inS, fontSize: 13, resize: "vertical", lineHeight: 1.5 } }),
+            invNotes && invNotes.maj_par && React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 4 } }, "Modifié par " + invNotes.maj_par + (invNotes.maj_le ? " le " + new Date(invNotes.maj_le).toLocaleDateString("fr-FR") : ""))),
+          React.createElement('datalist', { id: "inv-os" }, OS_LISTE.map(n => React.createElement('option', { key: n, value: n }))),
+          React.createElement('datalist', { id: "inv-av" }, ["SOPHOS", "Windows Defender", "Aucun"].map(n => React.createElement('option', { key: n, value: n }))),
+          React.createElement('datalist', { id: "inv-techs" }, nomsTech.map(n => React.createElement('option', { key: n, value: n })))
+        );
+      })()
+    );
+  }
+
   if (page === "sophos" && isAdmin) {
     const SEV = { high: { l: "Haute", c: "#C53030", bg: "#FDECEC" }, medium: { l: "Moyenne", c: "#B7791F", bg: "#FFF6E5" }, low: { l: "Faible", c: "#718096", bg: "#F0F0F4" } };
     const sevMeta = (s) => SEV[s] || { l: s || "—", c: "#718096", bg: "#F0F0F4" };
@@ -10473,7 +10747,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "checklist" ? "Check-list sécurité serveurs" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "checklist" ? "Check-list sécurité serveurs" : page === "inventaire" ? "Inventaire serveurs — versions, Care Pack, antivirus" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
