@@ -9070,7 +9070,7 @@ const nav = isAdmin
           ),
           React.createElement('div', { style: { fontSize: 12, color: "#777", marginBottom: 14, lineHeight: 1.5 } },
             bkAlerte.mode === "run"
-              ? "Les tickets ci-dessous ont été créés directement dans Support → Tickets. La vérification tourne aussi automatiquement toutes les heures."
+              ? "Les tickets ci-dessous ont été créés directement dans Support → Tickets. La vérification tourne aussi automatiquement toutes les heures, sans clic : 1er ticket après 24 h de défaut, puis un nouveau ticket de relance toutes les 12 h tant que la sauvegarde reste en rouge."
               : "Simulation : rien n'a été créé. Vérifiez la liste, puis cliquez sur « Créer les tickets ». Ensuite, la vérification tourne automatiquement toutes les heures."),
           bkAlerte.loading && React.createElement('div', { style: { padding: 20, textAlign: "center", color: "#999", fontSize: 13 } }, "Vérification des sauvegardes et création des tickets…"),
           bkAlerte.err && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, "Erreur : " + bkAlerte.err),
@@ -9087,11 +9087,14 @@ const nav = isAdmin
             const badge = (st) => React.createElement('span', { style: { fontSize: 10.5, fontWeight: 700, color: "#fff", background: String(st).toLowerCase() === "failure" ? "#C53030" : "#DD6B20", padding: "2px 8px", borderRadius: 12, flexShrink: 0 } }, String(st).toLowerCase() === "failure" ? "Échec" : "Avertissement");
             const ligneStd = (x) => [badge(x.statut), React.createElement('b', { key: "n", style: { flex: 1, minWidth: 160 } }, x.sauvegarde), React.createElement('span', { key: "h", style: { color: "#555" } }, x.hotel), React.createElement('span', { key: "d", style: { color: "#C53030", fontWeight: 600, whiteSpace: "nowrap" } }, x.duree), x.ticket && React.createElement('span', { key: "t", style: { fontFamily: "monospace", color: G2, fontWeight: 700 } }, x.ticket)];
             const aCreer = d.ticketsCrees || [];
-            const recents = (d.enDefaut || []).filter(x => !aCreer.some(y => y.sauvegarde === x.sauvegarde) && !(d.dejaSignalees || []).some(y => y.sauvegarde === x.sauvegarde));
+            const relances = d.relances || [];
+            const recents = (d.enDefaut || []).filter(x => !aCreer.some(y => y.sauvegarde === x.sauvegarde) && !relances.some(y => y.sauvegarde === x.sauvegarde) && !(d.dejaSignalees || []).some(y => y.sauvegarde === x.sauvegarde));
+            const ligneSuivi = (x) => ligneStd(x).concat(x.prochaineRelance ? [React.createElement('span', { key: "r", style: { fontSize: 11, color: "#888", whiteSpace: "nowrap" } }, "relance le " + x.prochaineRelance)] : []);
             return React.createElement('div', null,
               React.createElement('div', { style: { fontSize: 12, color: "#666", marginBottom: 12 } }, d.verifiees + " sauvegardes vérifiées · " + (d.enDefaut || []).length + " en défaut"),
               section(bkAlerte.mode === "run" ? "Tickets créés" : "Tickets qui seront créés", "#C53030", aCreer, ligneStd),
-              section("Déjà signalées (ticket ouvert)", "#DD6B20", d.dejaSignalees || [], ligneStd),
+              (relances.length > 0 || bkAlerte.mode === "run") && section(bkAlerte.mode === "run" ? "Relances (nouveau ticket, toujours en rouge)" : "Relances qui seront créées", "#9B2C2C", relances, (x) => ligneStd(x).concat(x.precedent ? [React.createElement('span', { key: "p", style: { fontSize: 11, color: "#888" } }, "suite de " + x.precedent)] : [])),
+              section("Déjà signalées — en attente de la prochaine relance", "#DD6B20", d.dejaSignalees || [], ligneSuivi),
               section("En défaut depuis moins de " + bkAlerte.heures + " h (pas encore de ticket)", "#718096", recents, ligneStd),
               section("Ignorées (justifiées par une note)", "#718096", d.ignorees || [], (x) => [React.createElement('b', { key: "n", style: { flex: 1 } }, x.sauvegarde), React.createElement('span', { key: "h", style: { color: "#888" } }, x.hotel + " — " + x.raison)]),
               (d.retablies || []).length > 0 && section("Rétablies", "#2F855A", d.retablies, (x) => [React.createElement('b', { key: "n", style: { flex: 1 } }, x.sauvegarde), React.createElement('span', { key: "t", style: { fontFamily: "monospace", color: G2 } }, x.ticket)]),
