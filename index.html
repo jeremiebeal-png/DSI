@@ -3486,6 +3486,28 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (error) { setCkErr(error.message); return; }
     setCkPoints(data || []);
   };
+  // Synthèse : état de la check-list de tous les hôtels (page d'accueil de l'onglet)
+  const [ckSynth, setCkSynth] = useState({ loading: false, points: [], serveurs: [] });
+  const [ckFiltre, setCkFiltre] = useState("tous");
+  const loadCkSynthese = async () => {
+    setCkSynth(prev => ({ ...prev, loading: true }));
+    setCkErr("");
+    try {
+      const points = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb.from("checklist_points").select("hotel_id,serveur_id,statut,date_controle,technicien").range(from, from + 999);
+        if (error) throw error;
+        (data || []).forEach(x => points.push(x));
+        if (!data || data.length < 1000) break;
+      }
+      const { data: serveurs, error: e2 } = await sb.from("checklist_serveurs").select("id,hotel_id,nom");
+      if (e2) throw e2;
+      setCkSynth({ loading: false, points, serveurs: serveurs || [] });
+    } catch (e) {
+      setCkErr((e.message || String(e)) + (/checklist_/i.test(e.message || "") ? " — le script checklist.sql a-t-il été exécuté ?" : ""));
+      setCkSynth({ loading: false, points: [], serveurs: [] });
+    }
+  };
   const ckChoisirHotel = (hid) => { setCkHotel(hid); setCkServeur(null); setCkPoints([]); setCkServeurs([]); if (hid) loadCkServeurs(hid); };
   const ckAjouterServeur = async () => {
     if (!ckHotel) return;
@@ -3524,6 +3546,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (error) { alert("Enregistrement impossible : " + error.message); loadCkPoints(pt.serveur_id); }
   };
   useEffect(() => { if (page === "checklist" && isAdmin && ckHotel && !ckServeurs.length) loadCkServeurs(ckHotel); }, [page]);
+  useEffect(() => { if (page === "checklist" && isAdmin && !ckHotel) loadCkSynthese(); }, [page, ckHotel]);
   const [soNinja, setSoNinja] = useState({});
   // Inventaire NinjaOne complet de l'organisation de chaque hôtel (pour « Sophos manquant »)
   const [soNinjaOrg, setSoNinjaOrg] = useState({});
@@ -8861,16 +8884,76 @@ const nav = isAdmin
       React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: c } }, v));
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
-        "Contrôle physique de la sécurité des serveurs, établissement par établissement. Choisissez un hôtel : seule sa check-list s'affiche. Un statut renseigné enregistre automatiquement la date du jour et votre nom."),
+        ckHotel ? "Check-list de cet établissement uniquement. Un statut renseigné enregistre automatiquement la date du jour et votre nom." : "Synthèse de tous les établissements : cliquez sur un hôtel pour ouvrir sa check-list. Un point reste vide tant que personne ne l'a vérifié sur place."),
       // Sélection de l'hôtel (un seul à la fois)
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
         React.createElement('select', { id: "ck-hotel", value: ckHotel, onChange: e => ckChoisirHotel(e.target.value), style: { ...inS, width: isMobile ? "100%" : 320, padding: "9px 10px", fontSize: 13.5, fontWeight: 600 } },
           React.createElement('option', { value: "" }, "— Choisir un établissement —"),
           [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
-        ckHotel && React.createElement('button', { onClick: ckAjouterServeur, style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un serveur")
+        ckHotel && React.createElement('button', { onClick: ckAjouterServeur, style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un serveur"),
+        ckHotel && React.createElement('button', { onClick: () => ckChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels")
       ),
       ckErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, ckErr),
-      !ckHotel && React.createElement('div', { style: { padding: 40, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px dashed #DDD" } }, "Sélectionnez un établissement pour afficher sa check-list."),
+      !ckHotel && (() => {
+        // ===== Synthèse : un hôtel par ligne, état de sa check-list =====
+        const ETATS = {
+          nonverif: { l: "Non vérifié", c: "#718096", bg: "#EEF0F4", rang: 0 },
+          ko:       { l: "KO à corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
+          encours:  { l: "En cours", c: "#8A6D1F", bg: "#FFF3C4", rang: 2 },
+          ok:       { l: "Vérifié", c: "#2F855A", bg: "#E6F6EA", rang: 3 },
+          aucune:   { l: "Pas de check-list", c: "#A0AEC0", bg: "#F6F6FA", rang: 4 },
+        };
+        const lignes = hotels.map(h => {
+          const pts = ckSynth.points.filter(p => p.hotel_id === h.id);
+          const srvs = ckSynth.serveurs.filter(x => x.hotel_id === h.id);
+          const c = (v) => pts.filter(p => (p.statut || "") === v).length;
+          const total = pts.length, ok = c("OK"), ko = c("KO"), ec = c("En cours"), na = c("N/A"), vide = c("");
+          const etat = !total ? "aucune" : vide === total ? "nonverif" : ko > 0 ? "ko" : (vide > 0 || ec > 0) ? "encours" : "ok";
+          const dates = pts.map(p => p.date_controle).filter(Boolean).sort();
+          const techs = [...new Set(pts.map(p => p.technicien).filter(Boolean))];
+          return { h, srvs, total, ok, ko, ec, na, vide, etat, dernier: dates.pop() || null, techs };
+        }).sort((a, b) => ETATS[a.etat].rang - ETATS[b.etat].rang || String(a.h.name).localeCompare(String(b.h.name)));
+        const compte = (k) => lignes.filter(x => x.etat === k).length;
+        const visibles = ckFiltre === "tous" ? lignes : lignes.filter(x => x.etat === ckFiltre);
+        const chip = (k, lbl, nbv, c, bg) => React.createElement('button', { key: k, onClick: () => setCkFiltre(k),
+          style: { padding: "6px 13px", borderRadius: 20, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "1px solid " + (ckFiltre === k ? c : "#E2E2EA"), background: ckFiltre === k ? bg : "white", color: c } }, lbl + " " + nbv);
+        const cols = isMobile ? "1fr" : "minmax(0,1.3fr) 150px minmax(0,1fr) 120px minmax(0,0.8fr)";
+        return React.createElement('div', null,
+          React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
+            chip("tous", "Tous", lignes.length, "#1a1a3e", "#F1F1F6"),
+            chip("nonverif", "Non vérifiés", compte("nonverif"), ETATS.nonverif.c, ETATS.nonverif.bg),
+            chip("ko", "KO à corriger", compte("ko"), ETATS.ko.c, ETATS.ko.bg),
+            chip("encours", "En cours", compte("encours"), ETATS.encours.c, ETATS.encours.bg),
+            chip("ok", "Vérifiés", compte("ok"), ETATS.ok.c, ETATS.ok.bg),
+            compte("aucune") > 0 && chip("aucune", "Sans check-list", compte("aucune"), ETATS.aucune.c, ETATS.aucune.bg)),
+          ckSynth.loading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…"),
+          !ckSynth.loading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
+            !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
+              React.createElement('div', null, "Établissement"), React.createElement('div', null, "État"), React.createElement('div', null, "Avancement"), React.createElement('div', null, "Dernier contrôle"), React.createElement('div', null, "Technicien(s)")),
+            visibles.length === 0 && React.createElement('div', { style: { padding: 24, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucun établissement dans ce filtre."),
+            visibles.map(x => {
+              const e = ETATS[x.etat];
+              const fait = x.total - x.vide;
+              return React.createElement('div', { key: x.h.id, onClick: () => ckChoisirHotel(x.h.id),
+                style: { display: "grid", gridTemplateColumns: cols, gap: isMobile ? 6 : 12, padding: "10px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", cursor: "pointer", borderLeft: "4px solid " + e.c },
+                onMouseEnter: ev => ev.currentTarget.style.background = "#FAFAFD", onMouseLeave: ev => ev.currentTarget.style.background = "white" },
+                React.createElement('div', { style: { minWidth: 0 } },
+                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#1a1a3e" } }, x.h.name),
+                  React.createElement('div', { style: { fontSize: 11.5, color: "#999" } }, x.srvs.length ? x.srvs.map(v => v.nom).join(" · ") : "aucun serveur")),
+                React.createElement('div', null, React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: e.c, background: e.bg, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap" } }, e.l)),
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } },
+                  React.createElement('div', { style: { flex: 1, height: 7, background: "#F0F0F5", borderRadius: 4, overflow: "hidden", display: "flex", minWidth: 60 } },
+                    x.total > 0 && React.createElement('div', { style: { width: (100 * (x.ok + x.na) / x.total) + "%", background: "#2F855A" } }),
+                    x.total > 0 && React.createElement('div', { style: { width: (100 * x.ec / x.total) + "%", background: "#E2B93B" } }),
+                    x.total > 0 && React.createElement('div', { style: { width: (100 * x.ko / x.total) + "%", background: "#C53030" } })),
+                  React.createElement('span', { style: { fontSize: 11.5, color: "#555", whiteSpace: "nowrap" } }, x.total ? fait + "/" + x.total + (x.ko ? " · " + x.ko + " KO" : "") : "—")),
+                React.createElement('div', { style: { fontSize: 12.5, color: x.dernier ? "#333" : "#BBB" } }, x.dernier ? new Date(x.dernier + "T12:00:00").toLocaleDateString("fr-FR") : "jamais"),
+                React.createElement('div', { style: { fontSize: 12.5, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, x.techs.join(", ") || "—")
+              );
+            })
+          )
+        );
+      })(),
       ckHotel && ckLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
       ckHotel && !ckLoading && !ckErr && ckServeurs.length === 0 && React.createElement('div', { style: { padding: 32, textAlign: "center", color: "#888", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } },
         "Aucun serveur suivi pour " + (hotel ? hotel.name : "cet hôtel") + ". Cliquez sur « + Ajouter un serveur » : les points de contrôle du modèle sont créés automatiquement."),
