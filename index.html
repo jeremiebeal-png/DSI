@@ -3703,16 +3703,23 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const val = (i) => (i >= 0 && c[i]) ? c[i] : "";
         let nom = val(iNom), role = val(iRole);
         if (!nom && role) {
-          const m = role.match(/\(([A-Za-z0-9_.-]{2,40})\)\s*$/);
-          if (m) { nom = m[1]; role = role.replace(m[0], "").trim(); } else { nom = role; role = ""; }
+          // « AD & FS (PARALDC01) » ou « Veeam / Backup (PARALMBK, paralmbk01) » -> nom = 1er nom de machine
+          const m = role.match(/\(([^()]{2,80})\)\s*$/);
+          const premier = m ? m[1].split(/[,;\/]/)[0].trim() : "";
+          if (premier && /^[A-Za-z0-9_.-]{2,40}$/.test(premier)) { nom = premier; role = role.replace(m[0], "").trim(); }
+          else { nom = role; role = ""; }
         }
         if (!nom) return;
-        let ip = val(iIp); const mIp = ip.match(RE_IP); ip = mIp ? mIp[0] : "";
+        let ipBrut = val(iIp);
+        let ip = "", parentDansIp = "";
+        const mIp = ipBrut.match(RE_IP);
+        // « sur ESXi 10.164.210.10 » : c'est l'IP de l'hôte, pas celle de la VM
+        if (mIp && /\bsur\b|esxi|h[oô]te/i.test(ipBrut)) parentDansIp = mIp[0]; else ip = mIp ? mIp[0] : "";
         if (!ip) { const m2 = nom.match(RE_IP); if (m2) ip = m2[0]; }
         out.push({
           key: hotelId + ":" + ti + ":" + ri, hotel_id: hotelId, source: titre, section: titreCourant,
           sel: !douteux, douteux, type: physique ? "Physique" : "VM", nom: nom.slice(0, 80), role: role.slice(0, 80) || (physique ? "Hôte VMware" : ""),
-          ip, os: val(iOs) || (physique && /esxi|vmware/i.test(contexte) ? "VMware ESXi" : ""), version: val(iVer), parentRef: val(iParent),
+          ip, os: val(iOs) || (physique && /esxi|vmware/i.test(contexte) ? "VMware ESXi" : ""), version: val(iVer), parentRef: val(iParent) || parentDansIp,
         });
       });
     });
@@ -9459,8 +9466,12 @@ const nav = isAdmin
                         pb.length > 0 && React.createElement('span', { title: pb.join(" · "), style: { color: "#C53030", fontSize: 13, cursor: "help" } }, "⚠")),
                       { position: "sticky", left: 0, zIndex: 1, background: fond, borderLeft: "4px solid " + (pb.length ? "#C53030" : r.type === "Physique" ? "#2D3748" : "transparent") }),
                     td(txt(r, "ip", "IP", 110, { style: { ...inS, minWidth: 110, fontFamily: "monospace", fontSize: 12 } })),
-                    td(React.createElement('select', { value: r.type || "", onChange: e => invMaj(r, { type: e.target.value || null }), style: { ...inS, minWidth: 92 } },
-                      React.createElement('option', { value: "" }, "—"), ["Physique", "VM"].map(o => React.createElement('option', { key: o, value: o }, o)))),
+                    td(React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                      React.createElement('select', { value: r.type || "", onChange: e => invMaj(r, { type: e.target.value || null, ...(e.target.value === "Physique" ? { parent_id: null } : {}) }), style: { ...inS, minWidth: 92 } },
+                        React.createElement('option', { value: "" }, "—"), ["Physique", "VM"].map(o => React.createElement('option', { key: o, value: o }, o))),
+                      r.type === "VM" && React.createElement('select', { value: r.parent_id || "", title: "Hôte physique de cette VM", onChange: e => invMaj(r, { parent_id: e.target.value || null }), style: { ...inS, minWidth: 92, fontSize: 11, padding: "2px 4px", color: r.parent_id ? "#555" : "#B7791F" } },
+                        React.createElement('option', { value: "" }, "Hôte ?"),
+                        invRows.filter(x => x.type === "Physique" && x.id !== r.id).map(x => React.createElement('option', { key: x.id, value: x.id }, "sur " + x.nom))))),
                     td(txt(r, "role", "Rôle", 110)),
                     td(txt(r, "os", "OS", 160, { list: "inv-os" })),
                     td(txt(r, "version", "Version / build", 140)),
