@@ -1393,6 +1393,7 @@ function App() {
     { key: "tickets",    page: "planning",           icon: "📅", label: "Planning équipe", grp: "pil" },
     { key: "docs",       page: "backups",            icon: "💾", label: "Sauvegardes", grp: "pil" },
     { key: "docs",       page: "sophos",             icon: "🔒", label: "Sécurité Sophos", grp: "pil" },
+    { key: "docs",       page: "checklist",          icon: "✅", label: "Check-list", grp: "pil" },
     { key: "tickets",    page: "rapport-jour",       icon: "📄", label: "Rapport du jour", grp: "rap" },
     { key: "tickets",    page: "rapport-tickets",    icon: "📈", label: "Suivi des tickets", grp: "rap" },
     { key: "rapports",   page: "rapports",           icon: "📝", label: "Rapports d'intervention", grp: "rap" },
@@ -3447,6 +3448,82 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   // NinjaOne : état des postes problématiques (muets / mauvaise santé), par hôtel
+  // ============================================================
+  //  CHECK-LIST — contrôle physique des serveurs, UN hôtel à la fois.
+  //  Tables : checklist_modele (points types), checklist_serveurs (par hôtel),
+  //  checklist_points (copie du modèle pour chaque serveur, remplie par les techniciens).
+  // ============================================================
+  const [ckHotel, setCkHotel] = useState("");
+  const [ckServeurs, setCkServeurs] = useState([]);
+  const [ckServeur, setCkServeur] = useState(null);
+  const [ckPoints, setCkPoints] = useState([]);
+  const [ckLoading, setCkLoading] = useState(false);
+  const [ckErr, setCkErr] = useState("");
+  const CK_STATUTS = [
+    { v: "OK", c: "#2F855A", bg: "#E6F6EA" },
+    { v: "KO", c: "#C53030", bg: "#FDE2E2" },
+    { v: "En cours", c: "#8A6D1F", bg: "#FFF3C4" },
+    { v: "N/A", c: "#718096", bg: "#EEF0F4" },
+  ];
+  const ckMeta = (v) => CK_STATUTS.find(x => x.v === v) || { v: "", c: "#999", bg: "#FFFBEB" };
+  const loadCkServeurs = async (hotelId, garder) => {
+    setCkErr(""); setCkLoading(true);
+    try {
+      const { data, error } = await sb.from("checklist_serveurs").select("*").eq("hotel_id", hotelId).order("nom");
+      if (error) throw error;
+      const liste = data || [];
+      setCkServeurs(liste);
+      const sel = (garder && liste.find(x => x.id === garder)) || liste[0] || null;
+      setCkServeur(sel ? sel.id : null);
+      if (sel) await loadCkPoints(sel.id); else setCkPoints([]);
+    } catch (e) {
+      setCkErr((e.message || String(e)) + (/checklist_/i.test(e.message || "") ? " — le script checklist.sql a-t-il été exécuté ?" : ""));
+      setCkServeurs([]); setCkPoints([]);
+    } finally { setCkLoading(false); }
+  };
+  const loadCkPoints = async (serveurId) => {
+    const { data, error } = await sb.from("checklist_points").select("*").eq("serveur_id", serveurId).order("ordre");
+    if (error) { setCkErr(error.message); return; }
+    setCkPoints(data || []);
+  };
+  const ckChoisirHotel = (hid) => { setCkHotel(hid); setCkServeur(null); setCkPoints([]); setCkServeurs([]); if (hid) loadCkServeurs(hid); };
+  const ckAjouterServeur = async () => {
+    if (!ckHotel) return;
+    const nom = (window.prompt("Nom du serveur à contrôler (ex. VEEAM, ESXi-01, AD) :", "") || "").trim();
+    if (!nom) return;
+    try {
+      const { data: srv, error } = await sb.from("checklist_serveurs").insert({ hotel_id: ckHotel, nom }).select().single();
+      if (error) throw error;
+      const { data: modele, error: e2 } = await sb.from("checklist_modele").select("*").order("ordre");
+      if (e2) throw e2;
+      if ((modele || []).length) {
+        const { error: e3 } = await sb.from("checklist_points").insert(modele.map(m => ({ serveur_id: srv.id, hotel_id: ckHotel, ordre: m.ordre, categorie: m.categorie, tache: m.tache })));
+        if (e3) throw e3;
+      }
+      await loadCkServeurs(ckHotel, srv.id);
+    } catch (e) { alert("Erreur : " + (e.message || e)); }
+  };
+  const ckSupprimerServeur = async (srv) => {
+    if (!srv || !confirm("Supprimer la check-list du serveur « " + srv.nom + " » et tous ses contrôles ?")) return;
+    const { error } = await sb.from("checklist_serveurs").delete().eq("id", srv.id);
+    if (error) { alert("Erreur : " + error.message); return; }
+    loadCkServeurs(ckHotel);
+  };
+  // Mise à jour d'un point : affichage immédiat puis enregistrement.
+  // Statut changé -> date du jour et technicien connecté pré-remplis s'ils sont vides.
+  const ckMaj = async (pt, champs) => {
+    const maj = { ...champs };
+    if ("statut" in champs) {
+      if (!pt.date_controle) maj.date_controle = new Date().toISOString().slice(0, 10);
+      if (!pt.technicien) maj.technicien = adminFromName().split(" ")[0];
+    }
+    maj.maj_le = new Date().toISOString();
+    maj.maj_par = adminFromName();
+    setCkPoints(prev => prev.map(x => x.id === pt.id ? { ...x, ...maj } : x));
+    const { error } = await sb.from("checklist_points").update(maj).eq("id", pt.id);
+    if (error) { alert("Enregistrement impossible : " + error.message); loadCkPoints(pt.serveur_id); }
+  };
+  useEffect(() => { if (page === "checklist" && isAdmin && ckHotel && !ckServeurs.length) loadCkServeurs(ckHotel); }, [page]);
   const [soNinja, setSoNinja] = useState({});
   // Inventaire NinjaOne complet de l'organisation de chaque hôtel (pour « Sophos manquant »)
   const [soNinjaOrg, setSoNinjaOrg] = useState({});
@@ -8767,6 +8844,88 @@ const nav = isAdmin
   }
 
   // ---------- SÉCURITÉ SOPHOS (admin) ----------
+  if (page === "checklist" && isAdmin) {
+    const hotel = hotels.find(x => x.id === ckHotel);
+    const srv = ckServeurs.find(x => x.id === ckServeur);
+    const nb = (v) => ckPoints.filter(p => (p.statut || "") === v).length;
+    const total = ckPoints.length;
+    const nOk = nb("OK"), nKo = nb("KO"), nEc = nb("En cours"), nNa = nb("N/A"), nVide = nb("");
+    const pct = total ? Math.round(100 * (nOk + nNa) / total) : 0;
+    const dernier = ckPoints.map(p => p.date_controle).filter(Boolean).sort().pop();
+    const inS = { padding: "6px 8px", border: "1px solid #E2E2EA", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", background: "white", width: "100%", boxSizing: "border-box" };
+    const cats = [];
+    ckPoints.forEach(p => { const c = p.categorie || "Autre"; if (!cats.includes(c)) cats.push(c); });
+    const nomsTech = [...new Set(techniciens.map(t => String(t.nom || "").split(" ")[0]).filter(Boolean))];
+    const tuile = (lbl, v, c, bg) => React.createElement('div', { style: { background: bg, borderRadius: 10, padding: "10px 14px", minWidth: 92 } },
+      React.createElement('div', { style: { fontSize: 11, color: c, fontWeight: 600 } }, lbl),
+      React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: c } }, v));
+    content = React.createElement('div', null,
+      React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
+        "Contrôle physique de la sécurité des serveurs, établissement par établissement. Choisissez un hôtel : seule sa check-list s'affiche. Un statut renseigné enregistre automatiquement la date du jour et votre nom."),
+      // Sélection de l'hôtel (un seul à la fois)
+      React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
+        React.createElement('select', { id: "ck-hotel", value: ckHotel, onChange: e => ckChoisirHotel(e.target.value), style: { ...inS, width: isMobile ? "100%" : 320, padding: "9px 10px", fontSize: 13.5, fontWeight: 600 } },
+          React.createElement('option', { value: "" }, "— Choisir un établissement —"),
+          [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+        ckHotel && React.createElement('button', { onClick: ckAjouterServeur, style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un serveur")
+      ),
+      ckErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, ckErr),
+      !ckHotel && React.createElement('div', { style: { padding: 40, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px dashed #DDD" } }, "Sélectionnez un établissement pour afficher sa check-list."),
+      ckHotel && ckLoading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement…"),
+      ckHotel && !ckLoading && !ckErr && ckServeurs.length === 0 && React.createElement('div', { style: { padding: 32, textAlign: "center", color: "#888", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } },
+        "Aucun serveur suivi pour " + (hotel ? hotel.name : "cet hôtel") + ". Cliquez sur « + Ajouter un serveur » : les points de contrôle du modèle sont créés automatiquement."),
+      // Onglets serveurs
+      ckHotel && ckServeurs.length > 0 && React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 } },
+        ckServeurs.map(s => React.createElement('button', { key: s.id, onClick: () => { setCkServeur(s.id); loadCkPoints(s.id); },
+          style: { padding: "7px 14px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: "pointer", border: "1px solid " + (s.id === ckServeur ? G : "#DDD"), background: s.id === ckServeur ? "#FBF3DC" : "white", color: s.id === ckServeur ? "#7A5E12" : "#555" } }, "🖥️ " + s.nom))),
+      // Synthèse
+      srv && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, padding: "14px 16px", marginBottom: 12 } },
+        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 } },
+          React.createElement('div', { style: { flex: 1, minWidth: 200 } },
+            React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, (hotel ? hotel.name : "") + " — " + srv.nom),
+            React.createElement('div', { style: { fontSize: 12, color: "#888", marginTop: 2 } }, total + " points de contrôle" + (dernier ? " · dernier contrôle le " + new Date(dernier + "T12:00:00").toLocaleDateString("fr-FR") : " · jamais contrôlé"))),
+          React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+            tuile("OK", nOk, "#2F855A", "#E6F6EA"), tuile("KO", nKo, "#C53030", "#FDE2E2"), tuile("En cours", nEc, "#8A6D1F", "#FFF3C4"), tuile("À faire", nVide, "#555", "#F1F1F6"))
+        ),
+        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10 } },
+          React.createElement('div', { style: { flex: 1, height: 8, background: "#F0F0F5", borderRadius: 4, overflow: "hidden", display: "flex" } },
+            total > 0 && React.createElement('div', { style: { width: (100 * (nOk + nNa) / total) + "%", background: "#2F855A" } }),
+            total > 0 && React.createElement('div', { style: { width: (100 * nEc / total) + "%", background: "#E2B93B" } }),
+            total > 0 && React.createElement('div', { style: { width: (100 * nKo / total) + "%", background: "#C53030" } })),
+          React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: "#1a1a3e", whiteSpace: "nowrap" } }, pct + " % conforme"),
+          React.createElement('button', { onClick: () => ckSupprimerServeur(srv), title: "Supprimer ce serveur de la check-list", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Supprimer")
+        )
+      ),
+      // Tableau des points
+      srv && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
+        !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: "40px minmax(0,1fr) 130px 140px 130px minmax(0,0.8fr)", gap: 10, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
+          React.createElement('div', null, "N°"), React.createElement('div', null, "Tâche / point de contrôle"), React.createElement('div', null, "Statut"), React.createElement('div', null, "Date contrôle"), React.createElement('div', null, "Technicien"), React.createElement('div', null, "Commentaire")),
+        cats.map(cat => React.createElement(React.Fragment, { key: cat },
+          React.createElement('div', { style: { padding: "7px 14px", background: "#F7F7FB", borderTop: "1px solid #ECECF2", fontSize: 11.5, fontWeight: 700, color: G2, textTransform: "uppercase", letterSpacing: ".05em" } }, cat),
+          ckPoints.filter(p => (p.categorie || "Autre") === cat).map(p => {
+            const m = ckMeta(p.statut || "");
+            const champs = [
+              React.createElement('select', { key: "s", value: p.statut || "", onChange: e => ckMaj(p, { statut: e.target.value || null }), style: { ...inS, background: m.bg, color: m.c, fontWeight: 700, borderColor: p.statut ? m.bg : "#F0D98A" } },
+                React.createElement('option', { value: "" }, "À faire"), CK_STATUTS.map(s => React.createElement('option', { key: s.v, value: s.v }, s.v))),
+              React.createElement('input', { key: "d", type: "date", value: p.date_controle || "", onChange: e => ckMaj(p, { date_controle: e.target.value || null }), style: inS }),
+              React.createElement('input', { key: "t", list: "ck-techs", defaultValue: p.technicien || "", onBlur: e => { if ((e.target.value || "") !== (p.technicien || "")) ckMaj(p, { technicien: e.target.value.trim() || null }); }, placeholder: "Technicien", style: inS }),
+              React.createElement('input', { key: "c", defaultValue: p.commentaire || "", onBlur: e => { if ((e.target.value || "") !== (p.commentaire || "")) ckMaj(p, { commentaire: e.target.value.trim() || null }); }, placeholder: "Commentaire", style: inS })
+            ];
+            return isMobile
+              ? React.createElement('div', { key: p.id, style: { padding: "10px 14px", borderTop: "1px solid #F0F0F5", borderLeft: "4px solid " + (p.statut ? m.c : "#E2B93B") } },
+                  React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e", marginBottom: 8 } }, p.ordre + ". " + p.tache),
+                  React.createElement('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } }, champs[0], champs[1], champs[2], champs[3]))
+              : React.createElement('div', { key: p.id, style: { display: "grid", gridTemplateColumns: "40px minmax(0,1fr) 130px 140px 130px minmax(0,0.8fr)", gap: 10, padding: "8px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", borderLeft: "4px solid " + (p.statut ? m.c : "transparent") } },
+                  React.createElement('div', { style: { fontSize: 12.5, color: "#999", fontWeight: 700 } }, p.ordre),
+                  React.createElement('div', { style: { fontSize: 13, color: "#1a1a3e", lineHeight: 1.4 } }, p.tache),
+                  champs[0], champs[1], champs[2], champs[3]);
+          })
+        )),
+        React.createElement('datalist', { id: "ck-techs" }, nomsTech.map(n => React.createElement('option', { key: n, value: n })))
+      )
+    );
+  }
+
   if (page === "sophos" && isAdmin) {
     const SEV = { high: { l: "Haute", c: "#C53030", bg: "#FDECEC" }, medium: { l: "Moyenne", c: "#B7791F", bg: "#FFF6E5" }, low: { l: "Faible", c: "#718096", bg: "#F0F0F4" } };
     const sevMeta = (s) => SEV[s] || { l: s || "—", c: "#718096", bg: "#F0F0F4" };
@@ -10151,7 +10310,7 @@ const nav = isAdmin
       )
     );
   }
-  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "checklist" ? "Check-list sécurité serveurs" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile
