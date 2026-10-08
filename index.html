@@ -9273,6 +9273,7 @@ const nav = isAdmin
                         cell("78px", pastille(hm.l, hm.c, hm.bg)),
                         cell("150px", React.createElement('span', { style: { color: muet ? "#C05621" : "#666", fontWeight: muet ? 600 : 400 }, title: p.last_seen_at ? "Dernière remontée Sophos : " + fmtDateHeureFr2(p.last_seen_at) : "" }, sophosTxt.charAt(0).toUpperCase() + sophosTxt.slice(1))),
                         cell("150px", njCell),
+                        (() => { const ips = (p.ips ? String(p.ips).split(/[,\s]+/).filter(Boolean) : []).concat((n && n.ip_locales) || []); const u = [...new Set(ips)]; return cell("120px", u.length ? React.createElement('span', { style: { fontFamily: "monospace", fontSize: 12, color: "#2B6CB0" }, title: u.join(", ") }, u[0] + (u.length > 1 ? " +" + (u.length - 1) : "")) : React.createElement('span', { style: { color: "#BBB" } }, "—")); })(),
                         cell("1 1 160px", (n && n.utilisateur) || p.dernier_utilisateur ? "👤 " + ((n && n.utilisateur) || p.dernier_utilisateur) : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
                         React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
                           n && n.doublons && pastille("doublon ×" + n.doublons, "#B7791F", "#FFF6E5"),
@@ -9294,7 +9295,7 @@ const nav = isAdmin
                         problemes.length > 0 && React.createElement('span', { style: { color: "#C53030", fontWeight: 600 } }, "⚠ " + problemes.join(" · ")),
                         n && n.dernier_contact && React.createElement('span', null, "Dernier contact NinjaOne : " + fmtDateHeureFr2(n.dernier_contact)),
                         n && n.dernier_demarrage && React.createElement('span', null, "Démarré le " + fmtDateHeureFr2(n.dernier_demarrage)),
-                        n && n.ip_publique && React.createElement('span', null, "IP " + n.ip_publique),
+                        n && n.ip_publique && React.createElement('span', null, "IP publique " + n.ip_publique),
                         n && n.modele && React.createElement('span', null, n.modele),
                         p.os && React.createElement('span', null, p.os)
                       )
@@ -9309,7 +9310,8 @@ const nav = isAdmin
                       cell("150px", React.createElement('span', null,
                         React.createElement('span', { style: { color: d.en_ligne ? "#2F855A" : "#A0AEC0", marginRight: 5 } }, "●"),
                         d.en_ligne ? React.createElement('b', { style: { color: "#2F855A" } }, "En ligne") : React.createElement('span', null, "Vu ", React.createElement('b', null, depuisTxt(d.dernier_contact))))),
-                      cell("1 1 160px", d.nom !== d.hostname ? d.nom : "", { color: "#555", fontSize: 12 }),
+                      cell("120px", (d.ips || []).length ? React.createElement('span', { style: { fontFamily: "monospace", fontSize: 12, color: "#2B6CB0" }, title: d.ips.join(", ") }, d.ips[0] + (d.ips.length > 1 ? " +" + (d.ips.length - 1) : "")) : React.createElement('span', { style: { color: "#BBB" } }, "—")),
+                      cell("1 1 160px", [d.nom !== d.hostname ? d.nom : "", d.utilisateur ? "👤 " + d.utilisateur : ""].filter(Boolean).join(" · "), { color: "#555", fontSize: 12 }),
                       React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
                         d.lien && React.createElement('a', { href: d.lien, target: "_blank", rel: "noopener noreferrer", title: "Ouvrir dans NinjaOne", style: { color: G2, fontWeight: 600, textDecoration: "none", fontSize: 12 } }, "NinjaOne ↗"))
                     )
@@ -9347,7 +9349,7 @@ const nav = isAdmin
                         open && React.createElement('div', null,
                           // En-tête de colonnes
                           React.createElement('div', { style: { display: "flex", gap: 10, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".03em", background: "#FAFAFC", borderTop: "1px solid #F0F0F5" } },
-                            cell("200px", "Poste"), cell("78px", "Santé"), cell("150px", "Sophos"), cell("150px", "NinjaOne"), cell("1 1 160px", "Utilisateur / détail")),
+                            cell("200px", "Poste"), cell("78px", "Santé"), cell("150px", "Sophos"), cell("150px", "NinjaOne"), cell("120px", "Adresse IP"), cell("1 1 160px", "Utilisateur / détail")),
                           liste.map(p => cat.k === "sansSophos" ? ligneNinja(p) : lignePoste(p, cat))
                         )
                       );
