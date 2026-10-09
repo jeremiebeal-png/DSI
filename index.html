@@ -3840,6 +3840,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [soNonAffectes, setSoNonAffectes] = useState([]);
   const [soSuggest, setSoSuggest] = useState({ loading: false, err: "", parPoste: {} });
   const [soVoirIgnores, setSoVoirIgnores] = useState(false);
+  const [soNaOuvert, setSoNaOuvert] = useState({}); // bloc « PC non affectés » déplié (replié par défaut)
   const [soASupprimer, setSoASupprimer] = useState([]);
   // Coche / décoche « à supprimer de Sophos Central » (mémorisé dans sophos_postes)
   const soMarquerSuppression = async (p, val) => {
@@ -9825,19 +9826,22 @@ const nav = isAdmin
                 )
               );
             };
+            const ouvertNa = !!soNaOuvert[t];
             return React.createElement('div', { key: t, style: { background: "white", border: "1px solid #F0D98A", borderLeft: "5px solid #B7791F", borderRadius: 10, overflow: "hidden", marginBottom: 6 } },
-              React.createElement('div', { style: { padding: "11px 15px", background: "#FFFBEB", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+              React.createElement('div', { onClick: () => setSoNaOuvert(prev => ({ ...prev, [t]: !prev[t] })), title: ouvertNa ? "Replier" : "Déplier la liste des PC à affecter",
+                  style: { padding: ouvertNa ? "11px 15px" : "8px 15px", background: "#FFFBEB", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", cursor: "pointer", userSelect: "none" } },
                 React.createElement('div', { style: { flex: "1 1 260px" } },
-                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#8A6D1F" } }, "🔗 " + nomSophos(t) + " — " + liste.length + " PC non affecté" + (liste.length > 1 ? "s" : "")),
-                  React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 2 } }, "Hôtels du compte : " + hotelsT.map(x => x.name).join(" · ") + ". Affinez les règles via « Configurer » ou affectez les PC ci-dessous (mémorisé).")),
+                  React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#8A6D1F" } }, (ouvertNa ? "▼ " : "▶ ") + "🔗 " + nomSophos(t) + " — " + liste.length + " PC non affecté" + (liste.length > 1 ? "s" : "")),
+                  ouvertNa && React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 2 } }, "Hôtels du compte : " + hotelsT.map(x => x.name).join(" · ") + ". Affinez les règles via « Configurer » ou affectez les PC ci-dessous (mémorisé).")),
+                ouvertNa && React.createElement('div', { onClick: e => e.stopPropagation(), style: { display: "flex", gap: 8, flexWrap: "wrap" } },
                 liste.length > 0 && btn(soSuggest.loading ? "🔎 Recherche…" : "🔎 Suggérer via NinjaOne", () => soSuggererNinja(liste), { disabled: soSuggest.loading }),
-                avecSugg.length > 0 && btn("✓ Appliquer " + avecSugg.length + " suggestion" + (avecSugg.length > 1 ? "s" : ""), () => soAffecter(t, avecSugg.map(x => ({ sophosId: x.p.sophos_id, hostname: x.p.hostname, hotelId: x.sg.hotel.id })), avecSugg.length + " PC affecté(s) selon NinjaOne"), { style: { background: "#2F855A", border: "none", color: "white", fontWeight: 600 } })
+                avecSugg.length > 0 && btn("✓ Appliquer " + avecSugg.length + " suggestion" + (avecSugg.length > 1 ? "s" : ""), () => soAffecter(t, avecSugg.map(x => ({ sophosId: x.p.sophos_id, hostname: x.p.hostname, hotelId: x.sg.hotel.id })), avecSugg.length + " PC affecté(s) selon NinjaOne"), { style: { background: "#2F855A", border: "none", color: "white", fontWeight: 600 } }))
               ),
-              soSuggest.err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", padding: "6px 15px" } }, "NinjaOne : " + soSuggest.err),
-              liste.length === 0
+              ouvertNa && soSuggest.err && React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", padding: "6px 15px" } }, "NinjaOne : " + soSuggest.err),
+              !ouvertNa ? null : liste.length === 0
                 ? React.createElement('div', { style: { padding: "10px 15px", fontSize: 12.5, color: "#2F855A" } }, "✅ Tous les PC de ce compte sont affectés.")
                 : React.createElement('div', { style: { maxHeight: 420, overflowY: "auto" } }, liste.map(p => ligne(p, false))),
-              ignores.length > 0 && React.createElement('div', { style: { borderTop: "1px solid #F0E6C8" } },
+              ouvertNa && ignores.length > 0 && React.createElement('div', { style: { borderTop: "1px solid #F0E6C8" } },
                 React.createElement('div', { onClick: () => setSoVoirIgnores(!soVoirIgnores), style: { padding: "7px 15px", fontSize: 12, color: "#888", cursor: "pointer" } }, (soVoirIgnores ? "▼ " : "▶ ") + "🚫 " + ignores.length + " PC ignoré" + (ignores.length > 1 ? "s" : "") + " (hors de nos hôtels)"),
                 soVoirIgnores && ignores.map(p => ligne(p, true)))
             );
