@@ -3549,9 +3549,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!ckServeur || !source) return;
     try {
       let pts = [];
-      if (source === "__modele") {
-        const { data, error } = await sb.from("checklist_modele").select("ordre,categorie,tache").order("ordre");
-        if (error) throw error; pts = data || [];
+      if (String(source).startsWith("__modele:")) {
+        const type = source.split(":")[1];
+        let r = await sb.from("checklist_modele").select("ordre,categorie,tache").eq("type_serveur", type).order("ordre");
+        if (r.error && type === "VEEAM") r = await sb.from("checklist_modele").select("ordre,categorie,tache").order("ordre"); // avant le script des modèles par type
+        if (r.error) throw r.error; pts = r.data || [];
       } else {
         const { data, error } = await sb.from("checklist_points").select("ordre,categorie,tache").eq("serveur_id", source).order("ordre");
         if (error) throw error; pts = data || [];
@@ -9314,7 +9316,9 @@ const nav = isAdmin
               style: { marginLeft: 6, padding: "4px 6px", border: "1px solid " + G, color: G2, borderRadius: 6, fontSize: 11, fontWeight: 600, background: "white", cursor: "pointer", maxWidth: 200 } },
             React.createElement('option', { value: "" }, "📋 Copier les points de…"),
             ckServeurs.filter(x => x.id !== srv.id).map(x => React.createElement('option', { key: x.id, value: x.id }, x.nom)),
-            React.createElement('option', { value: "__modele" }, "Modèle standard (VEEAM)")),
+            React.createElement('optgroup', { label: "Modèles par type de serveur" },
+              [["VEEAM", "Sauvegarde (VEEAM)"], ["AD", "Contrôleur de domaine (AD / DC)"], ["OPERA", "Opera / PMS"], ["INTERFACE", "Interface (IFC, OPI, clés, paiement…)"], ["COMPTA", "Comptabilité (Sage…)"], ["LINUX", "Linux (UniFi…)"], ["ESXI", "Hôte ESXi (physique)"], ["WINDOWS", "Autre serveur Windows"]]
+                .map(([v, l]) => React.createElement('option', { key: v, value: "__modele:" + v }, "Modèle : " + l)))),
           total > 0 && React.createElement('button', { onClick: () => ckViderServeur(srv), title: "Retirer tous les points de ce serveur (check-list vide)", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #E2E2EA", color: "#777", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Vider"),
           React.createElement('button', { onClick: () => ckSupprimerServeur(srv), title: "Supprimer ce serveur de la check-list", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Supprimer")
         )
