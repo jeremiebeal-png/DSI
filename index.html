@@ -4184,6 +4184,32 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkNote, setBkNote] = useState("");
   const [bkFetchedAt, setBkFetchedAt] = useState(null);
   const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
+  const [bkMapBusy, setBkMapBusy] = useState("");
+  // Rattache un groupe CheckCentral à un hôtel (et les tickets d'alerte déjà ouverts de ce groupe)
+  const bkRattacherGroupe = async (g, hotelId) => {
+    if (!g.group_id) return;
+    setBkMapBusy(g.group_id);
+    try {
+      const { data: n, error } = await sb.rpc("rattacher_groupe_checkcentral", { p_group_id: String(g.group_id), p_group_name: g.group || null, p_hotel_id: hotelId || null });
+      if (error) throw error;
+      setBkGroupMap(prev => { const m = { ...prev }; if (hotelId) m[g.group_id] = hotelId; else delete m[g.group_id]; return m; });
+      const h = hotels.find(x => x.id === hotelId);
+      setBkNote(hotelId ? "✅ « " + (g.group || g.group_id) + " » rattaché à " + (h ? h.name : "l'hôtel") + (n ? " — " + n + " ticket(s) d'alerte mis à jour" : "") + "." : "Rattachement retiré pour « " + (g.group || g.group_id) + " ».");
+      if (n) loadTickets();
+    } catch (e) {
+      setBkNote("❌ Rattachement impossible : " + (e.message || e) + (/function|rattacher_groupe/i.test(String(e.message || "")) ? " — le script checkcentral_rattachement.sql a-t-il été exécuté ?" : ""));
+    } finally { setBkMapBusy(""); }
+  };
+  // Suggestion d'hôtel d'après le nom du groupe CheckCentral (ex. « IC-Bordeaux » → « IC - Bordeaux »)
+  const bkNormNom = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const bkSuggererHotel = (nomGroupe) => {
+    const n = bkNormNom(nomGroupe);
+    if (!n) return null;
+    const exacts = hotels.filter(h => bkNormNom(h.name) === n);
+    if (exacts.length === 1) return exacts[0];
+    const proches = hotels.filter(h => { const hn = bkNormNom(h.name); return hn.includes(n) || n.includes(hn) || hn.split(" ").filter(w => w.length > 3).some(w => n.split(" ").includes(w)); });
+    return proches.length === 1 ? proches[0] : null;
+  };
   const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
   const [bkOldOpen, setBkOldOpen] = useState(false); // dépliage de l'alerte "backups > 7 jours"
   // Notes manuelles d'explication sur les backups en échec/muets (motif métier).
@@ -8119,10 +8145,9 @@ const nav = isAdmin
           // Dès qu'on répond (kind === null), la ligne redevient blanche.
           const _st = ticketState[t.id];
           const aTraiter = _st && (_st.kind === "new" || _st.kind === "reply") && t.status !== "closed";
-          // Alerte sauvegarde automatique (Worker CheckCentral) : ligne rouge tant que le ticket est ouvert
-          const alerteBackup = t.source === "checkcentral" && t.status !== "closed";
-          const bgLigne = alerteBackup ? "#FDECEC" : (t.prestataire ? prestaColor(t.prestataire) + "0E" : "white");
-          const bordLigne = alerteBackup ? "2px solid #E53E3E" : (t.prestataire ? "1px solid " + prestaColor(t.prestataire) + "44" : "1px solid #E8E8F0");
+          // Alertes automatiques (sauvegardes, Sophos, Microsoft 365) : ligne normale, repérées par le 🔴 en tête d'objet
+          const bgLigne = t.prestataire ? prestaColor(t.prestataire) + "0E" : "white";
+          const bordLigne = t.prestataire ? "1px solid " + prestaColor(t.prestataire) + "44" : "1px solid #E8E8F0";
           return React.createElement('div', { key: t.id, style: { background: bgLigne, borderRadius: 10, border: bordLigne, overflow: "hidden" } },
             React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
@@ -8381,10 +8406,10 @@ const nav = isAdmin
                   m.sender_role === "admin" && !/^Sauvegarde relancée/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
-              React.createElement('div', { style: t.source === "checkcentral"
+              React.createElement('div', { style: (t.source === "checkcentral" || t.source === "sophos")
                   ? { background: "#FFF5F5", border: "2px solid #E53E3E", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12 }
                   : { background: "#EAF2FB", border: "1px solid #B6D4F0", borderRadius: 8, padding: 12, fontSize: 13, color: "#333", marginBottom: 12, whiteSpace: "pre-wrap" } },
-                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: t.source === "checkcentral" ? "#C53030" : "#5A7DA0", marginBottom: 5 } }, t.source === "checkcentral" ? "ALERTE AUTOMATIQUE — SAUVEGARDE" : "DEMANDE INITIALE"),
+                React.createElement('div', { style: { fontSize: 10, fontWeight: 600, color: (t.source === "checkcentral" || t.source === "sophos") ? "#C53030" : "#5A7DA0", marginBottom: 5 } }, t.source === "checkcentral" ? "ALERTE AUTOMATIQUE — SAUVEGARDE" : t.source === "sophos" ? "ALERTE AUTOMATIQUE — SOPHOS" : "DEMANDE INITIALE"),
                 (() => {
                   // Le "À :" / "Cc :" de la demande initiale vient du 1er message du fil
                   // (retiré de l'affichage du fil pour éviter le doublon, mais il porte
@@ -8396,8 +8421,8 @@ const nav = isAdmin
                     prem.cc && React.createElement('div', { style: { fontSize: 10, color: "#5A7DA0", marginBottom: 5, whiteSpace: "normal" } }, "Cc : " + prem.cc)
                   );
                 })(),
-                // Alerte sauvegarde : le détail mis en forme (bandeau rouge) est dans le 1er message du fil
-                (t.source === "checkcentral" && (ticketMsgs[t.id] || [])[0] && (ticketMsgs[t.id] || [])[0].body_html)
+                // Alerte sauvegarde / Sophos : le détail mis en forme (bandeau rouge) est dans le 1er message du fil
+                ((t.source === "checkcentral" || t.source === "sophos") && (ticketMsgs[t.id] || [])[0] && (ticketMsgs[t.id] || [])[0].body_html)
                   ? React.createElement(RichHtml, { html: (ticketMsgs[t.id] || [])[0].body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } })
                   : nettoyerSignature(t.message),
                 // Bouton « Sauvegarde relancée » (alertes sauvegarde, ticket ouvert)
@@ -9276,7 +9301,20 @@ const nav = isAdmin
                   React.createElement('span', { style: { width: enEchec ? 13 : 10, height: enEchec ? 13 : 10, borderRadius: "50%", background: meta.color, flexShrink: 0, boxShadow: enEchec ? "0 0 0 4px rgba(229,62,62,.20)" : "none" } }),
                   React.createElement('div', { style: { flex: 1 } },
                     React.createElement('div', { style: { fontSize: 14, fontWeight: enEchec ? 700 : 600, color: enEchec ? "#C53030" : "#222" } }, (enEchec ? "⛔ " : "") + nomGroupe(g)),
-                    React.createElement('div', { style: { fontSize: 11, color: enEchec ? "#B03030" : "#999", marginTop: 2 } }, g.checks.length + " check" + (g.checks.length > 1 ? "s" : ""))
+                    React.createElement('div', { style: { fontSize: 11, color: enEchec ? "#B03030" : "#999", marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                      g.checks.length + " check" + (g.checks.length > 1 ? "s" : ""),
+                      g.group_id && (() => {
+                        const hid = bkGroupMap[g.group_id] || "";
+                        const sugg = !hid ? bkSuggererHotel(g.group) : null;
+                        return React.createElement('span', { onClick: e => e.stopPropagation(), style: { display: "inline-flex", alignItems: "center", gap: 6 } },
+                          React.createElement('select', { value: hid, disabled: bkMapBusy === g.group_id, onChange: e => bkRattacherGroupe(g, e.target.value),
+                              title: "Hôtel des tickets d'alerte de ce groupe CheckCentral",
+                              style: { fontSize: 11, padding: "2px 6px", border: "1px solid " + (hid ? "#DDD" : "#F0B429"), borderRadius: 6, background: hid ? "white" : "#FFFBEB", color: hid ? "#555" : "#B7791F", maxWidth: 210 } },
+                            React.createElement('option', { value: "" }, "⚠ Hôtel non rattaché"),
+                            hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+                          sugg && React.createElement('button', { onClick: () => bkRattacherGroupe(g, sugg.id), disabled: bkMapBusy === g.group_id, title: "Rattacher à l'hôtel suggéré d'après le nom du groupe",
+                            style: { fontSize: 11, padding: "2px 8px", border: "1px solid #9AE6B4", background: "white", color: "#2F855A", borderRadius: 6, cursor: "pointer", fontWeight: 600 } }, "✓ " + sugg.name));
+                      })())
                   ),
                   // Compteurs
                   g.nbEchec > 0 && React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: "white", background: "#E53E3E", padding: "3px 11px", borderRadius: 20, boxShadow: "0 1px 3px rgba(229,62,62,.35)" } }, "⛔ " + g.nbEchec + " échec" + (g.nbEchec > 1 ? "s" : "")),
