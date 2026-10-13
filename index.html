@@ -4233,11 +4233,98 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const { data, error } = await sb.rpc("get_backup_notes");
       if (error) return; // silencieux : la table/RPC peut ne pas exister encore
       const map = {};
-      (data || []).forEach(n => {
-        if (n && n.check_id) map[n.check_id] = { note: n.note || "", updated_by: n.updated_by || "", updated_at: n.updated_at || null };
-      });
+      const aujourdhui = new Date().toISOString().slice(0, 10);
+      for (const n of (data || [])) {
+        if (!n || !n.check_id) continue;
+        // Silence expiré : on retire la note pour que les alertes reprennent.
+        const fin = bkSilenceFin(n.note);
+        if (fin && fin < aujourdhui) {
+          try { await sb.rpc("set_backup_note", { p_check_id: n.check_id, p_note: "" }); } catch (e) {}
+          continue;
+        }
+        map[n.check_id] = { note: n.note || "", updated_by: n.updated_by || "", updated_at: n.updated_at || null };
+      }
       setBkNotes(map);
     } catch (e) { /* silencieux */ }
+  };
+
+  // ---------- Mise en silence d'une alerte sauvegarde (ex. backup mensuel) ----------
+  // Le silence est une note d'explication commençant par « 🔕 Silence jusqu'au AAAA-MM-JJ » :
+  // le Worker CheckCentral ignore déjà les sauvegardes justifiées par une note, et la note
+  // est supprimée automatiquement à l'expiration (à l'ouverture du tableau de bord / Sauvegardes).
+  const BK_SILENCE_JOURS = 21;
+  function bkSilenceFin(note) {
+    const m = String(note || "").match(/^🔕 Silence jusqu'au (\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : null;
+  }
+  const [silenceBusy, setSilenceBusy] = useState(null);
+  const nomSauvegardeTicket = (t) => {
+    const prem = (ticketMsgs[t.id] || [])[0];
+    if (prem && prem.body_html) {
+      try {
+        const doc = new DOMParser().parseFromString(prem.body_html, "text/html");
+        const cellules = Array.from(doc.querySelectorAll("td,th"));
+        for (const c of cellules) {
+          if ((c.textContent || "").trim().toLowerCase() === "sauvegarde" && c.nextElementSibling) {
+            const v = (c.nextElementSibling.textContent || "").trim();
+            if (v) return v;
+          }
+        }
+      } catch (e) {}
+    }
+    const txt = String(t.message || "") + "\n" + String(t.subject || "");
+    const m = txt.match(/Sauvegarde\s*[:\-–—]\s*([^\n(]+)/i);
+    return m ? m[1].trim() : "";
+  };
+  const silencerAlerteBackup = async (t) => {
+    if (!isAdmin || !t) return;
+    setSilenceBusy(t.id);
+    try {
+      const nom = nomSauvegardeTicket(t);
+      let checks = bkChecks;
+      if (!checks || !checks.length) {
+        const { data: sess } = await sb.auth.getSession();
+        const res = await fetch(CHECKCENTRAL_API_URL, { headers: { Authorization: "Bearer " + (sess.session?.access_token || "") } });
+        const d = await res.json().catch(() => ({}));
+        checks = d.checks || [];
+        if (checks.length) setBkChecks(checks);
+      }
+      const norm = (x) => String(x || "").trim().toLowerCase();
+      let check = nom && checks.find(c => norm(c.name) === norm(nom));
+      if (!check) {
+        const texte = norm((t.subject || "") + " " + (t.message || "") + " " + nom);
+        const cand = checks.filter(c => c.name && texte.includes(norm(c.name))).sort((a, b) => String(b.name).length - String(a.name).length);
+        check = cand[0];
+      }
+      if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans CheckCentral. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
+      const finD = new Date(); finD.setDate(finD.getDate() + BK_SILENCE_JOURS);
+      const finIso = finD.toISOString().slice(0, 10);
+      const finFr = finD.toLocaleDateString("fr-FR");
+      const motif = window.prompt("Mettre en silence les alertes de « " + check.name + " » pendant 3 semaines (jusqu'au " + finFr + ") ?\n\nAucun ticket ni relance ne sera créé pendant cette période ; les alertes reprennent automatiquement ensuite. Ce ticket sera fermé.\n\nMotif (facultatif) :", "Sauvegarde mensuelle");
+      if (motif === null) return;
+      const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
+      const note = "🔕 Silence jusqu'au " + finIso + " (" + finFr + ")" + (motif.trim() ? " — " + motif.trim() : "") + " — par " + qui;
+      const { error } = await sb.rpc("set_backup_note", { p_check_id: check.id, p_note: note });
+      if (error) throw error;
+      setBkNotes(prev => ({ ...prev, [check.id]: { note, updated_by: (profile && profile.email) || "", updated_at: new Date().toISOString() } }));
+      const esc = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const body = "Alerte mise en silence jusqu'au " + finFr + " par " + qui + (motif.trim() ? " — " + motif.trim() : "");
+      const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
+        '<div style="background:#4A5568;color:#fff;border-radius:8px;padding:11px 15px;">' +
+          '<div style="font-size:15px;font-weight:bold;">🔕 ALERTE MISE EN SILENCE — 3 SEMAINES</div>' +
+          '<div style="font-size:13px;margin-top:3px;">Sauvegarde <b>' + esc(check.name) + '</b> : pas de nouveau ticket ni de relance jusqu\'au <b>' + esc(finFr) + '</b>. Par ' + esc(qui) + '.</div>' +
+        '</div>' +
+        (motif.trim() ? '<div style="margin-top:8px;padding:8px 12px;background:#F4F4F8;border-left:3px solid #4A5568;font-size:13px;">' + esc(motif.trim()) + '</div>' : '') +
+      '</div>';
+      await sb.from("ticket_messages").insert({ ticket_id: t.id, sender_role: "admin", sender_name: qui, body, body_html });
+      await sb.from("tickets").update({ status: "closed", closed_at: new Date().toISOString() }).eq("id", t.id);
+      setTickets(prev => prev.map(x => x.id === t.id ? { ...x, status: "closed" } : x));
+      loadTicketMsgs(t.id);
+    } catch (e) {
+      alert("Impossible de mettre l'alerte en silence : " + (e.message || e));
+    } finally {
+      setSilenceBusy(null);
+    }
   };
 
   // Enregistre (ou supprime si vide) la note d'un check, puis met à jour l'état local.
@@ -8403,7 +8490,7 @@ const nav = isAdmin
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                   React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
-                  m.sender_role === "admin" && !/^Sauvegarde relancée/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
+                  m.sender_role === "admin" && !/^(Sauvegarde relancée|Alerte mise en silence)/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
               React.createElement('div', { style: (t.source === "checkcentral" || t.source === "sophos")
@@ -8429,7 +8516,12 @@ const nav = isAdmin
                 t.source === "checkcentral" && (() => {
                   const relances = (ticketMsgs[t.id] || []).filter(m => m.sender_role === "admin" && /^Sauvegarde relancée/.test(String(m.body || "")));
                   const derniere = relances[relances.length - 1];
+                  const silence = (ticketMsgs[t.id] || []).filter(m => m.sender_role === "admin" && /^Alerte mise en silence/.test(String(m.body || ""))).pop();
                   return React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" } },
+                    silence && React.createElement('span', { style: { fontSize: 11.5, color: "#4A5568", fontWeight: 600, marginRight: "auto" } }, "🔕 " + silence.body),
+                    t.status !== "closed" && React.createElement('button', { onClick: () => silencerAlerteBackup(t), disabled: silenceBusy === t.id, title: "Pas de nouveau ticket ni de relance pendant 3 semaines (ex. sauvegarde mensuelle). Reprise automatique ensuite.",
+                      style: { padding: "9px 16px", background: "white", border: "1px solid #4A5568", color: "#4A5568", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: silenceBusy === t.id ? 0.6 : 1 } },
+                      silenceBusy === t.id ? "Mise en silence…" : "🔕 Silence 3 semaines"),
                     derniere && React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", fontWeight: 600 } },
                       "🔄 Relancée " + (relances.length > 1 ? relances.length + " fois — dernière : " : "") + new Date(derniere.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + (derniere.sender_name ? " par " + derniere.sender_name : "")),
                     t.status !== "closed" && React.createElement('button', { onClick: () => marquerBackupRelance(t), disabled: relanceBusy === t.id,
