@@ -2873,6 +2873,35 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } catch (e) {}
   };
 
+  // ---------- POP-UPS (toasts) des nouveaux tickets / réponses ----------
+  // Affichées 10 s en haut de l'écran ; clic = ouvre le ticket.
+  const [toasts, setToasts] = useState([]);
+  const toastTicketsRecentsRef = useRef({});
+  const ticketsRef = useRef([]);
+  const hotelsRef = useRef([]);
+  ticketsRef.current = tickets;
+  hotelsRef.current = hotels;
+  const nomHotelToast = (hid) => { const h = (hotelsRef.current || []).find(x => x.id === hid); return h ? h.name : (hid ? "" : "Non assigné"); };
+  const fermerToast = (id) => setToasts(prev => prev.filter(x => x.id !== id));
+  const ajouterToast = (t) => {
+    const id = Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+    setToasts(prev => [...prev.slice(-3), { ...t, id }]); // 4 pop-ups max à l'écran
+    setTimeout(() => fermerToast(id), 10000);
+  };
+  const ouvrirTicketToast = (t) => {
+    fermerToast(t.id);
+    if (t.reference) {
+      setTicketFilter("all");
+      setPendingTicketRef(String(t.reference).toUpperCase());
+      if (page !== "tickets-admin") go("tickets-admin");
+    } else {
+      setTicketFilter("all");
+      go("tickets-admin");
+      setOpenTicketId(t.ticketId);
+      loadTicketMsgs(t.ticketId);
+    }
+  };
+
   // Abonnement Realtime : uniquement pour les admins (dont le super-admin).
   // Nécessite que la réplication Realtime soit activée sur les tables
   // "tickets" et "ticket_messages" dans Supabase (voir instructions).
@@ -2885,7 +2914,24 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "tickets" },
-        () => { jouerSonAlerte(); if (page === "tickets-admin") loadTickets(); }
+        (payload) => {
+          jouerSonAlerte();
+          if (page === "tickets-admin") loadTickets();
+          const t = payload && payload.new;
+          if (t && t.id) {
+            toastTicketsRecentsRef.current[t.id] = Date.now();
+            const auto = t.source === "checkcentral" || t.source === "sophos" || t.source === "m365";
+            ajouterToast({
+              kind: auto ? "alerte" : "nouveau",
+              ticketId: t.id, reference: t.reference,
+              qui: t.contact_name || t.contact_email || (auto ? "Alerte automatique" : "Inconnu"),
+              email: t.contact_email || "",
+              hotel: nomHotelToast(t.hotel_id),
+              sujet: t.subject || t.category || "",
+              extrait: t.message || "",
+            });
+          }
+        }
       )
       // Nouvelle réponse — on ne sonne que si elle vient d'un client,
       // jamais pour les messages émis par le support lui-même.
@@ -2895,8 +2941,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         (payload) => {
           const role = payload && payload.new && payload.new.sender_role;
           if (role === "client") {
+            const m = payload.new;
+            // Premier message d'un ticket qui vient d'être créé : déjà annoncé par « Nouveau ticket ».
+            const cree = toastTicketsRecentsRef.current[m.ticket_id];
+            if (cree && Date.now() - cree < 60000) return;
             jouerSonAlerte();
             if (page === "tickets-admin") loadTickets();
+            (async () => {
+              let t = (ticketsRef.current || []).find(x => x.id === m.ticket_id);
+              if (!t) {
+                try { const r = await sb.from("tickets").select("id,reference,subject,hotel_id,contact_name,contact_email").eq("id", m.ticket_id).single(); t = r.data || null; } catch (e) {}
+              }
+              ajouterToast({
+                kind: "reponse",
+                ticketId: m.ticket_id, reference: t && t.reference,
+                qui: m.sender_name || (t && (t.contact_name || t.contact_email)) || "Client",
+                email: (t && t.contact_email) || "",
+                hotel: nomHotelToast(t && t.hotel_id),
+                sujet: (t && t.subject) || "",
+                extrait: m.body || String(m.body_html || "").replace(/<[^>]+>/g, " "),
+              });
+            })();
           }
         }
       )
@@ -11633,6 +11698,30 @@ const nav = isAdmin
       )
     ),
     // Popup d'avertissement avant déconnexion automatique
+    toasts.length > 0 && React.createElement('div', { style: { position: "fixed", top: isMobile ? 64 : 70, left: "50%", transform: "translateX(-50%)", zIndex: 150, display: "flex", flexDirection: "column", gap: 10, width: isMobile ? "calc(100% - 24px)" : 460, pointerEvents: "none" } },
+      React.createElement('style', null, "@keyframes dsiToastIn{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}@keyframes dsiToastBar{from{width:100%}to{width:0}}"),
+      toasts.map(t => {
+        const cfg = t.kind === "reponse" ? { c: "#DD6B20", l: "💬 Nouvelle réponse" } : t.kind === "alerte" ? { c: "#C53030", l: "🚨 Alerte automatique" } : { c: "#3182CE", l: "🆕 Nouveau ticket" };
+        const extrait = String(t.extrait || "").replace(/\s+/g, " ").trim();
+        return React.createElement('div', { key: t.id, onClick: () => ouvrirTicketToast(t),
+          style: { pointerEvents: "auto", cursor: "pointer", background: "white", borderRadius: 12, boxShadow: "0 12px 36px rgba(15,15,36,.28)", borderLeft: "5px solid " + cfg.c, overflow: "hidden", animation: "dsiToastIn .25s ease-out" } },
+          React.createElement('div', { style: { padding: "11px 14px 10px" } },
+            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 5 } },
+              React.createElement('span', { style: { fontSize: 11, fontWeight: 800, color: "white", background: cfg.c, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, cfg.l),
+              t.reference && React.createElement('span', { style: { fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace" } }, t.reference),
+              React.createElement('button', { onClick: (e) => { e.stopPropagation(); fermerToast(t.id); }, title: "Fermer", style: { marginLeft: "auto", border: "none", background: "none", color: "#999", fontSize: 16, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
+            ),
+            React.createElement('div', { style: { fontSize: 14, fontWeight: 700, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+              t.qui + (t.hotel ? " — " + t.hotel : "")),
+            t.email && t.email !== t.qui && React.createElement('div', { style: { fontSize: 11.5, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.email),
+            t.sujet && React.createElement('div', { style: { fontSize: 12.5, color: "#333", fontWeight: 600, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.sujet),
+            extrait && React.createElement('div', { style: { fontSize: 12, color: "#666", marginTop: 3, lineHeight: 1.45, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" } }, extrait.slice(0, 220)),
+            React.createElement('div', { style: { fontSize: 10.5, color: cfg.c, fontWeight: 600, marginTop: 5 } }, "Cliquer pour ouvrir le ticket →")
+          ),
+          React.createElement('div', { style: { height: 3, background: cfg.c, opacity: .5, animation: "dsiToastBar 10s linear forwards" } })
+        );
+      })
+    ),
     idleWarning && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 } },
       React.createElement('div', { style: { background: "white", borderRadius: 14, padding: 26, width: 380, maxWidth: "100%", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,.3)" } },
         React.createElement('div', { style: { fontSize: 34, marginBottom: 10 } }, "⏰"),
