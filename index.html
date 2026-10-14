@@ -82,6 +82,10 @@ const CHECKCENTRAL_API_URL = "https://dsi-hotel-checkcentral.jeremie-beal.worker
 const SOPHOS_API_URL = "https://dsi-hotel-sophos.jeremie-beal.workers.dev";
 // Worker de blocage d'expéditeurs frauduleux (Tenant Allow/Block List Microsoft 365).
 const BLOCAGE_API_URL = "https://dsi-hotel-blocage.jeremie-beal.workers.dev";
+// Worker de création des boîtes Microsoft 365 (provisioning). Ajuster l'URL après déploiement si le sous-domaine diffère.
+const PROVISIONING_API_URL = "https://dsi-hotel-provisioning.jeremie-beal.workers.dev";
+// ID d'application (client) de l'app Entra multi-tenant « DSI Hotel Provisioning » — à renseigner après sa création.
+const M365_PROV_APP_ID = "81d69908-c061-4f97-aa17-5bb4a6028a37";
 
 // ====== SIGNATURE EMAIL DSI HOTEL ======
 const SIGN_LOGO_URL = "https://www.dsihotel.com/dsi-logo-gold.png";
@@ -1081,7 +1085,7 @@ function App() {
       // 1) Enregistre le ticket (trace / backup)
       let reference = null, ticketId = null;
       try {
-        const { data } = await sb.from("tickets").insert({
+        const ligneTicket = {
           hotel_id: myHotelId,
           contact_name: tplDemandeur.name || emailClean,
           contact_role: "Demande interne",
@@ -1090,8 +1094,16 @@ function App() {
           priority: tplActif.prio,
           subject: `[Demande interne] ${tplActif.titre}`,
           message,
-          status: "open"
-        }).select().single();
+          status: "open",
+          // Réponses structurées (lues par la création automatique des boîtes Microsoft 365)
+          donnees_formulaire: { template: tplActif.key, ...tplValues }
+        };
+        let { data, error } = await sb.from("tickets").insert(ligneTicket).select().single();
+        if (error && /donnees_formulaire/i.test(error.message || "")) {
+          // Colonne pas encore créée (script provisioning_m365.sql) : enregistrement sans les réponses structurées.
+          delete ligneTicket.donnees_formulaire;
+          ({ data, error } = await sb.from("tickets").insert(ligneTicket).select().single());
+        }
         if (data) { reference = data.reference || null; ticketId = data.id || null; }
       } catch (e) {}
 
@@ -2806,6 +2818,218 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // ====== CRÉATION DE BOÎTE MICROSOFT 365 (Worker dsi-hotel-provisioning) ======
+  // Encadré affiché dans les tickets « Arrivée collaborateur » : le technicien choisit la licence,
+  // vérifie l'adresse, puis crée le compte dans le tenant de l'hôtel (après validation RH / direction).
+  const [prov, setProv] = useState({});                // { ticketId: { loading, err, data } }
+  const [provForm, setProvForm] = useState(null);       // saisie du technicien pour le ticket ouvert
+  const [provVerif, setProvVerif] = useState(null);     // { adresse, disponible, conflit, loading }
+  const [provBusy, setProvBusy] = useState(false);
+  const [provResultat, setProvResultat] = useState(null); // réponse de création (mot de passe affiché une seule fois)
+  const [provFiltreGroupes, setProvFiltreGroupes] = useState("");
+  const estTicketArrivee = (t) => !!t && /Arrivée collaborateur/i.test(String(t.subject || ""));
+
+  const callProvisioning = async (route, payload) => {
+    const { data: s } = await sb.auth.getSession();
+    const res = await fetch(PROVISIONING_API_URL + route, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + ((s && s.session && s.session.access_token) || "") },
+      body: JSON.stringify(payload || {}),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || ("Erreur " + res.status + " (le Worker dsi-hotel-provisioning est-il déployé ?)"));
+    return d;
+  };
+
+  const chargerProvisioning = async (ticketId) => {
+    setProv(prev => ({ ...prev, [ticketId]: { loading: true } }));
+    setProvForm(null); setProvVerif(null); setProvFiltreGroupes("");
+    try {
+      const d = await callProvisioning("/provisioning/infos", { ticketId });
+      setProv(prev => ({ ...prev, [ticketId]: { loading: false, data: d } }));
+      if (d.proposition) {
+        const p = d.proposition;
+        setProvForm({ ticketId, local: p.local || "", domaine: p.domaine || "", prenom: p.prenom || "", nom: p.nom || "", nomAffiche: p.nomAffiche || "", poste: p.poste || "", service: "", telMfa: p.tel || "", skuId: "", groupes: [] });
+        if (p.verification) setProvVerif({ adresse: p.local + "@" + p.domaine, ...p.verification });
+      }
+    } catch (e) {
+      setProv(prev => ({ ...prev, [ticketId]: { loading: false, err: e.message || String(e) } }));
+    }
+  };
+
+  const verifierAdresseProv = async () => {
+    if (!provForm) return;
+    const adresse = String(provForm.local || "").trim().toLowerCase() + "@" + provForm.domaine;
+    setProvVerif({ adresse, loading: true });
+    try {
+      const d = await callProvisioning("/provisioning/verifier", { ticketId: provForm.ticketId, adresse });
+      setProvVerif({ adresse, disponible: d.disponible, conflit: d.conflit });
+    } catch (e) {
+      setProvVerif({ adresse, disponible: null, conflit: e.message || String(e) });
+    }
+  };
+
+  const creerBoiteProv = async (t) => {
+    const f = provForm;
+    const info = prov[t.id] && prov[t.id].data;
+    if (!f || !info) return;
+    const lic = (info.licences || []).find(l => l.skuId === f.skuId);
+    if (!lic) { alert("Choisissez une licence."); return; }
+    const adresse = String(f.local || "").trim().toLowerCase() + "@" + f.domaine;
+    if (!confirm("Créer la boîte " + adresse + "\ndans le tenant « " + ((info.tenant && info.tenant.nom) || "") + " »\navec la licence « " + lic.nom + " » ?")) return;
+    setProvBusy(true);
+    try {
+      const groupesNoms = {};
+      (info.groupes || []).forEach(g => { if (f.groupes.includes(g.id)) groupesNoms[g.id] = g.nom; });
+      const d = await callProvisioning("/provisioning/creer", {
+        ticketId: t.id, local: f.local, domaine: f.domaine, prenom: f.prenom, nom: f.nom, nomAffiche: f.nomAffiche,
+        poste: f.poste, service: f.service, skuId: f.skuId, groupes: f.groupes, groupesNoms, telMfa: f.telMfa,
+      });
+      setProvResultat({ ...d, ticketId: t.id });
+      loadTicketMsgs(t.id);
+      chargerProvisioning(t.id);
+    } catch (e) {
+      alert("Création impossible : " + (e.message || e));
+    } finally {
+      setProvBusy(false);
+    }
+  };
+
+  // Chargement automatique à l'ouverture d'un ticket « Arrivée collaborateur »
+  // (relu à chaque ouverture : licences, stock et validation peuvent avoir changé)
+  const provDernierRef = useRef(null);
+  useEffect(() => {
+    if (!isAdmin || !openTicketId) { provDernierRef.current = null; return; }
+    if (provDernierRef.current === openTicketId) return;
+    const t = tickets.find(x => x.id === openTicketId);
+    if (!t) return;
+    provDernierRef.current = openTicketId;
+    if (estTicketArrivee(t)) chargerProvisioning(openTicketId);
+  }, [openTicketId, isAdmin, tickets.length]);
+
+  const renderProvisioning = (t) => {
+    const st = prov[t.id];
+    const petitBtn = { padding: "4px 10px", background: "white", border: "1px solid #BFD5F2", color: "#1F4E8C", borderRadius: 6, fontSize: 11.5, cursor: "pointer" };
+    const champ = { width: "100%", padding: "7px 9px", border: "1px solid #D5DCE8", borderRadius: 6, fontSize: 12.5, boxSizing: "border-box", fontFamily: "inherit", background: "white" };
+    const lbl = { display: "block", fontSize: 10.5, fontWeight: 700, color: "#5A6B85", marginBottom: 3, textTransform: "uppercase", letterSpacing: ".03em" };
+    const note = (txt, c, bg) => React.createElement('div', { style: { fontSize: 12, color: c, background: bg, borderRadius: 6, padding: "7px 10px", marginBottom: 8, lineHeight: 1.5 } }, txt);
+    const boite = (...contenu) => React.createElement('div', { style: { background: "#F3F7FD", border: "1px solid #BFD5F2", borderRadius: 8, padding: "12px 14px", marginBottom: 12 } },
+      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+        React.createElement('span', { style: { fontSize: 13.5, fontWeight: 700, color: "#1F4E8C" } }, "📧 Création Microsoft 365"),
+        st && st.data && st.data.tenant && React.createElement('span', { style: { fontSize: 11.5, color: "#5A6B85" } }, "tenant « " + st.data.tenant.nom + " »"),
+        React.createElement('button', { onClick: () => chargerProvisioning(t.id), disabled: provBusy, title: "Relire le tenant", style: { ...petitBtn, marginLeft: "auto" } }, "↻")
+      ),
+      ...contenu
+    );
+
+    // Fenêtre de résultat : mot de passe affiché une seule fois
+    const modale = provResultat && provResultat.ticketId === t.id && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.6)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
+      React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 520, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,.3)" } },
+        React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: provResultat.statut === "ok" ? "#256029" : "#B7791F", marginBottom: 10 } }, provResultat.statut === "ok" ? "✅ Boîte Microsoft 365 créée" : "⚠️ Boîte créée — étapes à reprendre"),
+        React.createElement('div', { style: { fontSize: 13, color: "#333", marginBottom: 4 } }, "Adresse : ", React.createElement('b', null, provResultat.upn)),
+        React.createElement('div', { style: { fontSize: 13, color: "#333", marginBottom: 12 } }, "Licence : " + (provResultat.licence || "")),
+        React.createElement('div', { style: { background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginBottom: 12 } },
+          React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: "#8A6D1F", textTransform: "uppercase", marginBottom: 6 } }, "Mot de passe provisoire"),
+          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10 } },
+            React.createElement('code', { style: { fontSize: 18, fontWeight: 700, letterSpacing: 1, color: "#1a1a3e", userSelect: "all", flex: 1, wordBreak: "break-all" } }, provResultat.motDePasse),
+            React.createElement('button', { onClick: () => { try { navigator.clipboard.writeText(provResultat.motDePasse); } catch (e) {} }, style: { padding: "6px 12px", background: G, border: "none", color: "#111", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Copier")
+          ),
+          React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 8, lineHeight: 1.5 } }, "Il ne sera plus affiché. Transmettez-le au collaborateur par un canal sûr (en main propre ou par téléphone, pas par email). Il devra le changer à sa première connexion.")
+        ),
+        React.createElement('div', { style: { marginBottom: 10 } },
+          (provResultat.etapes || []).map((e, i) => React.createElement('div', { key: i, style: { fontSize: 12.5, color: e.ok ? "#256029" : "#C53030", marginBottom: 3 } }, (e.ok ? "✓ " : "✗ ") + e.etape + (e.detail && !e.ok ? " — " + e.detail : "")))
+        ),
+        provResultat.aFaireManuellement && note("À faire dans Exchange (listes de distribution / boîtes partagées demandées par l'hôtel) : " + provResultat.aFaireManuellement, "#5A4A00", "#FFF6D6"),
+        provResultat.avertissement && note(provResultat.avertissement, "#C53030", "#FDECEC"),
+        React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginBottom: 14 } }, "La boîte mail sera active d'ici quelques minutes. Un résumé (sans mot de passe) a été ajouté au fil du ticket."),
+        React.createElement('div', { style: { display: "flex", justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => setProvResultat(null), style: { padding: "9px 18px", background: "#1F4E8C", border: "none", color: "white", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "J'ai noté le mot de passe")
+        )
+      )
+    );
+
+    if (!st || st.loading) return boite(React.createElement('div', { style: { fontSize: 12, color: "#777" } }, "Lecture du tenant Microsoft 365 de l'hôtel…"), modale);
+    if (st.err) return boite(note("❌ " + st.err, "#C53030", "#FDECEC"), modale);
+    const d = st.data || {};
+    if (d.existant) {
+      const e = d.existant;
+      return boite(note((e.statut === "ok" ? "✅ " : "⚠️ ") + "Boîte déjà créée : " + e.upn + (e.licence ? " (" + e.licence + ")" : "") + (e.cree_par ? " par " + e.cree_par : "") + (e.cree_le ? " le " + new Date(e.cree_le).toLocaleString("fr-FR") : "") + (e.statut === "partiel" ? " — certaines étapes sont à reprendre (voir le fil du ticket)." : "."), e.statut === "ok" ? "#256029" : "#8A6D1F", e.statut === "ok" ? "#EAF6EC" : "#FFFBEB"), modale);
+    }
+    if ((d.blocages || []).length) return boite(...d.blocages.map((b, i) => React.createElement('div', { key: i, style: { fontSize: 12, color: "#5A6B85", marginBottom: 3 } }, "ℹ️ " + b)), modale);
+    if (d.erreurGraph) return boite(note("❌ " + d.erreurGraph, "#C53030", "#FDECEC"), modale);
+    const f = provForm && provForm.ticketId === t.id ? provForm : null;
+    if (!f) return boite(React.createElement('div', { style: { fontSize: 12, color: "#777" } }, "Préparation…"), modale);
+
+    const setF = (k, v) => setProvForm(prev => ({ ...prev, [k]: v }));
+    const val = d.validation;
+    const valide = !!(val && val.status === "validated");
+    const lic = (d.licences || []).find(l => l.skuId === f.skuId);
+    const adresse = String(f.local || "").trim().toLowerCase() + "@" + f.domaine;
+    const verifCourante = provVerif && provVerif.adresse === adresse ? provVerif : null;
+    const verifOk = !!(verifCourante && verifCourante.disponible === true);
+    const manque = !valide ? "en attente de validation RH / direction" : !lic ? "choisissez une licence" : lic.dispo < 1 ? "plus de licence disponible" : !f.local || !f.domaine ? "adresse incomplète" : !f.nomAffiche.trim() ? "nom affiché obligatoire" : !verifOk ? "vérifiez que l'adresse est libre" : "";
+    const ajoutables = (d.groupes || []).filter(g => g.ajoutable);
+    const exchange = (d.groupes || []).filter(g => !g.ajoutable);
+    const filtre = provFiltreGroupes.trim().toLowerCase();
+    const groupesVus = ajoutables.filter(g => !filtre || (g.nom + " " + g.mail).toLowerCase().includes(filtre));
+
+    return boite(
+      !valide && note(val && val.status === "refused" ? "⛔ Demande refusée par " + (val.validateur_email || "le validateur") + " : création impossible." : "⏳ En attente de validation par " + ((val && val.validateur_email) || "le RH / la direction") + ". Vous pouvez préparer la saisie ; le bouton sera actif après validation.", val && val.status === "refused" ? "#C53030" : "#8A6D1F", val && val.status === "refused" ? "#FDECEC" : "#FFFBEB"),
+      d.source === "texte" && note("Ticket créé avant l'enregistrement structuré du formulaire : les informations ont été relues dans le texte de la demande, vérifiez-les.", "#5A6B85", "#EEF2F8"),
+      d.hybride && note("⚠️ Ce tenant est synchronisé avec un Active Directory local (Entra Connect). Vérifiez que le compte Windows du collaborateur sera créé dans une OU non synchronisée, sinon il fusionnera avec ce compte ou créera un doublon.", "#8A6D1F", "#FFFBEB"),
+      d.avertissementDomaine && note("⚠️ " + d.avertissementDomaine, "#8A6D1F", "#FFFBEB"),
+      // Adresse
+      React.createElement('label', { style: lbl }, "Adresse mail"),
+      React.createElement('div', { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
+        React.createElement('input', { value: f.local, onChange: e => setF("local", e.target.value), placeholder: "prenom.nom", style: { ...champ, width: "auto", flex: "1 1 160px" } }),
+        React.createElement('span', { style: { fontSize: 13, color: "#555" } }, "@"),
+        React.createElement('select', { value: f.domaine, onChange: e => setF("domaine", e.target.value), style: { ...champ, width: "auto", flex: "1 1 160px" } },
+          (d.domaines || []).map(x => React.createElement('option', { key: x.nom, value: x.nom }, x.nom + (x.defaut ? " (par défaut)" : "")))),
+        React.createElement('button', { onClick: verifierAdresseProv, disabled: provBusy || (verifCourante && verifCourante.loading), style: petitBtn }, verifCourante && verifCourante.loading ? "…" : "Vérifier")
+      ),
+      React.createElement('div', { style: { fontSize: 11.5, marginBottom: 10, color: verifOk ? "#256029" : (verifCourante && verifCourante.disponible === false ? "#C53030" : "#8A6D1F") } },
+        verifCourante && !verifCourante.loading
+          ? (verifCourante.disponible === true ? "✓ " + adresse + " est libre" : "✗ " + (verifCourante.conflit || "Adresse indisponible"))
+          : (verifCourante ? "Vérification…" : "Cliquez sur « Vérifier » pour contrôler que l'adresse est libre.")),
+      // Identité
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1.3fr", gap: 8, marginBottom: 10 } },
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Prénom"), React.createElement('input', { value: f.prenom, onChange: e => setF("prenom", e.target.value), style: champ })),
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Nom"), React.createElement('input', { value: f.nom, onChange: e => setF("nom", e.target.value), style: champ })),
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Nom affiché"), React.createElement('input', { value: f.nomAffiche, onChange: e => setF("nomAffiche", e.target.value), style: champ }))
+      ),
+      React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8, marginBottom: 10 } },
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Poste"), React.createElement('input', { value: f.poste, onChange: e => setF("poste", e.target.value), style: champ })),
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Service (facultatif)"), React.createElement('input', { value: f.service, onChange: e => setF("service", e.target.value), placeholder: "Réception, Direction…", style: champ })),
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Téléphone MFA (SMS)"), React.createElement('input', { value: f.telMfa, onChange: e => setF("telMfa", e.target.value), placeholder: "+33 612345678", style: champ }))
+      ),
+      // Licence (choix du technicien)
+      React.createElement('label', { style: lbl }, "Licence *"),
+      React.createElement('select', { value: f.skuId, onChange: e => setF("skuId", e.target.value), style: { ...champ, marginBottom: 10, borderColor: f.skuId ? "#D5DCE8" : "#F0B429" } },
+        React.createElement('option', { value: "" }, (d.licences || []).length ? "— Choisir la licence —" : "Aucune licence payante dans ce tenant"),
+        (d.licences || []).map(l => React.createElement('option', { key: l.skuId, value: l.skuId, disabled: l.dispo < 1 }, l.nom + " — " + (l.dispo < 1 ? "aucune disponible" : l.dispo + " disponible" + (l.dispo > 1 ? "s" : "")) + " (" + l.utilisees + "/" + l.total + ")"))),
+      // Groupes
+      React.createElement('label', { style: lbl }, "Groupes"),
+      d.form && d.form.groupesMail && note("Demandé par l'hôtel : " + d.form.groupesMail, "#5A4A00", "#FFF6D6"),
+      ajoutables.length > 0 && React.createElement('input', { value: provFiltreGroupes, onChange: e => setProvFiltreGroupes(e.target.value), placeholder: "Filtrer les groupes…", style: { ...champ, marginBottom: 6 } }),
+      React.createElement('div', { style: { maxHeight: 150, overflowY: "auto", background: "white", border: "1px solid #D5DCE8", borderRadius: 6, padding: ajoutables.length ? 6 : 0, marginBottom: 4 } },
+        groupesVus.map(g => React.createElement('label', { key: g.id, style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "3px 4px", cursor: "pointer" } },
+          React.createElement('input', { type: "checkbox", checked: f.groupes.includes(g.id), onChange: e => setF("groupes", e.target.checked ? [...f.groupes, g.id] : f.groupes.filter(x => x !== g.id)) }),
+          React.createElement('span', { style: { color: "#1a1a3e" } }, g.nom),
+          React.createElement('span', { style: { color: "#999", fontSize: 11 } }, g.type + (g.mail ? " · " + g.mail : ""))
+        ))
+      ),
+      React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 12 } },
+        (ajoutables.length ? f.groupes.length + " groupe(s) sélectionné(s). " : "Aucun groupe Microsoft 365 ou de sécurité dans ce tenant. ") +
+        (exchange.length ? exchange.length + " liste(s) de distribution / groupe(s) Exchange ou synchronisé(s) : à gérer à la main dans Exchange ou l'AD." : "")),
+      // Action
+      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" } },
+        manque && React.createElement('span', { style: { fontSize: 11.5, color: "#8A6D1F" } }, "Pour créer : " + manque),
+        React.createElement('button', { onClick: () => creerBoiteProv(t), disabled: !!manque || provBusy, style: { padding: "9px 18px", background: manque ? "#B8C4D6" : "#1F4E8C", border: "none", color: "white", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: manque || provBusy ? "default" : "pointer", opacity: provBusy ? 0.6 : 1 } }, provBusy ? "Création en cours…" : "📧 Créer la boîte mail")
+      ),
+      modale
+    );
+  };
+
   // ====== BLOCAGE D'EXPÉDITEUR FRAUDULEUX (Worker dsi-hotel-blocage → Defender M365) ======
   const [blqTicket, setBlqTicket] = useState(null);          // ticket pour lequel la fenêtre est ouverte
   const [blqTenants, setBlqTenants] = useState(null);        // [{ key, nom, domaines }] — null = pas encore chargé
@@ -4230,7 +4454,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const q = new URLSearchParams(window.location.search);
       const t = q.get("tenant");
-      if (t && /^true$/i.test(q.get("admin_consent") || "")) return { tenant_id: t, nom: "", hotel_id: "", retour: true };
+      if (t && /^true$/i.test(q.get("admin_consent") || "") && q.get("state") !== "provisioning") return { tenant_id: t, nom: "", hotel_id: "", retour: true };
     } catch (e) {}
     return { tenant_id: "", nom: "", hotel_id: "" };
   });
@@ -4309,6 +4533,20 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setMsAjout(prev => ({ ...prev, retour: false }));
     try { const u = new URL(window.location.href); ["admin_consent", "tenant", "state"].forEach(k => u.searchParams.delete(k)); window.history.replaceState(null, "", u.pathname + u.search + u.hash); } catch (e) {}
   }, [isAdmin, msAjout.retour]);
+
+  // Retour du consentement de l'app « DSI Hotel Provisioning » (création de comptes)
+  useEffect(() => {
+    if (!isAdmin) return;
+    let q; try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+    if (q.get("state") !== "provisioning") return;
+    const ok = /^true$/i.test(q.get("admin_consent") || "");
+    setMsTab("tenants");
+    setPage("m365");
+    setMsMsg(ok
+      ? "✅ Consentement « création de comptes » accordé pour le tenant " + (q.get("tenant") || "") + ". Cochez « Création de comptes » sur la fiche du tenant pour l'activer."
+      : "❌ Consentement « création de comptes » non accordé : " + (q.get("error_description") || q.get("error") || "annulé") + ".");
+    try { const u = new URL(window.location.href); ["admin_consent", "tenant", "state", "error", "error_description", "error_uri", "error_subcode"].forEach(k => u.searchParams.delete(k)); window.history.replaceState(null, "", u.pathname + u.search + u.hash); } catch (e) {}
+  }, [isAdmin]);
 
   // Temps réel : carillon à l'arrivée d'une nouvelle alerte haute (Realtime activé par m365_portail.sql)
   useEffect(() => {
@@ -4441,9 +4679,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const m = txt.match(/Sauvegarde\s*[:\-–—]\s*([^\n(]+)/i);
     return m ? m[1].trim() : "";
   };
-  const silencerAlerteBackup = async (t, semaines) => {
-    const nbSem = semaines || 3;
-    const libSem = nbSem + (nbSem > 1 ? " semaines" : " semaine");
+  const silencerAlerteBackup = async (t) => {
     if (!isAdmin || !t) return;
     setSilenceBusy(t.id);
     try {
@@ -4464,10 +4700,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         check = cand[0];
       }
       if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans CheckCentral. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
-      const finD = new Date(); finD.setDate(finD.getDate() + nbSem * 7);
+      const finD = new Date(); finD.setDate(finD.getDate() + BK_SILENCE_JOURS);
       const finIso = finD.toISOString().slice(0, 10);
       const finFr = finD.toLocaleDateString("fr-FR");
-      const motif = window.prompt("Mettre en silence les alertes de « " + check.name + " » pendant " + libSem + " (jusqu'au " + finFr + ") ?\n\nAucun ticket ni relance ne sera créé pendant cette période ; les alertes reprennent automatiquement ensuite. Ce ticket sera fermé.\n\nMotif (facultatif) :", nbSem === 3 ? "Sauvegarde mensuelle" : "");
+      const motif = window.prompt("Mettre en silence les alertes de « " + check.name + " » pendant 3 semaines (jusqu'au " + finFr + ") ?\n\nAucun ticket ni relance ne sera créé pendant cette période ; les alertes reprennent automatiquement ensuite. Ce ticket sera fermé.\n\nMotif (facultatif) :", "Sauvegarde mensuelle");
       if (motif === null) return;
       const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
       const note = "🔕 Silence jusqu'au " + finIso + " (" + finFr + ")" + (motif.trim() ? " — " + motif.trim() : "") + " — par " + qui;
@@ -4478,7 +4714,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const body = "Alerte mise en silence jusqu'au " + finFr + " par " + qui + (motif.trim() ? " — " + motif.trim() : "");
       const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
         '<div style="background:#4A5568;color:#fff;border-radius:8px;padding:11px 15px;">' +
-          '<div style="font-size:15px;font-weight:bold;">🔕 ALERTE MISE EN SILENCE — ' + libSem.toUpperCase() + '</div>' +
+          '<div style="font-size:15px;font-weight:bold;">🔕 ALERTE MISE EN SILENCE — 3 SEMAINES</div>' +
           '<div style="font-size:13px;margin-top:3px;">Sauvegarde <b>' + esc(check.name) + '</b> : pas de nouveau ticket ni de relance jusqu\'au <b>' + esc(finFr) + '</b>. Par ' + esc(qui) + '.</div>' +
         '</div>' +
         (motif.trim() ? '<div style="margin-top:8px;padding:8px 12px;background:#F4F4F8;border-left:3px solid #4A5568;font-size:13px;">' + esc(motif.trim()) + '</div>' : '') +
@@ -8524,6 +8760,7 @@ const nav = isAdmin
                 ),
                 t.en_attente && React.createElement('input', { type: "date", value: t.date_attente || "", onChange: async (e) => { const val = e.target.value || null; const { error } = await sb.from("tickets").update({ date_attente: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, date_attente: val } : x)); else alert("Erreur : " + error.message); }, style: { padding: "4px 8px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } })
               ),
+              isAdmin && estTicketArrivee(t) && renderProvisioning(t),
               creneauTicket && creneauTicket.ticket_id === t.id && creneauTicket.statut === "en_attente" && React.createElement('div', { style: { background: "#FBF7EA", border: "1px solid " + G, borderRadius: 8, padding: "12px 14px", marginBottom: 12 } },
                 React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: "#8A6D1F", marginBottom: 8 } }, "📅 Créneau demandé : " + formatJourRdv(creneauTicket.date_rdv) + " · " + creneauTicket.creneau),
                 React.createElement('textarea', { value: creneauCommentaire, onChange: e => setCreneauCommentaire(e.target.value), placeholder: "Commentaire (optionnel) — envoyé au demandeur", rows: 2, style: { width: "100%", boxSizing: "border-box", border: "1px solid #E0D6B0", borderRadius: 6, padding: "8px 10px", fontSize: 12.5, marginBottom: 8, resize: "vertical" } }),
@@ -8688,9 +8925,9 @@ const nav = isAdmin
                   const silence = (ticketMsgs[t.id] || []).filter(m => m.sender_role === "admin" && /^Alerte mise en silence/.test(String(m.body || ""))).pop();
                   return React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" } },
                     silence && React.createElement('span', { style: { fontSize: 11.5, color: "#4A5568", fontWeight: 600, marginRight: "auto" } }, "🔕 " + silence.body),
-                    t.status !== "closed" && [1, 2, 3].map(n => React.createElement('button', { key: "sil" + n, onClick: () => silencerAlerteBackup(t, n), disabled: silenceBusy === t.id, title: "Pas de nouveau ticket ni de relance pendant " + n + (n > 1 ? " semaines" : " semaine") + " (ex. sauvegarde hebdomadaire ou mensuelle). Reprise automatique ensuite.",
+                    t.status !== "closed" && React.createElement('button', { onClick: () => silencerAlerteBackup(t), disabled: silenceBusy === t.id, title: "Pas de nouveau ticket ni de relance pendant 3 semaines (ex. sauvegarde mensuelle). Reprise automatique ensuite.",
                       style: { padding: "9px 16px", background: "white", border: "1px solid #4A5568", color: "#4A5568", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: silenceBusy === t.id ? 0.6 : 1 } },
-                      silenceBusy === t.id ? "Mise en silence…" : "🔕 Silence " + n + (n > 1 ? " semaines" : " semaine"))),
+                      silenceBusy === t.id ? "Mise en silence…" : "🔕 Silence 3 semaines"),
                     derniere && React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", fontWeight: 600 } },
                       "🔄 Relancée " + (relances.length > 1 ? relances.length + " fois — dernière : " : "") + new Date(derniere.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + (derniere.sender_name ? " par " + derniere.sender_name : "")),
                     t.status !== "closed" && React.createElement('button', { onClick: () => marquerBackupRelance(t), disabled: relanceBusy === t.id,
@@ -10581,6 +10818,7 @@ const nav = isAdmin
     const inputS = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
     const pastille = (txt, c, bg, title) => React.createElement('span', { title, style: { fontSize: 10.5, fontWeight: 700, color: c, background: bg, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, txt);
     const badgeLic = (lbl, val) => val === true ? pastille("✓ " + lbl, "#2F855A", "#E9F6EE") : val === false ? pastille("✗ " + lbl, "#A0AEC0", "#F4F4F8") : pastille("? " + lbl, "#A0AEC0", "#F4F4F8", "Licences pas encore relues");
+    const lienConsentProv = (tid) => "https://login.microsoftonline.com/" + encodeURIComponent(tid) + "/adminconsent?client_id=" + M365_PROV_APP_ID + "&state=provisioning&redirect_uri=" + encodeURIComponent("https://portail.dsihotel.com");
     const lienConsent = (dom) => "https://login.microsoftonline.com/" + encodeURIComponent((dom || "").trim()) + "/adminconsent?client_id=" + M365_APP_ID + "&redirect_uri=" + encodeURIComponent("https://portail.dsihotel.com");
     const copier = (txt, msg) => { try { navigator.clipboard.writeText(txt); setMsMsg("✅ " + msg); } catch (e) { window.prompt("Copiez :", txt); } };
     const ouvrirTicket = (ref) => { if (ref) setPendingTicketRef(String(ref).toUpperCase()); };
@@ -10707,6 +10945,9 @@ const nav = isAdmin
                   hotelsTries.map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
                 React.createElement('label', { style: { fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 5, cursor: "pointer" } },
                   React.createElement('input', { type: "checkbox", checked: !!t.actif, onChange: e => msMajTenant(t.tenant_id, { actif: e.target.checked }, (e.target.checked ? "✅ Supervision réactivée" : "⏸ Supervision suspendue") + " pour « " + t.nom + " ».") }), "Supervision active"),
+                React.createElement('label', { title: "Autorise la création des boîtes mail depuis les tickets « Arrivée collaborateur » (nécessite le consentement de l'app « DSI Hotel Provisioning » dans ce tenant)", style: { fontSize: 12, color: t.provisioning_actif ? "#1F4E8C" : "#555", fontWeight: t.provisioning_actif ? 600 : 400, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" } },
+                  React.createElement('input', { type: "checkbox", checked: !!t.provisioning_actif, onChange: e => msMajTenant(t.tenant_id, { provisioning_actif: e.target.checked }, (e.target.checked ? "✅ Création de comptes activée" : "⏸ Création de comptes désactivée") + " pour « " + t.nom + " ».") }), "📧 Création de comptes"),
+                M365_PROV_APP_ID && React.createElement('a', { href: lienConsentProv(t.tenant_id), target: "_blank", rel: "noopener noreferrer", title: "À ouvrir avec un compte administrateur global de ce tenant (une seule fois, puis après tout ajout de permission)", style: { fontSize: 12, color: "#1F4E8C", textDecoration: "none", border: "1px solid #BFD5F2", borderRadius: 7, padding: "4px 10px" } }, "🔑 Consentement création de comptes"),
                 btn("Alertes", () => { setMsFiltre(t.tenant_id); setMsTab("alertes"); }, { style: { padding: "4px 10px" } }))
             );
           })
