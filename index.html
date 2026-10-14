@@ -80,6 +80,8 @@ const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
 const CHECKCENTRAL_API_URL = "https://dsi-hotel-checkcentral.jeremie-beal.workers.dev/status";
 // Worker de supervision Sophos Central (ajuster l'URL après déploiement si le sous-domaine diffère).
 const SOPHOS_API_URL = "https://dsi-hotel-sophos.jeremie-beal.workers.dev";
+// Worker de blocage d'expéditeurs frauduleux (Tenant Allow/Block List Microsoft 365).
+const BLOCAGE_API_URL = "https://dsi-hotel-blocage.jeremie-beal.workers.dev";
 
 // ====== SIGNATURE EMAIL DSI HOTEL ======
 const SIGN_LOGO_URL = "https://www.dsihotel.com/dsi-logo-gold.png";
@@ -2801,6 +2803,87 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       alert("Impossible d'enregistrer la relance : " + (e.message || e));
     } finally {
       setRelanceBusy(null);
+    }
+  };
+
+  // ====== BLOCAGE D'EXPÉDITEUR FRAUDULEUX (Worker dsi-hotel-blocage → Defender M365) ======
+  const [blqTicket, setBlqTicket] = useState(null);          // ticket pour lequel la fenêtre est ouverte
+  const [blqTenants, setBlqTenants] = useState(null);        // [{ key, nom, domaines }] — null = pas encore chargé
+  const [blqTenant, setBlqTenant] = useState("");
+  const [blqAdresse, setBlqAdresse] = useState("");
+  const [blqSuggestions, setBlqSuggestions] = useState([]);  // adresses externes trouvées dans le ticket
+  const [blqTrace, setBlqTrace] = useState(true);            // ajouter un message dans le fil du ticket
+  const [blqBusy, setBlqBusy] = useState(false);
+  const [blqMsg, setBlqMsg] = useState("");
+
+  const callBlocageApi = async (method, path, payload) => {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = (sessionData.session && sessionData.session.access_token) || "";
+    const res = await fetch(BLOCAGE_API_URL + path, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: method === "POST" ? JSON.stringify(payload || {}) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok && !data.statut) throw new Error(data.erreur || ("Erreur " + res.status + " (le Worker dsi-hotel-blocage est-il déployé ?)"));
+    return data;
+  };
+
+  const ouvrirBlocage = async (t) => {
+    if (!isAdmin || !t) return;
+    setBlqTicket(t); setBlqMsg(""); setBlqBusy(false); setBlqTrace(true); setBlqAdresse(""); setBlqSuggestions([]); setBlqTenant("");
+    let tenants = blqTenants;
+    if (!tenants) {
+      try { tenants = await callBlocageApi("GET", "/blocage/tenants"); setBlqTenants(tenants); }
+      catch (e) { tenants = []; setBlqMsg("❌ " + (e.message || e)); }
+    }
+    // Établissement présélectionné d'après le domaine du demandeur
+    const contact = String(t.contact_email || "").toLowerCase();
+    const domContact = contact.split("@")[1] || "";
+    const auto = (tenants || []).find(x => (x.domaines || []).includes(domContact));
+    if (auto) setBlqTenant(auto.key);
+    // Adresses externes citées dans la demande et le fil (hors hôtel, DSI Hotel et demandeur)
+    const exclus = new Set(["dsihotel.fr", "dsihotel.com"].concat(...(tenants || []).map(x => x.domaines || [])));
+    const textes = [t.message || ""].concat((ticketMsgs[t.id] || []).map(m => (m.body || "") + " " + (m.body_html || "")));
+    const trouvees = new Set((textes.join(" ").match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).map(a => a.toLowerCase()));
+    const sugg = [...trouvees].filter(a => a !== contact && !exclus.has(a.split("@")[1])).slice(0, 8);
+    setBlqSuggestions(sugg);
+    if (sugg.length === 1) setBlqAdresse(sugg[0]);
+  };
+
+  const executerBlocage = async () => {
+    const t = blqTicket;
+    if (!t || blqBusy) return;
+    const adresse = blqAdresse.trim().toLowerCase();
+    if (!blqTenant) { setBlqMsg("❌ Choisissez l'établissement (tenant Microsoft 365)."); return; }
+    if (!/^[^@\s*]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(adresse)) { setBlqMsg("❌ Adresse email complète obligatoire (pas de domaine seul ni de *)."); return; }
+    const nomTenant = ((blqTenants || []).find(x => x.key === blqTenant) || {}).nom || blqTenant;
+    if (!window.confirm("Bloquer " + adresse + " pour toutes les boîtes du tenant « " + nomTenant + " » ?")) return;
+    setBlqBusy(true); setBlqMsg("");
+    try {
+      const r = await callBlocageApi("POST", "/blocage", { action: "bloquer", tenant: blqTenant, expediteur: adresse, ticketRef: t.reference || "" });
+      if (r.statut !== "ok") throw new Error(r.resultat || "Échec du blocage");
+      setBlqMsg("✓ " + r.resultat);
+      if (blqTrace) {
+        const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
+        const quand = new Date().toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+        const esc = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const body = "Expéditeur bloqué : " + adresse + " — par " + qui + " le " + quand + ". Les prochains emails de cette adresse seront mis en quarantaine.";
+        const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
+          '<div style="background:#B3261E;color:#fff;border-radius:8px;padding:11px 15px;">' +
+            '<div style="font-size:15px;font-weight:bold;">🚫 EXPÉDITEUR BLOQUÉ</div>' +
+            '<div style="font-size:13px;margin-top:3px;"><b>' + esc(adresse) + '</b> — par ' + esc(qui) + ' le ' + esc(quand) + '</div>' +
+          '</div>' +
+          '<div style="font-size:12.5px;color:#555;margin-top:6px;">Les prochains emails de cette adresse seront automatiquement mis en quarantaine sur l\'ensemble de votre messagerie. Rappel : ne modifiez jamais de coordonnées bancaires sur simple email, confirmez toujours par téléphone.</div>' +
+        '</div>';
+        const { error } = await sb.from("ticket_messages").insert({ ticket_id: t.id, sender_role: "admin", sender_name: qui, body, body_html });
+        if (error) setBlqMsg("✓ " + r.resultat + " (trace dans le ticket impossible : " + error.message + ")");
+        else loadTicketMsgs(t.id);
+      }
+    } catch (e) {
+      setBlqMsg("❌ " + (e.message || e));
+    } finally {
+      setBlqBusy(false);
     }
   };
 
@@ -8346,6 +8429,7 @@ const nav = isAdmin
               React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center", marginBottom: 14, paddingBottom: 12, borderBottom: "1px dashed #E2E2EA" } },
                 React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "7px 13px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
                 (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && React.createElement('button', { onClick: () => genererAttestation(t), title: "Télécharger l'attestation de validation (PDF)", style: { padding: "7px 13px", background: "#EAF6EC", border: "1px solid #B5DBB9", color: "#256029", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "\uD83D\uDCC4 Attestation"),
                 t.status === "closed"
                   ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
@@ -8530,6 +8614,7 @@ const nav = isAdmin
                     reponsesTypes.map(r => React.createElement('option', { key: r.id, value: r.id }, r.titre))
                   ),
                   React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
+                  isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
                   React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                   React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
                   React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
@@ -8598,6 +8683,7 @@ const nav = isAdmin
               React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => !f.message_id), title: "📎 PIÈCES JOINTES DE LA DEMANDE", onOpenImage: openViewer }),
               t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" } },
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { marginRight: "auto", padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
                 React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
               ),
               // Éditeur de remarque interne (admin only) — vue cartes, ticket fermé
@@ -11634,6 +11720,36 @@ const nav = isAdmin
         React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           React.createElement('button', { onClick: () => setFwdTicket(null), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 16px" } }, "Annuler"),
           React.createElement('button', { onClick: () => transfererTicket(fwdTicket), disabled: fwdBusy, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 16px", opacity: fwdBusy ? 0.6 : 1 } }, fwdBusy ? "Envoi..." : "Envoyer le transfert")
+        )
+      )
+    ),
+    // Fenêtre « Bloquer un expéditeur » (Defender M365 via Worker dsi-hotel-blocage)
+    blqTicket && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 } },
+      React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 480, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" } },
+        React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, "🚫 Bloquer un expéditeur frauduleux"),
+        React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 16 } }, (blqTicket.reference ? blqTicket.reference + " · " : "") + (blqTicket.subject || "Demande de support")),
+        React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Établissement (tenant Microsoft 365) *"),
+        React.createElement('select', { value: blqTenant, onChange: e => setBlqTenant(e.target.value), disabled: blqBusy, style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 4, boxSizing: "border-box", background: "white" } },
+          React.createElement('option', { value: "" }, (blqTenants && blqTenants.length) ? "— Choisir l'établissement —" : "Aucun établissement activé"),
+          (blqTenants || []).map(x => React.createElement('option', { key: x.key, value: x.key }, x.nom + " (" + x.key + ")"))
+        ),
+        React.createElement('div', { style: { fontSize: 10.5, color: "#999", marginBottom: 12 } }, "Seuls les tenants configurés dans le Worker apparaissent. Le blocage s'applique à toutes les boîtes du tenant."),
+        React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Adresse de l'expéditeur frauduleux *"),
+        React.createElement('input', { value: blqAdresse, onChange: e => setBlqAdresse(e.target.value), disabled: blqBusy, placeholder: "fraudeur@domaine.com", type: "email", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 8, boxSizing: "border-box" } }),
+        blqSuggestions.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 12 } },
+          React.createElement('span', { style: { fontSize: 11, color: "#888" } }, "Trouvées dans le ticket :"),
+          blqSuggestions.map(a => React.createElement('button', { key: a, onClick: () => setBlqAdresse(a), disabled: blqBusy, style: { padding: "3px 9px", borderRadius: 20, fontSize: 11.5, cursor: "pointer", border: "1px solid " + (blqAdresse === a ? "#B3261E" : "#DDD"), background: blqAdresse === a ? "#FDECEA" : "#FAFAFC", color: blqAdresse === a ? "#B3261E" : "#555" } }, a))
+        ),
+        React.createElement('div', { style: { fontSize: 11, color: "#7a5600", background: "#FEF4DC", borderRadius: 7, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 } },
+          "Bloquez uniquement l'adresse exacte du fraudeur. Vérifiez-la sur la capture ou l'email d'origine : le nom affiché (« Manon … ») ne compte pas, seule l'adresse entre < > compte. Les domaines de l'hôtel, de DSI Hotel et des enseignes sont protégés."),
+        React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#555", marginBottom: 12, cursor: "pointer" } },
+          React.createElement('input', { type: "checkbox", checked: blqTrace, onChange: e => setBlqTrace(e.target.checked), disabled: blqBusy }),
+          "Ajouter une trace dans le fil du ticket (visible par le client, sans email)"
+        ),
+        blqMsg && React.createElement('div', { style: { fontSize: 12, color: blqMsg.startsWith("✓") ? "#2F855A" : "#C53030", marginBottom: 12, whiteSpace: "pre-wrap" } }, blqMsg),
+        React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          React.createElement('button', { onClick: () => setBlqTicket(null), disabled: blqBusy, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 16px" } }, blqMsg.startsWith("✓") ? "Fermer" : "Annuler"),
+          !blqMsg.startsWith("✓") && React.createElement('button', { onClick: executerBlocage, disabled: blqBusy || !blqTenant || !blqAdresse.trim(), style: { background: "#B3261E", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 16px", opacity: (blqBusy || !blqTenant || !blqAdresse.trim()) ? 0.55 : 1 } }, blqBusy ? "Blocage en cours…" : "🚫 Bloquer")
         )
       )
     ),
