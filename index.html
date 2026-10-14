@@ -4441,7 +4441,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const m = txt.match(/Sauvegarde\s*[:\-–—]\s*([^\n(]+)/i);
     return m ? m[1].trim() : "";
   };
-  const silencerAlerteBackup = async (t) => {
+  const silencerAlerteBackup = async (t, semaines) => {
+    const nbSem = semaines || 3;
+    const libSem = nbSem + (nbSem > 1 ? " semaines" : " semaine");
     if (!isAdmin || !t) return;
     setSilenceBusy(t.id);
     try {
@@ -4462,10 +4464,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         check = cand[0];
       }
       if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans CheckCentral. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
-      const finD = new Date(); finD.setDate(finD.getDate() + BK_SILENCE_JOURS);
+      const finD = new Date(); finD.setDate(finD.getDate() + nbSem * 7);
       const finIso = finD.toISOString().slice(0, 10);
       const finFr = finD.toLocaleDateString("fr-FR");
-      const motif = window.prompt("Mettre en silence les alertes de « " + check.name + " » pendant 3 semaines (jusqu'au " + finFr + ") ?\n\nAucun ticket ni relance ne sera créé pendant cette période ; les alertes reprennent automatiquement ensuite. Ce ticket sera fermé.\n\nMotif (facultatif) :", "Sauvegarde mensuelle");
+      const motif = window.prompt("Mettre en silence les alertes de « " + check.name + " » pendant " + libSem + " (jusqu'au " + finFr + ") ?\n\nAucun ticket ni relance ne sera créé pendant cette période ; les alertes reprennent automatiquement ensuite. Ce ticket sera fermé.\n\nMotif (facultatif) :", nbSem === 3 ? "Sauvegarde mensuelle" : "");
       if (motif === null) return;
       const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
       const note = "🔕 Silence jusqu'au " + finIso + " (" + finFr + ")" + (motif.trim() ? " — " + motif.trim() : "") + " — par " + qui;
@@ -4476,7 +4478,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const body = "Alerte mise en silence jusqu'au " + finFr + " par " + qui + (motif.trim() ? " — " + motif.trim() : "");
       const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
         '<div style="background:#4A5568;color:#fff;border-radius:8px;padding:11px 15px;">' +
-          '<div style="font-size:15px;font-weight:bold;">🔕 ALERTE MISE EN SILENCE — 3 SEMAINES</div>' +
+          '<div style="font-size:15px;font-weight:bold;">🔕 ALERTE MISE EN SILENCE — ' + libSem.toUpperCase() + '</div>' +
           '<div style="font-size:13px;margin-top:3px;">Sauvegarde <b>' + esc(check.name) + '</b> : pas de nouveau ticket ni de relance jusqu\'au <b>' + esc(finFr) + '</b>. Par ' + esc(qui) + '.</div>' +
         '</div>' +
         (motif.trim() ? '<div style="margin-top:8px;padding:8px 12px;background:#F4F4F8;border-left:3px solid #4A5568;font-size:13px;">' + esc(motif.trim()) + '</div>' : '') +
@@ -8686,9 +8688,9 @@ const nav = isAdmin
                   const silence = (ticketMsgs[t.id] || []).filter(m => m.sender_role === "admin" && /^Alerte mise en silence/.test(String(m.body || ""))).pop();
                   return React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" } },
                     silence && React.createElement('span', { style: { fontSize: 11.5, color: "#4A5568", fontWeight: 600, marginRight: "auto" } }, "🔕 " + silence.body),
-                    t.status !== "closed" && React.createElement('button', { onClick: () => silencerAlerteBackup(t), disabled: silenceBusy === t.id, title: "Pas de nouveau ticket ni de relance pendant 3 semaines (ex. sauvegarde mensuelle). Reprise automatique ensuite.",
+                    t.status !== "closed" && [1, 2, 3].map(n => React.createElement('button', { key: "sil" + n, onClick: () => silencerAlerteBackup(t, n), disabled: silenceBusy === t.id, title: "Pas de nouveau ticket ni de relance pendant " + n + (n > 1 ? " semaines" : " semaine") + " (ex. sauvegarde hebdomadaire ou mensuelle). Reprise automatique ensuite.",
                       style: { padding: "9px 16px", background: "white", border: "1px solid #4A5568", color: "#4A5568", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: silenceBusy === t.id ? 0.6 : 1 } },
-                      silenceBusy === t.id ? "Mise en silence…" : "🔕 Silence 3 semaines"),
+                      silenceBusy === t.id ? "Mise en silence…" : "🔕 Silence " + n + (n > 1 ? " semaines" : " semaine"))),
                     derniere && React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", fontWeight: 600 } },
                       "🔄 Relancée " + (relances.length > 1 ? relances.length + " fois — dernière : " : "") + new Date(derniere.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + (derniere.sender_name ? " par " + derniere.sender_name : "")),
                     t.status !== "closed" && React.createElement('button', { onClick: () => marquerBackupRelance(t), disabled: relanceBusy === t.id,
