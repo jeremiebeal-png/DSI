@@ -2812,7 +2812,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [blqTenant, setBlqTenant] = useState("");
   const [blqAdresse, setBlqAdresse] = useState("");
   const [blqSuggestions, setBlqSuggestions] = useState([]);  // adresses externes trouvées dans le ticket
-  const [blqTrace, setBlqTrace] = useState(true);            // ajouter un message dans le fil du ticket
+  const [blqTrace, setBlqTrace] = useState(false);           // ajouter un bandeau dans le fil du ticket (sans email)
+  const [blqEmail, setBlqEmail] = useState(true);            // préparer l'email d'explication dans la zone de réponse
   const [blqBusy, setBlqBusy] = useState(false);
   const [blqMsg, setBlqMsg] = useState("");
 
@@ -2831,7 +2832,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const ouvrirBlocage = async (t) => {
     if (!isAdmin || !t) return;
-    setBlqTicket(t); setBlqMsg(""); setBlqBusy(false); setBlqTrace(true); setBlqAdresse(""); setBlqSuggestions([]); setBlqTenant("");
+    setBlqTicket(t); setBlqMsg(""); setBlqBusy(false); setBlqTrace(false); setBlqEmail(true); setBlqAdresse(""); setBlqSuggestions([]); setBlqTenant("");
     let tenants = blqTenants;
     if (!tenants) {
       try { tenants = await callBlocageApi("GET", "/blocage/tenants"); setBlqTenants(tenants); }
@@ -2863,7 +2864,23 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const r = await callBlocageApi("POST", "/blocage", { action: "bloquer", tenant: blqTenant, expediteur: adresse, ticketRef: t.reference || "" });
       if (r.statut !== "ok") throw new Error(r.resultat || "Échec du blocage");
-      setBlqMsg("✓ " + r.resultat);
+      setBlqMsg("✓ " + r.resultat + (blqEmail ? "\n\n✉️ L'email d'explication est prêt dans la zone de réponse du ticket : relisez-le puis cliquez sur « Répondre » (ou « Répondre et fermer »)." : ""));
+      if (blqEmail) {
+        const escE = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const prenom = String(t.contact_name || "").trim();
+        const salut = "Bonjour" + (prenom ? " " + prenom : "") + ",";
+        const p1 = "Merci pour votre vigilance. L'adresse " + adresse + " est désormais bloquée sur l'ensemble de votre messagerie : les prochains emails de cet expéditeur seront automatiquement mis en quarantaine.";
+        const p2 = "Les fraudeurs changent régulièrement d'adresse : d'autres messages du même type peuvent arriver depuis une adresse différente. Ne modifiez jamais de coordonnées bancaires (RIB, virement, fournisseur) sur la base d'un email, et confirmez toujours la demande par un appel à la personne concernée, sur son numéro habituel.";
+        const p3 = "N'hésitez pas à nous transmettre tout nouveau message suspect via le portail.";
+        const plain = salut + "\n\n" + p1 + "\n\n" + p2 + "\n\n" + p3 + "\n\nCordialement,";
+        const html = "<p>" + escE(salut) + "</p>" +
+          "<p>Merci pour votre vigilance. L'adresse <b>" + escE(adresse) + "</b> est désormais bloquée sur l'ensemble de votre messagerie : les prochains emails de cet expéditeur seront automatiquement mis en quarantaine.</p>" +
+          "<p>Les fraudeurs changent régulièrement d'adresse : d'autres messages du même type peuvent arriver depuis une adresse différente. <b>Ne modifiez jamais de coordonnées bancaires</b> (RIB, virement, fournisseur) sur la base d'un email, et confirmez toujours la demande par un appel à la personne concernée, sur son numéro habituel.</p>" +
+          "<p>" + escE(p3) + "</p><p>Cordialement,</p>";
+        setReplyHtmlOverride(null);
+        setReplyHtml(prev => (prev && prev.trim()) ? (prev + "<br>" + html) : html);
+        setReplyText(prev => { const q = (prev || "").trim(); return q ? (q + "\n\n" + plain) : plain; });
+      }
       if (blqTrace) {
         const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
         const quand = new Date().toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -11742,9 +11759,13 @@ const nav = isAdmin
         ),
         React.createElement('div', { style: { fontSize: 11, color: "#7a5600", background: "#FEF4DC", borderRadius: 7, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 } },
           "Bloquez uniquement l'adresse exacte du fraudeur. Vérifiez-la sur la capture ou l'email d'origine : le nom affiché (« Manon … ») ne compte pas, seule l'adresse entre < > compte. Les domaines de l'hôtel, de DSI Hotel et des enseignes sont protégés."),
+        React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#555", marginBottom: 6, cursor: "pointer" } },
+          React.createElement('input', { type: "checkbox", checked: blqEmail, onChange: e => setBlqEmail(e.target.checked), disabled: blqBusy }),
+          "Préparer l'email d'explication au client (à relire puis envoyer avec « Répondre »)"
+        ),
         React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#555", marginBottom: 12, cursor: "pointer" } },
           React.createElement('input', { type: "checkbox", checked: blqTrace, onChange: e => setBlqTrace(e.target.checked), disabled: blqBusy }),
-          "Ajouter une trace dans le fil du ticket (visible par le client, sans email)"
+          "Ajouter aussi un bandeau « Expéditeur bloqué » dans le fil (sans email)"
         ),
         blqMsg && React.createElement('div', { style: { fontSize: 12, color: blqMsg.startsWith("✓") ? "#2F855A" : "#C53030", marginBottom: 12, whiteSpace: "pre-wrap" } }, blqMsg),
         React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
