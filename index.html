@@ -4360,6 +4360,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
     setSoTpBusy("");
   };
+  // Vide le dossier Téléchargements de tous les profils des PC (script NinjaOne, PC en ligne).
+  const soViderTelechargements = async (hotelId, noms, unSeul) => {
+    const lst = [...new Set((noms || []).filter(Boolean))];
+    if (!lst.length) return;
+    if (lst.length > 15) { alert("15 PC maximum par opération (" + lst.length + " sélectionnés)."); return; }
+    if (!window.confirm("Vider ENTIÈREMENT le dossier Téléchargements sur " + lst.length + " PC ?\n\n" + lst.join(", ") +
+      "\n\nTous les fichiers des dossiers Téléchargements de TOUS les utilisateurs de ces PC seront supprimés définitivement (pas de corbeille). Seuls les PC en ligne dans NinjaOne seront traités.")) return;
+    setSoTpBusy(unSeul ? hotelId + ":dl:" + lst[0] : hotelId); setSoTpMsg(prev => ({ ...prev, [hotelId]: null }));
+    try {
+      const r = await callSophosApi("/vider-telechargements", { hostnames: lst });
+      const echecs = (r.resultats || []).filter(x => !x.ok);
+      setSoTpMsg(prev => ({ ...prev, [hotelId]: {
+        ok: !echecs.length,
+        txt: (r.reussis ? "🧹 Nettoyage des Téléchargements lancé sur " + r.reussis + " PC. Le détail (nombre de fichiers, Mo libérés) est visible dans NinjaOne → fiche du PC → Activités." : "")
+          + (echecs.length ? (r.reussis ? "\n" : "") + "⚠️ " + echecs.length + " non traité(s) : " + echecs.map(x => x.hostname + " — " + x.erreur).join(" | ") : ""),
+      } }));
+    } catch (e) {
+      setSoTpMsg(prev => ({ ...prev, [hotelId]: { ok: false, txt: "⚠️ " + (e.message || e) } }));
+    }
+    setSoTpBusy("");
+  };
   const soTamperMdp = async (hotelId, p) => {
     setSoTpBusy(hotelId + ":" + p.sophos_id);
     try {
@@ -10684,6 +10705,10 @@ const nav = isAdmin
                           React.createElement('button', { onClick: () => soScanner(h.id, [p]), disabled: muet || soTpBusy === h.id + ":scan:" + p.sophos_id,
                             title: muet ? "PC muet dans Sophos : la demande d'analyse ne lui parviendrait pas" : "Lancer une analyse Sophos complète sur ce PC",
                             style: { border: "1px solid #E8E8F0", background: "white", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: muet ? "#CCC" : "#2B6CB0", cursor: muet ? "default" : "pointer" } }, soTpBusy === h.id + ":scan:" + p.sophos_id ? "…" : "🔍"),
+                          (() => { const enLigne = !!(n && n.trouve && n.en_ligne); const occ = soTpBusy === h.id + ":dl:" + p.hostname;
+                            return React.createElement('button', { onClick: () => soViderTelechargements(h.id, [p.hostname], true), disabled: !enLigne || occ,
+                              title: enLigne ? "Vider entièrement le dossier Téléchargements de tous les utilisateurs de ce PC (NinjaOne)" : "PC hors ligne ou introuvable dans NinjaOne : nettoyage impossible",
+                              style: { border: "1px solid #E8E8F0", background: "white", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: enLigne ? "#6B46C1" : "#CCC", cursor: enLigne ? "pointer" : "default", opacity: enLigne ? 1 : .5 } }, occ ? "…" : "🧹"); })(),
                           React.createElement('button', { onClick: () => soTamperMdp(h.id, p), disabled: soTpBusy === h.id + ":" + p.sophos_id, title: "Afficher le mot de passe anti-altération (pour désinstaller Sophos sur place ou via le script NinjaOne, utile si l'agent ne communique plus avec Sophos Central)",
                             style: { border: "1px solid #E8E8F0", background: "white", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: "#777", cursor: "pointer" } }, soTpBusy === h.id + ":" + p.sophos_id ? "…" : "🔑"),
                           caseSuppr(p),
@@ -10752,6 +10777,8 @@ const nav = isAdmin
                           btn("🔒 Réactiver", "activer", "#2F855A"),
                           React.createElement('button', { onClick: () => soScanner(h.id), disabled: busy || !nb,
                             style: { border: "none", background: "#2B6CB0", color: "white", borderRadius: 7, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy || !nb ? "default" : "pointer", opacity: busy || !nb ? .6 : 1 } }, "🔍 Lancer une analyse"),
+                          React.createElement('button', { onClick: () => soViderTelechargements(h.id, Object.values(sel)), disabled: busy || !nb,
+                            style: { border: "none", background: "#6B46C1", color: "white", borderRadius: 7, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy || !nb ? "default" : "pointer", opacity: busy || !nb ? .6 : 1 } }, "🧹 Vider Téléchargements"),
                           c && c.tenant_id && React.createElement('button', { onClick: () => soSupprimerSophos(c.tenant_id, Object.entries(sel).map(([sophos_id, hostname]) => ({ sophos_id, hostname })), h.id), disabled: busy || !nb || soTpBusy === h.id + ":suppr",
                             title: "Supprimer les PC sélectionnés de Sophos Central (PC muets depuis plus de 7 jours uniquement)",
                             style: { border: "none", background: "#C53030", color: "white", borderRadius: 7, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy || !nb ? "default" : "pointer", opacity: busy || !nb ? .6 : 1 } }, soTpBusy === h.id + ":suppr" ? "Suppression…" : "🗑 Supprimer de Sophos"),
