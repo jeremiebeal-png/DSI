@@ -47,6 +47,7 @@
   .leaflet-tooltip.htip::before{border-top-color:#1a1a3e}
   .marker-cluster-small,.marker-cluster-medium,.marker-cluster-large{background:rgba(229,72,77,.25)}
   .marker-cluster-small div,.marker-cluster-medium div,.marker-cluster-large div{background:#E5484D;color:#fff;font-weight:700}
+  @keyframes dsiPulseRouge{0%,100%{box-shadow:0 0 0 0 rgba(229,62,62,.6)}50%{box-shadow:0 0 0 7px rgba(229,62,62,0)}}
 </style>
 </head>
 <body>
@@ -58,6 +59,8 @@ const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
 const PRESTATAIRES = ["Axians","Bartech","CK Print","Colt","Dormakaba","FreedomPay","Hoist","Hospitality","ITM","Medialog","Micros","Novicom","Oracle","Shiji","Support Hilton","Support IHG","Techotels","Wifirst"];
 const PRESTA_COLOR = { "Oracle":"#185FA5","Micros":"#0F6E56","Support Hilton":"#BA7517","Dormakaba":"#534AB7","Support IHG":"#3B6D11","Hospitality":"#993C1D","FreedomPay":"#993556","Shiji":"#0C447C","Bartech":"#5F5E5A","Axians":"#A32D2D" };
 const prestaColor = (p) => "#534AB7"; // couleur unique pour tous les prestataires
+// Alerte Microsoft Defender reçue par email (expéditeur defender-noreply@microsoft.com)
+const estAlerteDefender = (t) => /defender-noreply@/i.test(String((t && t.contact_email) || ""));
 const RDV_CRENEAUX = ["09h30 - 10h30", "10h30 - 11h30", "12h30 - 13h30", "14h30 - 15h30", "15h30 - 16h30", "16h30 - 17h30"];
 const semaineOuvree = (dateStr) => { const d = new Date(dateStr + "T00:00:00"); if (isNaN(d.getTime())) return []; const dow = (d.getDay() + 6) % 7; const monday = new Date(d); monday.setDate(d.getDate() - dow); const noms = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]; const out = []; for (let i = 0; i < 5; i++) { const x = new Date(monday); x.setDate(monday.getDate() + i); const iso = x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); out.push({ iso: iso, label: noms[i] + " " + String(x.getDate()).padStart(2, "0") + "/" + String(x.getMonth() + 1).padStart(2, "0") }); } return out; };
 const formatJourRdv = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d.getTime()) ? iso : d.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" }); };
@@ -2572,6 +2575,62 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     })();
   };
 
+  // ---------- ALERTES MICROSOFT DEFENDER : rattachement automatique à l'hôtel ----------
+  // 1) ID de tenant (GUID) présent dans le mail -> table m365_tenants (Sécurité Microsoft)
+  // 2) « Organization name » (domaine, ex. hotelbowmann.com) -> domaine des emails de la fiche hôtel,
+  //    puis nom de l'hôtel / du tenant contenu dans le domaine (uniquement si une seule correspondance).
+  const defenderTentes = useRef(new Set());
+  const rattacherAlertesDefender = async (liste) => {
+    if (!isAdmin || !hotels.length) return;
+    const cibles = (liste || []).filter(t => estAlerteDefender(t) && !t.hotel_id && !defenderTentes.current.has(t.id));
+    if (!cibles.length) return;
+    cibles.forEach(t => defenderTentes.current.add(t.id));
+    try {
+      let tenants = [];
+      try { const r = await sb.from("m365_tenants").select("tenant_id,nom,hotel_id"); tenants = r.data || []; } catch (e) {}
+      const texteDe = {};
+      try {
+        const { data: msgs } = await sb.from("ticket_messages").select("ticket_id,body,body_html").in("ticket_id", cibles.slice(0, 150).map(t => t.id));
+        (msgs || []).forEach(m => { texteDe[m.ticket_id] = (texteDe[m.ticket_id] || "") + " " + (m.body || "") + " " + (m.body_html || ""); });
+      } catch (e) {}
+      const domaineDe = (e) => (String(e || "").toLowerCase().split("@")[1] || "").trim();
+      const norm = (v) => String(v || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+      for (const t of cibles) {
+        const brut = (t.subject || "") + " " + (t.message || "") + " " + (texteDe[t.id] || "");
+        const txt = brut.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ");
+        let hid = null;
+        const guids = (brut.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || []).map(g => g.toLowerCase());
+        const tn = tenants.find(x => x.hotel_id && guids.includes(String(x.tenant_id || "").toLowerCase()));
+        if (tn) hid = tn.hotel_id;
+        if (!hid) {
+          const m = txt.match(/Organization name\s*:?\s*([A-Za-z0-9.-]+\.[A-Za-z]{2,})/i)
+            || txt.match(/Nom de l['’]organisation\s*:?\s*([A-Za-z0-9.-]+\.[A-Za-z]{2,})/i)
+            || txt.match(/notification for\s+([A-Za-z0-9.-]+\.[A-Za-z]{2,})/i);
+          const dom = m ? m[1].toLowerCase().replace(/\.+$/, "") : "";
+          if (dom) {
+            const parEmail = hotels.filter(h => [h.account_email, h.standard_email, h.gm_email, h.rh_email, h.tech_email].some(e => { const d = domaineDe(e); return d && (d === dom || d.endsWith("." + dom)); }));
+            if (parEmail.length === 1) hid = parEmail[0].id;
+            if (!hid) {
+              const racine = norm(dom.split(".")[0]);
+              const tnNom = tenants.filter(x => x.hotel_id && norm(x.nom).length >= 4 && (racine.includes(norm(x.nom)) || norm(x.nom).includes(racine)));
+              if (tnNom.length === 1) hid = tnNom[0].hotel_id;
+              if (!hid) {
+                const motsHotel = (h) => String(h.name || "").split(/[^A-Za-zÀ-ÿ0-9]+/).map(norm).filter(w => w.length >= 5);
+                const parNom = hotels.filter(h => motsHotel(h).some(w => racine.includes(w)));
+                if (parNom.length === 1) hid = parNom[0].id;
+              }
+            }
+          }
+        }
+        if (hid) {
+          const { error } = await sb.from("tickets").update({ hotel_id: hid }).eq("id", t.id);
+          if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, hotel_id: hid } : x));
+        }
+      }
+    } catch (e) { /* silencieux : le ticket reste « non assigné » */ }
+  };
+  useEffect(() => { if (isAdmin && hotels.length && tickets.length) rattacherAlertesDefender(tickets); }, [tickets, hotels, isAdmin]);
+
   // Charge le statut des demandes de validation (via le Worker) et l'indexe par référence.
   const loadValidations = async () => {
     try {
@@ -3244,7 +3303,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           const t = payload && payload.new;
           if (t && t.id) {
             toastTicketsRecentsRef.current[t.id] = Date.now();
-            const auto = t.source === "checkcentral" || t.source === "sophos" || t.source === "m365";
+            const auto = t.source === "checkcentral" || t.source === "sophos" || t.source === "m365" || estAlerteDefender(t);
             ajouterToast({
               kind: auto ? "alerte" : "nouveau",
               ticketId: t.id, reference: t.reference,
@@ -8582,8 +8641,10 @@ const nav = isAdmin
     const sheratonHotelIds = new Set(hotels.filter(h => /sheraton/i.test(h.name || "")).map(h => h.id));
     const estSheraton = (t) => sheratonHotelIds.has(t.hotel_id);
     const nbSheraton = tickets.filter(t => estSheraton(t) && t.status !== "closed").length;
+    const nbDefender = tickets.filter(t => estAlerteDefender(t) && t.status !== "closed").length;
     let list = tickets;
-    if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente && !estSheraton(t));
+    if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente && !estSheraton(t) && !estAlerteDefender(t));
+    if (ticketFilter === "defender") list = tickets.filter(t => estAlerteDefender(t) && t.status !== "closed");
     if (ticketFilter === "sheraton") list = tickets.filter(t => estSheraton(t) && t.status !== "closed");
     if (ticketFilter === "closed") list = tickets.filter(t => t.status === "closed");
     if (ticketFilter === "waiting") list = tickets.filter(t => t.en_attente && t.status !== "closed");
@@ -8614,8 +8675,10 @@ const nav = isAdmin
     content = React.createElement('div', null,
       openTicketId && React.createElement('button', { onClick: () => setOpenTicketId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux tickets"),
       !openTicketId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        [["open", "Ouverts"], ["mine", "👤 Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
-          React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
+        [["open", "Ouverts"], ["mine", "👤 Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["defender", "🛡️ Alerte Microsoft" + (nbDefender ? " (" + nbDefender + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
+          (v === "defender" && nbDefender > 0)
+            ? React.createElement('button', { key: v, "data-no-invert": "1", onClick: () => setTicketFilter(v), title: nbDefender + " alerte(s) Microsoft Defender à traiter", style: { padding: "6px 14px", border: "1px solid #C53030", background: ticketFilter === v ? "#9B2C2C" : "#E53E3E", color: "white", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: 700, animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, lbl)
+            : React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
         ),
         React.createElement('div', { style: { flex: "1 1 240px", position: "relative", minWidth: 180 } },
           React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
@@ -11950,6 +12013,7 @@ const nav = isAdmin
       )
     );
   }
+  const nbAlertesDefenderMenu = isAdmin ? tickets.filter(t => estAlerteDefender(t) && t.status !== "closed").length : 0;
   const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "m365" ? "Sécurité Microsoft 365" : page === "checklist" ? "Check-list sécurité serveurs" : page === "inventaire" ? "Inventaire serveurs — versions, Care Pack, antivirus" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
@@ -12015,7 +12079,8 @@ const nav = isAdmin
                 style: { ...btnStyle(it.p), paddingLeft: 34, fontSize: 12.5 }
               },
                 React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, it.icon),
-                React.createElement('span', { style: { flex: 1 } }, it.label)
+                React.createElement('span', { style: { flex: 1 } }, it.label),
+                it.p === "tickets-admin" && nbAlertesDefenderMenu > 0 && React.createElement('span', { title: "Alertes Microsoft Defender à traiter", style: { fontSize: 10.5, fontWeight: 800, color: "white", background: "#E53E3E", borderRadius: 20, padding: "1px 7px", animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, "🛡️ " + nbAlertesDefenderMenu)
               )));
             }
             return;
