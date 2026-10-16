@@ -4330,6 +4330,36 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
     setSoTpBusy("");
   };
+  // Suppression définitive de PC dans Sophos Central (PC muets uniquement, contrôlé par le Worker).
+  // postes = [{ sophos_id, hostname }] d'UN même compte Sophos ; hotelId = hôtel affiché (pour le message), ou null.
+  const soSupprimerSophos = async (tenantId, postes, hotelId) => {
+    const lst = (postes || []).filter(p => p && p.sophos_id);
+    if (!tenantId || !lst.length) return;
+    if (lst.length > 25) { alert("25 PC maximum par opération (" + lst.length + " sélectionnés)."); return; }
+    if (!window.confirm("Supprimer définitivement " + lst.length + " PC de Sophos Central ?\n\n" + lst.map(p => p.hostname).join(", ") +
+      "\n\nAction irréversible. Seuls les PC muets depuis plus de 7 jours seront supprimés. Si un de ces PC est rallumé avec l'agent encore installé, il faudra réinstaller Sophos dessus.")) return;
+    const cle = hotelId || "__suppr";
+    setSoTpBusy(cle + ":suppr"); setSoMsg("");
+    try {
+      const r = await callSophosApi("/supprimer-postes", { tenantId, sophosIds: lst.map(p => p.sophos_id) });
+      const ok = new Set((r.resultats || []).filter(x => x.ok).map(x => String(x.sophosId)));
+      const echecs = (r.resultats || []).filter(x => !x.ok);
+      const garde = (x) => !(x.tenant_id === tenantId && ok.has(String(x.sophos_id)));
+      setSoPostes(prev => { const o = {}; Object.keys(prev).forEach(k => { o[k] = (prev[k] || []).filter(garde); }); return o; });
+      setSoNonAffectes(prev => prev.filter(garde));
+      setSoASupprimer(prev => prev.filter(garde));
+      setSoTpSel(prev => { const o = {}; Object.keys(prev).forEach(k => { o[k] = Object.fromEntries(Object.entries(prev[k] || {}).filter(([id]) => !ok.has(id))); }); return o; });
+      const txt = (ok.size ? "🗑 " + ok.size + " PC supprimé" + (ok.size > 1 ? "s" : "") + " de Sophos Central." : "")
+        + (echecs.length ? (ok.size ? "\n" : "") + "⚠️ " + echecs.length + " non supprimé(s) : " + echecs.map(x => (x.hostname || x.sophosId) + " — " + x.erreur).join(" | ") : "");
+      if (hotelId) setSoTpMsg(prev => ({ ...prev, [hotelId]: { ok: !echecs.length, txt } }));
+      else setSoMsg((echecs.length ? "❌ " : "✅ ") + txt);
+      loadSophos(true);
+    } catch (e) {
+      if (hotelId) setSoTpMsg(prev => ({ ...prev, [hotelId]: { ok: false, txt: "⚠️ " + (e.message || e) } }));
+      else setSoMsg("❌ " + (e.message || e));
+    }
+    setSoTpBusy("");
+  };
   const soTamperMdp = async (hotelId, p) => {
     setSoTpBusy(hotelId + ":" + p.sophos_id);
     try {
@@ -10444,6 +10474,7 @@ const nav = isAdmin
                   React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                     React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#C53030" } }, "🛡️ " + nomSophos(t) + " — " + liste.length + " PC à supprimer"),
                     React.createElement('div', { style: { fontSize: 11.5, color: "#9B2C2C", marginTop: 2 } }, "Hôtels de cette console : " + soComptes.filter(x => x.tenant_id === t).map(x => nomHotel(x.hotel_id)).join(" · "))),
+                  btn(soTpBusy === "__suppr:suppr" ? "Suppression…" : "🗑 Supprimer " + (liste.length > 25 ? "les 25 premiers" : liste.length > 1 ? "ces " + liste.length + " PC" : "ce PC") + " de Sophos", () => soSupprimerSophos(t, liste.slice(0, 25), null), { disabled: !!soTpBusy, style: { background: "#C53030", border: "none", color: "white", fontWeight: 700 } }),
                   React.createElement('a', { href: "https://central.sophos.com", target: "_blank", rel: "noopener noreferrer", style: { fontSize: 12, fontWeight: 600, color: "#C53030", textDecoration: "none", border: "1px solid #F5B5B5", background: "white", borderRadius: 7, padding: "5px 10px" } }, "Ouvrir Sophos Central ↗")),
                 liste.map(p => {
                   const j = p.last_seen_at ? Math.floor((Date.now() - new Date(p.last_seen_at).getTime()) / 86400000) : null;
@@ -10453,7 +10484,9 @@ const nav = isAdmin
                     React.createElement('span', { style: { flex: "0 0 190px", color: "#777", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.dernier_utilisateur ? "👤 " + p.dernier_utilisateur : ""),
                     React.createElement('span', { style: { flex: "0 0 130px", color: "#C05621", fontSize: 11.5, whiteSpace: "nowrap" } }, j === null ? "" : j === 0 ? "vu aujourd'hui" : "muet depuis " + j + " j"),
                     React.createElement('span', { style: { color: "#999", fontSize: 11 } }, p.a_supprimer_par ? "coché par " + p.a_supprimer_par + (p.a_supprimer_le ? " le " + fmtDateHeureFr2(p.a_supprimer_le) : "") : ""),
-                    React.createElement('div', { style: { marginLeft: "auto" } }, btn("↩ Retirer de la liste", () => soMarquerSuppression(p, false), { style: { padding: "4px 9px" } }))
+                    React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 6 } },
+                      btn("🗑 Supprimer", () => soSupprimerSophos(t, [p], null), { disabled: !!soTpBusy, style: { padding: "4px 9px", border: "1px solid #F5B5B5", color: "#C53030", fontWeight: 600 } }),
+                      btn("↩ Retirer de la liste", () => soMarquerSuppression(p, false), { style: { padding: "4px 9px" } }))
                   );
                 })
               ))
@@ -10719,6 +10752,9 @@ const nav = isAdmin
                           btn("🔒 Réactiver", "activer", "#2F855A"),
                           React.createElement('button', { onClick: () => soScanner(h.id), disabled: busy || !nb,
                             style: { border: "none", background: "#2B6CB0", color: "white", borderRadius: 7, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy || !nb ? "default" : "pointer", opacity: busy || !nb ? .6 : 1 } }, "🔍 Lancer une analyse"),
+                          c && c.tenant_id && React.createElement('button', { onClick: () => soSupprimerSophos(c.tenant_id, Object.entries(sel).map(([sophos_id, hostname]) => ({ sophos_id, hostname })), h.id), disabled: busy || !nb || soTpBusy === h.id + ":suppr",
+                            title: "Supprimer les PC sélectionnés de Sophos Central (PC muets depuis plus de 7 jours uniquement)",
+                            style: { border: "none", background: "#C53030", color: "white", borderRadius: 7, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: busy || !nb ? "default" : "pointer", opacity: busy || !nb ? .6 : 1 } }, soTpBusy === h.id + ":suppr" ? "Suppression…" : "🗑 Supprimer de Sophos"),
                           React.createElement('button', { onClick: () => setSoTpSel(prev => ({ ...prev, [h.id]: {} })), style: { border: "1px solid rgba(255,255,255,.35)", background: "transparent", color: "white", borderRadius: 7, padding: "5px 10px", fontSize: 12, cursor: "pointer" } }, "Désélectionner")),
                         nb > 0 && React.createElement('div', { style: { fontSize: 11, opacity: .7, marginTop: 5 } }, "Sophos Central transmet la consigne au PC à son prochain contact. Un agent qui ne communique plus (« à réparer ») ne la recevra pas : utilisez alors 🔑 pour obtenir son mot de passe."),
                         msg && React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "flex-start", marginTop: nb ? 8 : 0, fontSize: 12, whiteSpace: "pre-wrap", color: msg.ok ? "#9AE6B4" : "#FEB2B2" } },
