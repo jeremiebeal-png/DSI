@@ -4013,6 +4013,54 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } catch (e) { setCkErr("Application des points standards : " + (e.message || e)); }
     finally { setCkStdBusy(false); }
   };
+  // Serveurs AD / contrôleurs de domaine (nom « AD », « DC », « CP-SRV-DC », « DC01 »…)
+  const ckEstAD = (nom) => /(^|[^A-Z0-9])(AD|DC)([^A-Z]|$)/i.test(String(nom || ""));
+  // Ne garde QUE les 8 points standards sur les serveurs donnés : retire les autres points
+  // tant qu'ils ne sont pas remplis (un point déjà renseigné est conservé), ajoute les standards manquants.
+  const ckStandardiserServeurs = async (srvs) => {
+    const cle = (t) => String(t || "").trim().toLowerCase();
+    const std = new Set(CK_POINTS_STANDARD.map(p => cle(p.tache)));
+    let retires = 0, ajoutes = 0, gardes = 0;
+    for (const srv of srvs) {
+      const { data: pts, error } = await sb.from("checklist_points").select("id,tache,ordre,statut,date_controle,technicien,commentaire").eq("serveur_id", srv.id);
+      if (error) throw error;
+      const rempli = (p) => p.statut || p.date_controle || (p.technicien || "").trim() || (p.commentaire || "").trim();
+      const aRetirer = (pts || []).filter(p => !std.has(cle(p.tache)) && !rempli(p));
+      gardes += (pts || []).filter(p => !std.has(cle(p.tache)) && rempli(p)).length;
+      if (aRetirer.length) {
+        const { error: eDel } = await sb.from("checklist_points").delete().in("id", aRetirer.map(p => p.id));
+        if (eDel) throw eDel;
+        retires += aRetirer.length;
+      }
+      const presents = new Set((pts || []).map(p => cle(p.tache)));
+      const manquants = CK_POINTS_STANDARD.filter(p => !presents.has(cle(p.tache)));
+      if (manquants.length) {
+        const { error: eIns } = await sb.from("checklist_points").insert(manquants.map(p => ({ serveur_id: srv.id, hotel_id: srv.hotel_id, ordre: p.ordre, categorie: p.categorie, tache: p.tache })));
+        if (eIns) throw eIns;
+        ajoutes += manquants.length;
+      }
+    }
+    return { retires, ajoutes, gardes };
+  };
+  const ckStandardiserAD = async (unSeul) => {
+    try {
+      let srvs;
+      if (unSeul) srvs = [unSeul];
+      else {
+        const { data, error } = await sb.from("checklist_serveurs").select("id,hotel_id,nom");
+        if (error) throw error;
+        srvs = (data || []).filter(x => ckEstAD(x.nom));
+      }
+      if (!srvs.length) { alert("Aucun serveur AD trouvé (nom contenant « AD » ou « DC »)."); return; }
+      if (!confirm((unSeul ? "Serveur « " + unSeul.nom + " »" : srvs.length + " serveur(s) AD : " + srvs.map(x => x.nom).slice(0, 15).join(", ") + (srvs.length > 15 ? "…" : "")) +
+        "\n\nNe garder que les " + CK_POINTS_STANDARD.length + " points standards ?\nLes autres points non remplis sont retirés ; un point déjà renseigné (statut, date, technicien ou commentaire) est conservé.")) return;
+      setCkStdBusy(true); setCkErr("");
+      const r = await ckStandardiserServeurs(srvs);
+      alert("✅ " + srvs.length + " serveur(s) traité(s) : " + r.retires + " point(s) retiré(s), " + r.ajoutes + " point(s) standard(s) ajouté(s)." + (r.gardes ? "\n" + r.gardes + " point(s) déjà renseigné(s) conservé(s)." : ""));
+      if (ckHotel) await loadCkServeurs(ckHotel, ckServeur); else loadCkSynthese();
+    } catch (e) { setCkErr("Points standards AD : " + (e.message || e)); }
+    finally { setCkStdBusy(false); }
+  };
   const ckChoisirHotel = (hid) => { setCkHotel(hid); setCkServeur(null); setCkPoints([]); setCkServeurs([]); if (hid) loadCkServeurs(hid); };
   const ckAjouterServeur = async () => {
     if (!ckHotel) return;
@@ -10109,7 +10157,10 @@ const nav = isAdmin
             compte("aucune") > 0 && chip("aucune", "Sans check-list", compte("aucune"), ETATS.aucune.c, ETATS.aucune.bg),
             React.createElement('button', { onClick: ckAppliquerStandardPartout, disabled: ckStdBusy, title: "Remplace les points des check-lists pas encore remplies par les " + CK_POINTS_STANDARD.length + " points standards",
               style: { marginLeft: "auto", padding: "6px 13px", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: ckStdBusy ? "default" : "pointer", border: "none", background: G, color: "#111", opacity: ckStdBusy ? 0.6 : 1 } },
-              ckStdBusy ? "Application…" : "⭐ Appliquer les points standards aux check-lists non remplies")),
+              ckStdBusy ? "Application…" : "⭐ Appliquer les points standards aux check-lists non remplies"),
+            React.createElement('button', { onClick: () => ckStandardiserAD(null), disabled: ckStdBusy, title: "Sur tous les serveurs AD / DC : ne garder que les " + CK_POINTS_STANDARD.length + " points standards",
+              style: { padding: "6px 13px", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: ckStdBusy ? "default" : "pointer", border: "1px solid " + G, background: "white", color: G2, opacity: ckStdBusy ? 0.6 : 1 } },
+              "🖥️ Serveurs AD : seulement les points standards")),
           ckSynth.loading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…"),
           !ckSynth.loading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
             !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
@@ -10179,6 +10230,7 @@ const nav = isAdmin
             React.createElement('optgroup', { label: "Modèles par type de serveur" },
               [["VEEAM", "Sauvegarde (VEEAM)"], ["AD", "Contrôleur de domaine (AD / DC)"], ["OPERA", "Opera / PMS"], ["INTERFACE", "Interface (IFC, OPI, clés, paiement…)"], ["COMPTA", "Comptabilité (Sage…)"], ["LINUX", "Linux (UniFi…)"], ["ESXI", "Hôte ESXi (physique)"], ["WINDOWS", "Autre serveur Windows"]]
                 .map(([v, l]) => React.createElement('option', { key: v, value: "__modele:" + v }, "Modèle : " + l)))),
+          ckEstAD(srv.nom) && React.createElement('button', { onClick: () => ckStandardiserAD({ id: srv.id, hotel_id: ckHotel, nom: srv.nom }), disabled: ckStdBusy, title: "Ne garder que les " + CK_POINTS_STANDARD.length + " points standards sur ce serveur AD", style: { marginLeft: 6, padding: "4px 9px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer" } }, "⭐ Points standards"),
           total > 0 && React.createElement('button', { onClick: () => ckViderServeur(srv), title: "Retirer tous les points de ce serveur (check-list vide)", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #E2E2EA", color: "#777", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Vider"),
           React.createElement('button', { onClick: () => ckSupprimerServeur(srv), title: "Supprimer ce serveur de la check-list", style: { marginLeft: 6, padding: "4px 9px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "Supprimer")
         )
