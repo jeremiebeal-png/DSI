@@ -10353,6 +10353,35 @@ const nav = isAdmin
     const nomsTech = [...new Set(techniciens.map(t => String(t.nom || "").split(" ")[0]).filter(Boolean))];
     const fmtD = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("fr-FR") : "";
     const ouiNon = (v) => v === "Oui" ? { c: "#2F855A", bg: "#E6F6EA" } : v === "Non" ? { c: "#C53030", bg: "#FDE2E2" } : v === "N/A" ? { c: "#718096", bg: "#EEF0F4" } : { c: "#999", bg: "#FFFBEB" };
+    // ----- Licence Veeam (bandeau sous chaque serveur Veeam) -----
+    const invEstVeeam = (r) => /veeam/i.test((r.nom || "") + " " + (r.role || ""));
+    const invMajLicence = async (r, champs) => {
+      setInvRows(prev => prev.map(x => x.id === r.id ? { ...x, ...champs } : x));
+      const { error } = await sb.from("inventaire_serveurs").update(champs).eq("id", r.id);
+      if (error) { alert("Enregistrement impossible : " + error.message + (/licence_/i.test(error.message) ? "\n\nLe script licence_veeam.sql a-t-il été exécuté ?" : "")); loadInv(r.hotel_id); }
+    };
+    const invLigneLicence = (r, fond) => {
+      const j = r.licence_fin ? Math.round((new Date(r.licence_fin + "T12:00:00") - new Date(new Date().toISOString().slice(0, 10) + "T12:00:00")) / 86400000) : null;
+      const st = j === null ? { l: "Date de fin à renseigner", c: "#B7791F", bg: "#FFFBEB" }
+        : j < 0 ? { l: "Expirée depuis " + (-j) + " j", c: "#C53030", bg: "#FDE2E2" }
+        : j <= 60 ? { l: j + " j restants", c: "#C05621", bg: "#FFF3E8" }
+        : { l: j + " j restants", c: "#2F855A", bg: "#E6F6EA" };
+      const envoyees = (r.licence_alertes_envoyees || []).slice().sort((a, b) => b - a);
+      const champ = { padding: "4px 7px", border: "1px solid #BFD5F2", borderRadius: 6, fontSize: 12.5, fontFamily: "inherit", background: "white" };
+      return React.createElement('tr', { style: { background: fond } },
+        React.createElement('td', { colSpan: 21, style: { padding: "0 6px 8px", borderBottom: "1px solid #F0F0F5" } },
+          React.createElement('div', { style: { position: "sticky", left: 0, display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginLeft: 36, background: "#F3F7FD", border: "1px solid #BFD5F2", borderRadius: 8, padding: "6px 12px", fontSize: 12.5, color: "#1F4E8C" } },
+            React.createElement('b', null, "🔑 Licence Veeam"),
+            React.createElement('input', { key: r.id + "li" + (r.licence_info || ""), defaultValue: r.licence_info || "", placeholder: "Type / n° de licence", onBlur: e => { const v = e.target.value.trim(); if (v !== (r.licence_info || "")) invMajLicence(r, { licence_info: v || null }); }, style: { ...champ, width: 190 } }),
+            React.createElement('span', null, "Fin :"),
+            React.createElement('input', { type: "date", value: r.licence_fin || "", onChange: e => invMajLicence(r, { licence_fin: e.target.value || null, licence_alertes_envoyees: [] }), style: champ }),
+            React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: st.c, background: st.bg, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, st.l),
+            React.createElement('label', { title: r.licence_fin ? "Email automatique au support" : "Renseignez d'abord la date de fin", style: { display: "inline-flex", alignItems: "center", gap: 6, cursor: r.licence_fin ? "pointer" : "default", fontWeight: 600, opacity: r.licence_fin ? 1 : .5 } },
+              React.createElement('input', { type: "checkbox", disabled: !r.licence_fin, checked: !!r.licence_alerte, onChange: e => invMajLicence(r, { licence_alerte: e.target.checked }) }),
+              "🔔 Alerte email au support : J-60, J-30, J-15, J-5, J-1"),
+            envoyees.length > 0 && React.createElement('span', { style: { fontSize: 11, color: "#888" } }, "déjà envoyées : " + envoyees.map(s => s === 0 ? "expiration" : "J-" + s).join(", "))
+          )));
+    };
     const OS_LISTE = ["VMware ESXi", "Windows Server 2025", "Windows Server 2022", "Windows Server 2019", "Windows Server 2016", "Windows Server 2012 R2", "Windows 11", "Windows 10", "Linux", "Synology DSM", "Autre"];
     // Problèmes d'une ligne (utilisés par la synthèse et la mise en couleur)
     const problemes = (r) => {
@@ -10362,6 +10391,7 @@ const nav = isAdmin
       if (cp.l === "Expiré") p.push("Care Pack expiré");
       if (r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)) p.push("antivirus ?");
       if (r.antivirus === "Oui" && r.av_a_jour === "Non") p.push("AV pas à jour");
+      if (invEstVeeam(r) && r.licence_fin && new Date(r.licence_fin + "T23:59:59") < new Date()) p.push("licence Veeam expirée");
       return p;
     };
     content = React.createElement('div', null,
@@ -10490,7 +10520,7 @@ const nav = isAdmin
                   const cp = invCarePack(r);
                   const pb = problemes(r);
                   const fond = vm ? "white" : "#F7F7FB";
-                  return React.createElement('tr', { key: r.id, style: { background: fond } },
+                  return React.createElement(React.Fragment, { key: r.id }, React.createElement('tr', { style: { background: fond } },
                     td(React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 6, paddingLeft: vm ? 18 : 0 } },
                         React.createElement('span', { style: { color: "#BBB" } }, vm ? "└" : ""),
                         React.createElement('span', null, r.type === "Physique" ? "🖥️" : "▫️"),
@@ -10515,7 +10545,7 @@ const nav = isAdmin
                     td(sel(r, "antivirus", ["Oui", "Non"])), td(txt(r, "antivirus_nom", "Nom", 90, { list: "inv-av" })), td(sel(r, "av_a_jour", ["Oui", "Non"])),
                     td(date(r, "date_controle")), td(txt(r, "technicien", "Technicien", 90, { list: "inv-techs" })), td(txt(r, "commentaire", "Commentaire", 200)),
                     td(React.createElement('button', { onClick: () => invSupprimer(r), title: "Supprimer cette ligne", style: { padding: "3px 7px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "🗑"))
-                  );
+                  ), invEstVeeam(r) && invLigneLicence(r, fond));
                 }))
             )
           ),
