@@ -64,7 +64,9 @@ const estAlerteDefender = (t) => /defender-noreply@/i.test(String((t && t.contac
 // Alertes automatiques Sophos Central et sauvegardes (CheckCentral) : onglets dédiés dans Tickets
 const estAlerteSophos = (t) => !!t && t.source === "sophos";
 const estAlerteBackup = (t) => !!t && t.source === "checkcentral";
-const estAlerteAuto = (t) => estAlerteDefender(t) || estAlerteSophos(t) || estAlerteBackup(t);
+// Onglet « Alerte Microsoft » : mails Defender + tickets créés par le Worker Microsoft 365
+const estAlerteMicrosoft = (t) => estAlerteDefender(t) || (!!t && t.source === "m365");
+const estAlerteAuto = (t) => estAlerteMicrosoft(t) || estAlerteSophos(t) || estAlerteBackup(t);
 const RDV_CRENEAUX = ["09h30 - 10h30", "10h30 - 11h30", "12h30 - 13h30", "14h30 - 15h30", "15h30 - 16h30", "16h30 - 17h30"];
 const semaineOuvree = (dateStr) => { const d = new Date(dateStr + "T00:00:00"); if (isNaN(d.getTime())) return []; const dow = (d.getDay() + 6) % 7; const monday = new Date(d); monday.setDate(d.getDate() - dow); const noms = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]; const out = []; for (let i = 0; i < 5; i++) { const x = new Date(monday); x.setDate(monday.getDate() + i); const iso = x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); out.push({ iso: iso, label: noms[i] + " " + String(x.getDate()).padStart(2, "0") + "/" + String(x.getMonth() + 1).padStart(2, "0") }); } return out; };
 const formatJourRdv = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d.getTime()) ? iso : d.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" }); };
@@ -8645,13 +8647,13 @@ const nav = isAdmin
     const sheratonHotelIds = new Set(hotels.filter(h => /sheraton/i.test(h.name || "")).map(h => h.id));
     const estSheraton = (t) => sheratonHotelIds.has(t.hotel_id);
     const nbSheraton = tickets.filter(t => estSheraton(t) && t.status !== "closed").length;
-    const nbDefender = tickets.filter(t => estAlerteDefender(t) && t.status !== "closed").length;
+    const nbDefender = tickets.filter(t => estAlerteMicrosoft(t) && t.status !== "closed").length;
     const nbSophosTk = tickets.filter(t => estAlerteSophos(t) && t.status !== "closed").length;
     const nbBackupTk = tickets.filter(t => estAlerteBackup(t) && t.status !== "closed").length;
-    const ALERTE_ONGLETS = { defender: { nb: nbDefender, titre: "alerte(s) Microsoft Defender à traiter" }, sophos: { nb: nbSophosTk, titre: "alerte(s) Sophos à traiter" }, backup: { nb: nbBackupTk, titre: "alerte(s) de sauvegarde à traiter" } };
+    const ALERTE_ONGLETS = { defender: { nb: nbDefender, titre: "alerte(s) Microsoft à traiter" }, sophos: { nb: nbSophosTk, titre: "alerte(s) Sophos à traiter" }, backup: { nb: nbBackupTk, titre: "alerte(s) de sauvegarde à traiter" } };
     let list = tickets;
     if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente && !estSheraton(t) && !estAlerteAuto(t));
-    if (ticketFilter === "defender") list = tickets.filter(t => estAlerteDefender(t) && t.status !== "closed");
+    if (ticketFilter === "defender") list = tickets.filter(t => estAlerteMicrosoft(t) && t.status !== "closed");
     if (ticketFilter === "sophos") list = tickets.filter(t => estAlerteSophos(t) && t.status !== "closed");
     if (ticketFilter === "backup") list = tickets.filter(t => estAlerteBackup(t) && t.status !== "closed");
     if (ticketFilter === "sheraton") list = tickets.filter(t => estSheraton(t) && t.status !== "closed");
@@ -12022,7 +12024,7 @@ const nav = isAdmin
       )
     );
   }
-  const nbAlertesDefenderMenu = isAdmin ? tickets.filter(t => estAlerteDefender(t) && t.status !== "closed").length : 0;
+  const nbAlertesDefenderMenu = isAdmin ? tickets.filter(t => estAlerteMicrosoft(t) && t.status !== "closed").length : 0;
   const nbAlertesSophosMenu = isAdmin ? tickets.filter(t => estAlerteSophos(t) && t.status !== "closed").length : 0;
   const nbAlertesBackupMenu = isAdmin ? tickets.filter(t => estAlerteBackup(t) && t.status !== "closed").length : 0;
   const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Sophos" : page === "m365" ? "Sécurité Microsoft 365" : page === "checklist" ? "Check-list sécurité serveurs" : page === "inventaire" ? "Inventaire serveurs — versions, Care Pack, antivirus" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
@@ -12091,7 +12093,7 @@ const nav = isAdmin
               },
                 React.createElement('span', { style: { fontSize: 14, flexShrink: 0 } }, it.icon),
                 React.createElement('span', { style: { flex: 1 } }, it.label),
-                it.p === "tickets-admin" && nbAlertesDefenderMenu > 0 && React.createElement('span', { title: "Alertes Microsoft Defender à traiter", style: { fontSize: 10.5, fontWeight: 800, color: "white", background: "#E53E3E", borderRadius: 20, padding: "1px 7px", animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, "🛡️ " + nbAlertesDefenderMenu),
+                it.p === "tickets-admin" && nbAlertesDefenderMenu > 0 && React.createElement('span', { title: "Alertes Microsoft à traiter", style: { fontSize: 10.5, fontWeight: 800, color: "white", background: "#E53E3E", borderRadius: 20, padding: "1px 7px", animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, "🛡️ " + nbAlertesDefenderMenu),
                 it.p === "tickets-admin" && nbAlertesSophosMenu > 0 && React.createElement('span', { title: "Alertes Sophos à traiter", style: { fontSize: 10.5, fontWeight: 800, color: "white", background: "#E53E3E", borderRadius: 20, padding: "1px 7px", marginLeft: 3, animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, "🔒 " + nbAlertesSophosMenu),
                 it.p === "tickets-admin" && nbAlertesBackupMenu > 0 && React.createElement('span', { title: "Alertes de sauvegarde à traiter", style: { fontSize: 10.5, fontWeight: 800, color: "white", background: "#E53E3E", borderRadius: 20, padding: "1px 7px", marginLeft: 3, animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, "💾 " + nbAlertesBackupMenu)
               )));
