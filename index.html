@@ -3967,9 +3967,34 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
     return modifies;
   };
+  // Chaque VM de l'inventaire serveurs a sa check-list (même nom, mêmes points standards).
+  // hotelId = un hôtel, ou null pour tous. Les points standards sont ensuite posés par ckSyncStandard.
+  const ckCreerDepuisInventaire = async (hotelId) => {
+    let qInv = sb.from("inventaire_serveurs").select("id,hotel_id,nom,type").eq("type", "VM");
+    let qCk = sb.from("checklist_serveurs").select("id,hotel_id,nom");
+    if (hotelId) { qInv = qInv.eq("hotel_id", hotelId); qCk = qCk.eq("hotel_id", hotelId); }
+    const [{ data: vms, error: e1 }, { data: cks, error: e2 }] = await Promise.all([qInv, qCk]);
+    if (e1 || e2) return [];
+    const cle = (h, n) => h + "|" + String(n || "").trim().toUpperCase();
+    const existants = new Set((cks || []).map(c => cle(c.hotel_id, c.nom)));
+    const vus = new Set();
+    const aCreer = (vms || []).filter(v => {
+      const k = cle(v.hotel_id, v.nom);
+      if (!String(v.nom || "").trim() || existants.has(k) || vus.has(k)) return false;
+      vus.add(k); return true;
+    });
+    if (!aCreer.length) return [];
+    let r = await sb.from("checklist_serveurs").insert(aCreer.map(v => ({ hotel_id: v.hotel_id, nom: String(v.nom).trim(), inventaire_id: v.id }))).select("id,hotel_id,nom");
+    if (r.error && /inventaire_id/i.test(r.error.message || "")) // colonne absente : création sans le lien
+      r = await sb.from("checklist_serveurs").insert(aCreer.map(v => ({ hotel_id: v.hotel_id, nom: String(v.nom).trim() }))).select("id,hotel_id,nom");
+    if (r.error) throw r.error;
+    if ((r.data || []).length) await ckSyncStandard(r.data);
+    return r.data || [];
+  };
   const loadCkServeurs = async (hotelId, garder) => {
     setCkErr(""); setCkLoading(true);
     try {
+      try { await ckCreerDepuisInventaire(hotelId); } catch (e) { setCkErr("Création des check-lists des VM : " + (e.message || e)); }
       const { data, error } = await sb.from("checklist_serveurs").select("*").eq("hotel_id", hotelId).order("nom");
       if (error) throw error;
       const liste = data || [];
@@ -4000,6 +4025,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setCkSynth(prev => ({ ...prev, loading: true }));
     setCkErr("");
     try {
+      try { await ckCreerDepuisInventaire(null); } catch (e) { setCkErr("Création des check-lists des VM : " + (e.message || e)); }
       try {
         const { data: tous } = await sb.from("checklist_serveurs").select("id,hotel_id");
         if (tous && tous.length) await ckSyncStandard(tous);
@@ -4243,7 +4269,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!row.technicien && !("technicien" in champs)) maj.technicien = adminFromName().split(" ")[0];
     setInvRows(prev => prev.map(x => x.id === row.id ? { ...x, ...maj } : x));
     const { error } = await sb.from("inventaire_serveurs").update(maj).eq("id", row.id);
-    if (error) { alert("Enregistrement impossible : " + error.message); loadInv(row.hotel_id); }
+    if (error) { alert("Enregistrement impossible : " + error.message); loadInv(row.hotel_id); return; }
+    // Une ligne qui devient VM (ou une VM renommée) reçoit sa check-list
+    if ((champs.type === "VM") || ("nom" in champs && (champs.type || row.type) === "VM")) { try { await ckCreerDepuisInventaire(row.hotel_id); } catch (e) {} }
   };
   const invAjouter = async (parent) => {
     if (!invHotel) return;
@@ -4262,6 +4290,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       : { hotel_id: invHotel, ordre, nom, type: "Physique", role: "Hôte VMware", os: "VMware ESXi" };
     const { error } = await sb.from("inventaire_serveurs").insert(ligne);
     if (error) { alert("Erreur : " + invErrMsg(error)); return; }
+    if (parent) { try { await ckCreerDepuisInventaire(invHotel); } catch (e) { alert("VM ajoutée, mais sa check-list n'a pas pu être créée : " + (e.message || e)); } }
     loadInv(invHotel);
   };
   const invSupprimer = async (row) => {
@@ -4410,6 +4439,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         }
       } catch (e) { erreurs.push((hotels.find(h => h.id === hid) || {}).name + " : " + invErrMsg(e)); }
     }
+    for (const hid of Object.keys(parHotel)) { try { await ckCreerDepuisInventaire(hid); } catch (e) {} }
     setInvImport(prev => ({ ...prev, busy: false, fait: crees, err: erreurs.join(" | ") }));
     if (invHotel) loadInv(invHotel); else loadInvSynthese();
   };
