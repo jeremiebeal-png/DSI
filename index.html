@@ -10358,7 +10358,16 @@ const nav = isAdmin
     const invMajLicence = async (r, champs) => {
       setInvRows(prev => prev.map(x => x.id === r.id ? { ...x, ...champs } : x));
       const { error } = await sb.from("inventaire_serveurs").update(champs).eq("id", r.id);
-      if (error) { alert("Enregistrement impossible : " + error.message + (/licence_/i.test(error.message) ? "\n\nLe script licence_veeam.sql a-t-il été exécuté ?" : "")); loadInv(r.hotel_id); }
+      if (error) { alert("Enregistrement impossible : " + error.message + (/licence_|care_pack_al/i.test(error.message) ? "\n\nLe script licence_veeam.sql a-t-il été exécuté ?" : "")); loadInv(r.hotel_id); }
+    };
+    // ----- Alerte email Care Pack (case sous la date de fin) -----
+    const invAlerteCarePack = (r) => {
+      if (!r.care_pack_fin || r.care_pack === "Non" || r.care_pack === "N/A") return null;
+      const env = (r.care_pack_alertes_envoyees || []).slice().sort((a, b) => b - a);
+      return React.createElement('label', { title: "Email automatique au support : J-60, J-30, J-15, J-5, J-1" + (env.length ? "\nDéjà envoyées : " + env.map(s => s === 0 ? "expiration" : "J-" + s).join(", ") : ""),
+          style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: r.care_pack_alerte ? "#6B46C1" : "#999", cursor: "pointer", whiteSpace: "nowrap" } },
+        React.createElement('input', { type: "checkbox", checked: !!r.care_pack_alerte, onChange: e => invMajLicence(r, { care_pack_alerte: e.target.checked }), style: { margin: 0 } }),
+        "🔔 Alerte email" + (env.length ? " (" + env.length + " envoyée" + (env.length > 1 ? "s" : "") + ")" : ""));
     };
     const invLigneLicence = (r, fond) => {
       const j = r.licence_fin ? Math.round((new Date(r.licence_fin + "T12:00:00") - new Date(new Date().toISOString().slice(0, 10) + "T12:00:00")) / 86400000) : null;
@@ -10539,7 +10548,7 @@ const nav = isAdmin
                     td(txt(r, "version", "Version / build", 140)),
                     td(r.type === "Physique" ? React.createElement('button', { onClick: () => invAjouter(r), title: "Ajouter une VM sur cet hôte", style: { padding: "4px 8px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } }, "+ VM") : null),
                     td(sel(r, "a_jour", ["Oui", "Non"])), td(date(r, "derniere_maj")),
-                    td(sel(r, "care_pack", ["Oui", "Non", "N/A"])), td(txt(r, "care_pack_ref", "N° série / réf.", 120)), td(date(r, "care_pack_fin")),
+                    td(sel(r, "care_pack", ["Oui", "Non", "N/A"])), td(txt(r, "care_pack_ref", "N° série / réf.", 120)), td(React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } }, date(r, "care_pack_fin"), invAlerteCarePack(r))),
                     td(React.createElement('span', { style: { fontWeight: 700, color: cp.c } }, cp.j === null ? "" : String(cp.j)), { textAlign: "right", background: "#F4F4F8" }),
                     td(cp.l ? React.createElement('span', { style: { fontSize: 11, fontWeight: 700, color: cp.c, background: cp.bg, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, cp.l) : null, { background: "#F4F4F8" }),
                     td(sel(r, "antivirus", ["Oui", "Non"])), td(txt(r, "antivirus_nom", "Nom", 90, { list: "inv-av" })), td(sel(r, "av_a_jour", ["Oui", "Non"])),
@@ -12534,3 +12543,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
+ 
