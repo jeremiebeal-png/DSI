@@ -10195,11 +10195,11 @@ const nav = isAdmin
       !ckHotel && (() => {
         // ===== Synthèse : un hôtel par ligne, état de sa check-list =====
         const ETATS = {
-          nonverif: { l: "Non vérifié", c: "#718096", bg: "#EEF0F4", rang: 0 },
+          nonverif: { l: "Non vérifié", c: "#718096", bg: "#EEF0F4", rang: 4 },
           ko:       { l: "KO à corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
           encours:  { l: "En cours", c: "#8A6D1F", bg: "#FFF3C4", rang: 2 },
           ok:       { l: "Vérifié", c: "#2F855A", bg: "#E6F6EA", rang: 3 },
-          aucune:   { l: "Pas de check-list", c: "#A0AEC0", bg: "#F6F6FA", rang: 4 },
+          aucune:   { l: "Pas de check-list", c: "#A0AEC0", bg: "#F6F6FA", rang: 5 },
         };
         const lignes = hotels.map(h => {
           const pts = ckSynth.points.filter(p => p.hotel_id === h.id);
@@ -10382,7 +10382,7 @@ const nav = isAdmin
       // ===== Synthèse de tous les hôtels =====
       !invHotel && (() => {
         const ETATS = {
-          vide:     { l: "Non renseigné", c: "#718096", bg: "#EEF0F4", rang: 0 },
+          vide:     { l: "Non renseigné", c: "#718096", bg: "#EEF0F4", rang: 4 },
           corriger: { l: "À corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
           echeance: { l: "Care Pack < 90 j", c: "#C05621", bg: "#FFF3E8", rang: 2 },
           ok:       { l: "OK", c: "#2F855A", bg: "#E6F6EA", rang: 3 },
