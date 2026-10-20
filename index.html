@@ -3970,14 +3970,59 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setCkSynth({ loading: false, points: [], serveurs: [] });
     }
   };
+  // Points de contrôle standards appliqués aux check-lists non remplies (et aux nouveaux serveurs)
+  const CK_POINTS_STANDARD = [
+    "Version Windows prise en charge par Microsoft + toutes les mises à jour appliquées",
+    "Antivirus (Sophos) installé, actif et signatures à jour",
+    "Pare-feu Windows activé (tous profils)",
+    "Agent NinjaOne présent et en ligne",
+    "Espace disque libre > 20 % sur tous les volumes",
+    "Compte Administrateur local : mot de passe changé et rangé dans le gestionnaire de mots de passe",
+    "Bureau à distance : NLA activée, aucun accès RDP exposé sur Internet",
+    "Sauvegarde Veeam de cette VM OK (dernier job réussi)",
+  ].map((tache, i) => ({ ordre: i + 1, categorie: "Système", tache }));
+  const [ckStdBusy, setCkStdBusy] = useState(false);
+  // Remplace par les points standards la check-list de chaque serveur « non remplie » :
+  // aucun point, ou aucun point avec statut, date, technicien ou commentaire. Rien de saisi n'est perdu.
+  const ckAppliquerStandardPartout = async () => {
+    if (!confirm("Appliquer les " + CK_POINTS_STANDARD.length + " points de contrôle standards à toutes les check-lists qui ne sont pas encore remplies ?\n\nSeuls les serveurs où AUCUN point n'a de statut, de date, de technicien ou de commentaire sont concernés : leurs points actuels sont remplacés par la liste standard. Les check-lists déjà commencées ne sont pas touchées.")) return;
+    setCkStdBusy(true); setCkErr("");
+    try {
+      const pts = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb.from("checklist_points").select("serveur_id,statut,date_controle,technicien,commentaire").range(from, from + 999);
+        if (error) throw error;
+        (data || []).forEach(x => pts.push(x));
+        if (!data || data.length < 1000) break;
+      }
+      const { data: srvs, error: e2 } = await sb.from("checklist_serveurs").select("id,hotel_id");
+      if (e2) throw e2;
+      const rempli = new Set(pts.filter(p => p.statut || p.date_controle || (p.technicien || "").trim() || (p.commentaire || "").trim()).map(p => p.serveur_id));
+      const cibles = (srvs || []).filter(x => !rempli.has(x.id));
+      for (let i = 0; i < cibles.length; i += 50) {
+        const lot = cibles.slice(i, i + 50);
+        const { error: eDel } = await sb.from("checklist_points").delete().in("serveur_id", lot.map(x => x.id));
+        if (eDel) throw eDel;
+        const lignes = [];
+        lot.forEach(x => CK_POINTS_STANDARD.forEach(p => lignes.push({ serveur_id: x.id, hotel_id: x.hotel_id, ...p })));
+        const { error: eIns } = await sb.from("checklist_points").insert(lignes);
+        if (eIns) throw eIns;
+      }
+      alert("✅ " + cibles.length + " check-list(s) mises à jour avec les points standards." + (rempli.size ? "\n" + rempli.size + " check-list(s) déjà commencée(s) laissée(s) telle(s) quelle(s)." : ""));
+      if (ckHotel) loadCkServeurs(ckHotel, ckServeur); else loadCkSynthese();
+    } catch (e) { setCkErr("Application des points standards : " + (e.message || e)); }
+    finally { setCkStdBusy(false); }
+  };
   const ckChoisirHotel = (hid) => { setCkHotel(hid); setCkServeur(null); setCkPoints([]); setCkServeurs([]); if (hid) loadCkServeurs(hid); };
   const ckAjouterServeur = async () => {
     if (!ckHotel) return;
-    const nom = (window.prompt("Nom du serveur à contrôler (ex. DC, ESXi-01, OPERA) :\n\nLa check-list sera créée VIDE : ajoutez ensuite vos propres points de contrôle.", "") || "").trim();
+    const nom = (window.prompt("Nom du serveur à contrôler (ex. DC, ESXi-01, OPERA) :\n\nLa check-list sera créée avec les " + CK_POINTS_STANDARD.length + " points de contrôle standards ; vous pourrez en ajouter ou en retirer ensuite.", "") || "").trim();
     if (!nom) return;
     try {
       const { data: srv, error } = await sb.from("checklist_serveurs").insert({ hotel_id: ckHotel, nom }).select().single();
       if (error) throw error;
+      const { error: eStd } = await sb.from("checklist_points").insert(CK_POINTS_STANDARD.map(p => ({ serveur_id: srv.id, hotel_id: ckHotel, ...p })));
+      if (eStd) alert("Serveur créé, mais les points standards n'ont pas pu être ajoutés : " + eStd.message);
       await loadCkServeurs(ckHotel, srv.id);
     } catch (e) { alert("Erreur : " + (e.message || e)); }
   };
@@ -4004,7 +4049,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!ckServeur || !source) return;
     try {
       let pts = [];
-      if (String(source).startsWith("__modele:")) {
+      if (source === "__standard") {
+        pts = CK_POINTS_STANDARD;
+      } else if (String(source).startsWith("__modele:")) {
         const type = source.split(":")[1];
         let r = await sb.from("checklist_modele").select("ordre,categorie,tache").eq("type_serveur", type).order("ordre");
         if (r.error && type === "VEEAM") r = await sb.from("checklist_modele").select("ordre,categorie,tache").order("ordre"); // avant le script des modèles par type
@@ -10059,7 +10106,10 @@ const nav = isAdmin
             chip("ko", "KO à corriger", compte("ko"), ETATS.ko.c, ETATS.ko.bg),
             chip("encours", "En cours", compte("encours"), ETATS.encours.c, ETATS.encours.bg),
             chip("ok", "Vérifiés", compte("ok"), ETATS.ok.c, ETATS.ok.bg),
-            compte("aucune") > 0 && chip("aucune", "Sans check-list", compte("aucune"), ETATS.aucune.c, ETATS.aucune.bg)),
+            compte("aucune") > 0 && chip("aucune", "Sans check-list", compte("aucune"), ETATS.aucune.c, ETATS.aucune.bg),
+            React.createElement('button', { onClick: ckAppliquerStandardPartout, disabled: ckStdBusy, title: "Remplace les points des check-lists pas encore remplies par les " + CK_POINTS_STANDARD.length + " points standards",
+              style: { marginLeft: "auto", padding: "6px 13px", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: ckStdBusy ? "default" : "pointer", border: "none", background: G, color: "#111", opacity: ckStdBusy ? 0.6 : 1 } },
+              ckStdBusy ? "Application…" : "⭐ Appliquer les points standards aux check-lists non remplies")),
           ckSynth.loading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…"),
           !ckSynth.loading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
             !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
@@ -10124,6 +10174,7 @@ const nav = isAdmin
           React.createElement('select', { value: "", title: "Copier les points de contrôle (sans les statuts) d'un autre serveur, puis les modifier si besoin", onChange: e => { const v = e.target.value; if (v) ckCopierPoints(v); },
               style: { marginLeft: 6, padding: "4px 6px", border: "1px solid " + G, color: G2, borderRadius: 6, fontSize: 11, fontWeight: 600, background: "white", cursor: "pointer", maxWidth: 200 } },
             React.createElement('option', { value: "" }, "📋 Copier les points de…"),
+            React.createElement('option', { value: "__standard" }, "⭐ Points standards (" + CK_POINTS_STANDARD.length + ")"),
             ckServeurs.filter(x => x.id !== srv.id).map(x => React.createElement('option', { key: x.id, value: x.id }, x.nom)),
             React.createElement('optgroup', { label: "Modèles par type de serveur" },
               [["VEEAM", "Sauvegarde (VEEAM)"], ["AD", "Contrôleur de domaine (AD / DC)"], ["OPERA", "Opera / PMS"], ["INTERFACE", "Interface (IFC, OPI, clés, paiement…)"], ["COMPTA", "Comptabilité (Sage…)"], ["LINUX", "Linux (UniFi…)"], ["ESXI", "Hôte ESXi (physique)"], ["WINDOWS", "Autre serveur Windows"]]
