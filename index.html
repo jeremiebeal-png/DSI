@@ -76,6 +76,12 @@ const CK_POINTS_STANDARD = [
   "Bureau à distance : NLA activée, aucun accès RDP exposé sur Internet",
   "Sauvegarde Veeam de cette VM OK (dernier job réussi)",
 ].map((tache, i) => ({ ordre: i + 1, categorie: "Système", tache }));
+// Points ajoutés en plus sur les serveurs de sauvegarde Veeam (nom contenant « VEEAM »)
+const CK_POINTS_VEEAM = [
+  "Security & Compliance Analyzer (console Veeam) : analyse relancée, tous les points en Passed ou exceptions notées en commentaire",
+].map((tache, i) => ({ ordre: CK_POINTS_STANDARD.length + i + 1, categorie: "Veeam", tache }));
+const ckEstVeeam = (nom) => /veeam/i.test(String(nom || ""));
+const ckPointsAttendus = (srv) => ckEstVeeam(srv && srv.nom) ? CK_POINTS_STANDARD.concat(CK_POINTS_VEEAM) : CK_POINTS_STANDARD;
 const estAlerteSophos = (t) => !!t && t.source === "sophos";
 const estAlerteBackup = (t) => !!t && t.source === "checkcentral";
 // Onglet « Alerte Microsoft » : mails Defender + tickets créés par le Worker Microsoft 365
@@ -3952,13 +3958,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       lot.forEach(srv => {
         const sp = (pts || []).filter(p => p.serveur_id === srv.id);
         const presents = new Set(sp.map(p => cle(p.tache)));
-        const manquants = CK_POINTS_STANDARD.filter(p => !presents.has(cle(p.tache)));
+        const attendus = ckPointsAttendus(srv);
+        const manquants = attendus.filter(p => !presents.has(cle(p.tache)));
         if (!manquants.length) return;
         const rempli = sp.some(p => p.statut || p.date_controle || (p.technicien || "").trim() || (p.commentaire || "").trim());
         if (rempli) manquants.forEach(p => aAjouter.push({ serveur_id: srv.id, hotel_id: srv.hotel_id, ...p }));
         else {
           sp.forEach(p => aSupprimer.push(p.id));
-          CK_POINTS_STANDARD.forEach(p => aAjouter.push({ serveur_id: srv.id, hotel_id: srv.hotel_id, ...p }));
+          attendus.forEach(p => aAjouter.push({ serveur_id: srv.id, hotel_id: srv.hotel_id, ...p }));
         }
         modifies++;
       });
@@ -4134,7 +4141,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const { data: srv, error } = await sb.from("checklist_serveurs").insert({ hotel_id: ckHotel, nom }).select().single();
       if (error) throw error;
-      const { error: eStd } = await sb.from("checklist_points").insert(CK_POINTS_STANDARD.map(p => ({ serveur_id: srv.id, hotel_id: ckHotel, ...p })));
+      const { error: eStd } = await sb.from("checklist_points").insert(ckPointsAttendus(srv).map(p => ({ serveur_id: srv.id, hotel_id: ckHotel, ...p })));
       if (eStd) alert("Serveur créé, mais les points standards n'ont pas pu être ajoutés : " + eStd.message);
       await loadCkServeurs(ckHotel, srv.id);
     } catch (e) { alert("Erreur : " + (e.message || e)); }
@@ -12543,4 +12550,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
- 
