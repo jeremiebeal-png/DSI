@@ -3181,6 +3181,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // Autorisation NinjaOne « technicien » (une fois) : nécessaire pour lancer des scripts
+  const connecterNinja = async () => {
+    try {
+      const d = await callSophosApi("/ninja/lien", {});
+      if (d.url) window.open(d.url, "_blank", "noopener");
+      setAdEtat({ phase: "erreur", msg: "Connectez-vous à NinjaOne dans l'onglet qui vient de s'ouvrir et cliquez sur « Autoriser », puis revenez ici et relancez l'action." });
+    } catch (e) { setAdEtat({ phase: "erreur", msg: (e && e.message) || String(e) }); }
+  };
+
   const fmtAd = (iso) => { if (!iso) return "—"; try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch (e) { return iso; } };
 
   const ajouterTraceAd = async (t, res, dc) => {
@@ -12528,7 +12537,8 @@ const nav = isAdmin
               background: adEtat.phase === "erreur" ? "#FDECEC" : adEtat.phase === "fini" ? (res && res.deverrouille ? "#E9F6EE" : "#EBF4FF") : "#F4F4F8",
               color: adEtat.phase === "erreur" ? "#C53030" : "#333", border: "1px solid " + (adEtat.phase === "erreur" ? "#F5B5B5" : "#E2E2EA") } },
             enCours && React.createElement('div', null, "⏳ " + adEtat.msg),
-            adEtat.phase === "erreur" && React.createElement('div', null, "❌ " + adEtat.msg),
+            adEtat.phase === "erreur" && React.createElement('div', null, "❌ " + String(adEtat.msg || "").replace(/^NINJA_CONNEXION_REQUISE\s*:\s*/, "")),
+            adEtat.phase === "erreur" && /NINJA_CONNEXION_REQUISE|user_context_required/.test(String(adEtat.msg || "")) && React.createElement('button', { onClick: connecterNinja, style: { marginTop: 8, padding: "7px 13px", background: "#1F4E8C", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🔗 Connecter NinjaOne (une seule fois)"),
             adEtat.phase === "fini" && res && React.createElement('div', null,
               React.createElement('div', { style: { fontWeight: 700, fontSize: 13.5, marginBottom: 6, color: res.deverrouille ? "#2F855A" : "#2B6CB0" } },
                 res.deverrouille ? "✅ Compte déverrouillé" : (res.mode === "diagnostic" ? "🔎 Diagnostic" : "ℹ️ Le compte n'était pas verrouillé")),
