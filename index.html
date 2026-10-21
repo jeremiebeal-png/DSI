@@ -5061,6 +5061,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkOpenGroups, setBkOpenGroups] = useState({}); // { groupKey: bool }
   const [bkOldOpen, setBkOldOpen] = useState(false); // dépliage de l'alerte "backups > 7 jours"
   // Notes manuelles d'explication sur les backups en échec/muets (motif métier).
+  const [bkFreq, setBkFreq] = useState({});         // { check_id: { frequence_heures, derniere_reussite, created_at } } — sauvegardes non quotidiennes
+  const [freqBusy, setFreqBusy] = useState(null);
   const [bkNotes, setBkNotes] = useState({});        // { check_id: { note, updated_by, updated_at } }
   const [bkNoteEditId, setBkNoteEditId] = useState(null); // check_id dont l'éditeur est ouvert
   const [bkNoteDraft, setBkNoteDraft] = useState(""); // texte en cours de saisie
@@ -5175,6 +5177,104 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // ---------- Fréquence attendue d'une sauvegarde (hebdo, mensuelle…) ----------
+  // Une sauvegarde déclarée non quotidienne n'alerte pas tant que sa dernière réussite
+  // date de moins d'une période + 2 jours. Un vrai échec remonté par le job (source « Message »)
+  // alerte toujours. Règle identique dans le Worker dsi-hotel-checkcentral.
+  const trouverCheckTicket = async (t) => {
+    const nom = nomSauvegardeTicket(t);
+    let checks = bkChecks;
+    if (!checks || !checks.length) {
+      const { data: sess } = await sb.auth.getSession();
+      const res = await fetch(CHECKCENTRAL_API_URL, { headers: { Authorization: "Bearer " + (sess.session?.access_token || "") } });
+      const d = await res.json().catch(() => ({}));
+      checks = d.checks || [];
+      if (checks.length) setBkChecks(checks);
+    }
+    const norm = (x) => String(x || "").trim().toLowerCase();
+    let check = nom && checks.find(c => norm(c.name) === norm(nom));
+    if (!check) {
+      const texte = norm((t.subject || "") + " " + (t.message || "") + " " + nom);
+      const cand = checks.filter(c => c.name && texte.includes(norm(c.name))).sort((a, b) => String(b.name).length - String(a.name).length);
+      check = cand[0];
+    }
+    return check && check.id != null ? check : null;
+  };
+  const definirFrequenceBackup = async (check, heures, ticketSource) => {
+    if (!check || check.id == null) return "";
+    const id = String(check.id);
+    const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
+    const nowIso = new Date().toISOString();
+    if (!heures || heures <= 24) {
+      const { error } = await sb.from("backup_frequences").delete().eq("check_id", id);
+      if (error) throw error;
+      setBkFreq(prev => { const m = { ...prev }; delete m[id]; return m; });
+      const msg = "« " + check.name + " » repasse en sauvegarde quotidienne : alerte après 24 h de défaut.";
+      setBkNote(msg);
+      return msg;
+    }
+    if (!confirm("Déclarer « " + check.name + " » comme sauvegarde " + bkLibFreq(heures).toLowerCase() + " ?\n\n" +
+      "• Plus d'alerte tant que sa dernière réussite date de moins de " + Math.round((heures + BK_MARGE_H) / 24) + " jours (période + 2 jours de marge).\n" +
+      "• Si elle échoue réellement, ou si elle ne tourne pas dans ce délai, l'alerte revient.\n" +
+      "• Les tickets d'alerte ouverts pour cette sauvegarde seront fermés.")) return "";
+    let derniere = null;
+    try { const { data: ex } = await sb.from("backup_frequences").select("derniere_reussite").eq("check_id", id).maybeSingle(); derniere = ex ? ex.derniere_reussite : null; } catch (e) {}
+    const st = String(check.status || "").toLowerCase();
+    if (st === "success") derniere = check.updatedIso || nowIso;
+    const ligne = { check_id: id, check_name: check.name || null, frequence_heures: heures, derniere_reussite: derniere, created_at: nowIso, updated_at: nowIso, updated_by: qui };
+    const { error } = await sb.from("backup_frequences").upsert(ligne, { onConflict: "check_id" });
+    if (error) throw new Error(error.message + (/backup_frequences/i.test(error.message || "") ? " — le script backup_frequences.sql a-t-il été exécuté ?" : ""));
+    setBkFreq(prev => ({ ...prev, [id]: ligne }));
+    const enDefaut = st === "failure" || st === "warning";
+    const fin = bkMasquee(check, ligne);
+    if (enDefaut && !fin) {
+      const msg = "⚠️ « " + check.name + " » est déclarée " + bkLibFreq(heures).toLowerCase() + ", mais l'alerte continue : " +
+        (String(check.source || "").toLowerCase() === "message" ? "son dernier passage a réellement échoué." : "aucune réussite connue dans la période.");
+      setBkNote(msg);
+      return msg;
+    }
+    // Ferme les tickets d'alerte encore ouverts pour cette sauvegarde
+    const ids = new Set();
+    try {
+      const { data: tks } = await sb.from("tickets").select("id,subject").eq("source", "checkcentral").neq("status", "closed").like("subject", "%— " + check.name);
+      (tks || []).filter(x => String(x.subject || "").endsWith("— " + check.name)).forEach(x => ids.add(x.id));
+    } catch (e) {}
+    if (ticketSource && ticketSource.status !== "closed") ids.add(ticketSource.id);
+    if (ids.size) {
+      const liste = [...ids];
+      const finFr = fin ? new Date(fin).toLocaleDateString("fr-FR") : null;
+      const esc = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const body = "Sauvegarde déclarée « " + bkLibFreq(heures).toLowerCase() + " » par " + qui + " : fausse alerte, ticket fermé." + (finFr ? " Prochaine exécution attendue avant le " + finFr + "." : "");
+      const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
+        '<div style="background:#2B6CB0;color:#fff;border-radius:8px;padding:11px 15px;">' +
+          '<div style="font-size:15px;font-weight:bold;">📅 SAUVEGARDE ' + esc(bkLibFreq(heures).toUpperCase()) + ' — FAUSSE ALERTE</div>' +
+          '<div style="font-size:13px;margin-top:3px;"><b>' + esc(check.name) + '</b> ne tourne pas tous les jours : ticket fermé par ' + esc(qui) + '.' + (finFr ? ' Prochaine exécution attendue avant le <b>' + esc(finFr) + '</b> ; sans réussite à cette date, l\'alerte reviendra.' : '') + '</div>' +
+        '</div></div>';
+      await sb.from("ticket_messages").insert(liste.map(tid => ({ ticket_id: tid, sender_role: "admin", sender_name: qui, body, body_html })));
+      const { error: eU } = await sb.from("tickets").update({ status: "closed", closed_at: nowIso }).in("id", liste);
+      if (eU) throw eU;
+      setTickets(prev => prev.map(x => ids.has(x.id) ? { ...x, status: "closed", closed_at: nowIso } : x));
+      if (ticketSource) loadTicketMsgs(ticketSource.id);
+    }
+    const msg = "✅ « " + check.name + " » déclarée " + bkLibFreq(heures).toLowerCase() + (ids.size ? " — " + ids.size + " ticket(s) d'alerte fermé(s)." : ".");
+    setBkNote(msg);
+    return msg;
+  };
+  const frequenceDepuisTicket = async (t, heures) => {
+    if (!isAdmin || !t) return;
+    setFreqBusy(t.id);
+    try {
+      const check = await trouverCheckTicket(t);
+      if (!check) { alert("Impossible de retrouver cette sauvegarde dans CheckCentral. Réglez sa fréquence depuis Pilotage → Sauvegardes."); return; }
+      const msg = await definirFrequenceBackup(check, heures, t);
+      if (msg && msg.startsWith("⚠️")) alert(msg);
+    } catch (e) {
+      alert("Impossible d'enregistrer la fréquence : " + (e.message || e));
+    } finally {
+      setFreqBusy(null);
+    }
+  };
+
   // Enregistre (ou supprime si vide) la note d'un check, puis met à jour l'état local.
   const saveBackupNote = async (checkId) => {
     if (!checkId) return;
@@ -5255,6 +5355,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       // Mapping groupe → hôtel (facultatif ; ne bloque pas l'affichage si absent)
       try {
         const { data: maps } = await sb.from("checkcentral_group_map").select("group_id,hotel_id");
+        try {
+          const { data: fr } = await sb.from("backup_frequences").select("*");
+          const mf = {};
+          (fr || []).forEach(x => { mf[String(x.check_id)] = x; });
+          setBkFreq(mf);
+        } catch (e) { /* table absente : tout est quotidien */ }
         const m = {};
         (maps || []).forEach(x => { if (x.group_id) m[x.group_id] = x.hotel_id; });
         setBkGroupMap(m);
@@ -5291,6 +5397,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (s === "success") return { color: "#2F855A", bg: "#E9F6EE", label: "OK", rank: 3 };
     return { color: "#718096", bg: "#F0F0F4", label: statut || "—", rank: 2 };
   };
+  // Fréquences possibles (heures). Mensuelle = 31 jours.
+  const BK_FREQS = [{ h: 24, l: "Quotidienne" }, { h: 168, l: "Hebdomadaire" }, { h: 336, l: "Toutes les 2 semaines" }, { h: 744, l: "Mensuelle" }];
+  const BK_MARGE_H = 48;
+  const bkLibFreq = (h) => { const f = BK_FREQS.find(x => x.h === h); return f ? f.l : ("Toutes les " + h + " h"); };
+  // Renvoie la fin de la fenêtre (ISO) si le défaut est « normal » pour une sauvegarde non quotidienne, sinon null.
+  const bkMasquee = (c, fForce) => {
+    const f = fForce !== undefined ? fForce : (c && c.id != null ? bkFreq[String(c.id)] : null);
+    if (!c || !f || !(f.frequence_heures > 24)) return null;
+    const st = String(c.status || "").toLowerCase();
+    if (st !== "failure" && st !== "warning") return null;
+    if (String(c.source || "").toLowerCase() === "message") return null; // vrai échec remonté par le job
+    const ref = new Date(f.derniere_reussite || f.created_at).getTime();
+    if (isNaN(ref)) return null;
+    const lim = ref + (f.frequence_heures + BK_MARGE_H) * 3600000;
+    return Date.now() < lim ? new Date(lim).toISOString() : null;
+  };
+  const bkMetaCheck = (c) => {
+    const fin = bkMasquee(c);
+    if (fin) return { color: "#2F855A", bg: "#E9F6EE", label: "OK · " + bkLibFreq(bkFreq[String(c.id)].frequence_heures).toLowerCase(), rank: 3, masquee: fin };
+    return bkStatusMeta(c.status);
+  };
 
   const fmtDateHeureFr2 = (iso) => { try { return iso ? new Date(iso).toLocaleString("fr-FR") : "—"; } catch (e) { return "—"; } };
 
@@ -5305,14 +5432,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const arr = Object.values(map).map(g => {
       // pire rang = statut le plus grave (rank 0 = échec)
       let pire = 3;
-      g.checks.forEach(c => { pire = Math.min(pire, bkStatusMeta(c.status).rank); });
+      g.checks.forEach(c => { pire = Math.min(pire, bkMetaCheck(c).rank); });
       g.pireRank = pire;
-      g.nbEchec = g.checks.filter(c => bkStatusMeta(c.status).rank === 0).length;
-      g.nbWarn = g.checks.filter(c => bkStatusMeta(c.status).rank === 1).length;
-      g.nbOk = g.checks.filter(c => bkStatusMeta(c.status).rank === 3).length;
+      g.nbEchec = g.checks.filter(c => bkMetaCheck(c).rank === 0).length;
+      g.nbWarn = g.checks.filter(c => bkMetaCheck(c).rank === 1).length;
+      g.nbOk = g.checks.filter(c => bkMetaCheck(c).rank === 3).length;
       // tri interne des checks par gravité puis nom
       g.checks.sort((a, b) => {
-        const ra = bkStatusMeta(a.status).rank, rb = bkStatusMeta(b.status).rank;
+        const ra = bkMetaCheck(a).rank, rb = bkMetaCheck(b).rank;
         return ra !== rb ? ra - rb : String(a.name).localeCompare(String(b.name));
       });
       return g;
@@ -5325,7 +5452,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const bkStats = (() => {
     let echec = 0, warn = 0, ok = 0, autre = 0;
     (bkChecks || []).forEach(c => {
-      const r = bkStatusMeta(c.status).rank;
+      const r = bkMetaCheck(c).rank;
       if (r === 0) echec++; else if (r === 1) warn++; else if (r === 3) ok++; else autre++;
     });
     const groupesEnEchec = bkGroupes.filter(g => g.pireRank === 0).length;
@@ -5344,7 +5471,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const t = new Date(c.updatedIso).getTime();
       if (isNaN(t)) return;
       const ageMs = now - t;
-      if (ageMs > limite) {
+      const fq = c.id != null ? bkFreq[String(c.id)] : null;
+      const limiteC = fq && fq.frequence_heures > 24 ? Math.max(limite, (fq.frequence_heures + BK_MARGE_H) * 3600000) : limite;
+      if (ageMs > limiteC) {
         // Un muet est « justifié » s'il porte une note d'explication non vide.
         const justifie = !!(c.id && bkNotes[c.id] && String(bkNotes[c.id].note || "").trim());
         arr.push({ ...c, ageJours: Math.floor(ageMs / (24 * 60 * 60 * 1000)), justifie });
@@ -9384,6 +9513,11 @@ const nav = isAdmin
                     t.status !== "closed" && React.createElement('button', { onClick: () => silencerAlerteBackup(t), disabled: silenceBusy === t.id, title: "Pas de nouveau ticket ni de relance pendant 3 semaines (ex. sauvegarde mensuelle). Reprise automatique ensuite.",
                       style: { padding: "9px 16px", background: "white", border: "1px solid #4A5568", color: "#4A5568", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: silenceBusy === t.id ? 0.6 : 1 } },
                       silenceBusy === t.id ? "Mise en silence…" : "🔕 Silence 3 semaines"),
+                    t.status !== "closed" && React.createElement('select', { value: "", disabled: freqBusy === t.id, title: "Cette sauvegarde ne tourne pas tous les jours : plus d'alerte entre deux passages (un vrai échec continue d'alerter). Ferme les tickets d'alerte de cette sauvegarde.",
+                      onChange: e => { const h = parseInt(e.target.value, 10); if (h) frequenceDepuisTicket(t, h); },
+                      style: { padding: "9px 10px", background: "white", border: "1px solid #2B6CB0", color: "#2B6CB0", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: freqBusy === t.id ? 0.6 : 1 } },
+                      React.createElement('option', { value: "" }, freqBusy === t.id ? "Enregistrement…" : "📅 Pas quotidienne…"),
+                      BK_FREQS.filter(f => f.h > 24).map(f => React.createElement('option', { key: f.h, value: String(f.h) }, "Sauvegarde " + f.l.toLowerCase()))),
                     derniere && React.createElement('span', { style: { fontSize: 11.5, color: "#2B6CB0", fontWeight: 600 } },
                       "🔄 Relancée " + (relances.length > 1 ? relances.length + " fois — dernière : " : "") + new Date(derniere.created_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) + (derniere.sender_name ? " par " + derniere.sender_name : "")),
                     t.status !== "closed" && React.createElement('button', { onClick: () => marquerBackupRelance(t), disabled: relanceBusy === t.id,
@@ -10281,13 +10415,14 @@ const nav = isAdmin
                 // Détail des checks du groupe
                 ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8" } },
                   g.checks.map((c, i) => {
-                    const cm = bkStatusMeta(c.status);
+                    const cm = bkMetaCheck(c);
+                    const fq = c.id != null ? bkFreq[String(c.id)] : null;
                     // Éligible à une note = check en échec OU muet (dernière exécution > 7 jours).
                     const estEchec = cm.rank === 0;
                     let estMuet = false;
                     if (c.updatedIso) {
                       const t = new Date(c.updatedIso).getTime();
-                      if (!isNaN(t)) estMuet = (Date.now() - t) > (BK_SEUIL_JOURS * 24 * 60 * 60 * 1000);
+                      if (!isNaN(t)) estMuet = (Date.now() - t) > Math.max(BK_SEUIL_JOURS * 24 * 3600000, fq && fq.frequence_heures > 24 ? (fq.frequence_heures + BK_MARGE_H) * 3600000 : 0);
                     }
                     const noteEligible = !!c.id && (estEchec || estMuet);
                     return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 16px", borderBottom: i < g.checks.length - 1 ? "1px solid #F6F6FA" : "none" } },
@@ -10295,9 +10430,17 @@ const nav = isAdmin
                       React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                         React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
                         c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description),
+                        fq && fq.frequence_heures > 24 && React.createElement('div', { style: { fontSize: 11, color: "#2B6CB0", marginTop: 2 } },
+                          "📅 Sauvegarde " + bkLibFreq(fq.frequence_heures).toLowerCase() +
+                          (cm.masquee ? " — défaut CheckCentral ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
+                          (fq.derniere_reussite ? " · dernière réussite le " + new Date(fq.derniere_reussite).toLocaleDateString("fr-FR") : "")),
                         noteEligible && renderBackupNote(c.id)
                       ),
                       React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap", marginTop: 2 } }, fmtDateHeureFr2(c.updatedIso)),
+                      c.id != null && React.createElement('select', { value: String((fq && fq.frequence_heures) || 24), title: "Fréquence d'exécution attendue : une sauvegarde non quotidienne n'alerte pas entre deux passages",
+                        onChange: e => { const h = parseInt(e.target.value, 10); definirFrequenceBackup(c, h).catch(err => alert("Impossible d'enregistrer la fréquence : " + (err.message || err))); },
+                        style: { fontSize: 11, padding: "2px 5px", border: "1px solid " + (fq ? "#BEE3F8" : "#E2E2EA"), borderRadius: 6, background: fq ? "#EBF8FF" : "white", color: fq ? "#2B6CB0" : "#777", marginTop: 1 } },
+                        BK_FREQS.map(f => React.createElement('option', { key: f.h, value: String(f.h) }, f.l))),
                       React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: cm.color, background: cm.bg, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap", marginTop: 1 } }, cm.label)
                     );
                   })
@@ -12742,3 +12885,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
+ 
