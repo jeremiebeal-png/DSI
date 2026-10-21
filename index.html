@@ -3160,10 +3160,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const d = await callSophosApi("/ad-deverrouiller", { hotelId: t.hotel_id, compte, mode });
       setAdEtat({ phase: "attente", dc: d.dc, msg: "Script lancé sur " + d.dc + ", en attente du résultat…" });
       const debut = Date.now();
+      let dernierDetail = "";
       while (Date.now() - debut < 120000) {
         await new Promise(res => setTimeout(res, 4000));
         if (adPollRef.current !== essai) return; // fenêtre fermée ou nouvelle demande
         const r = await callSophosApi("/ad-resultat", { deviceId: d.deviceId, jeton: d.jeton });
+        if (r.detail) dernierDetail = r.detail;
         if (r.pret) {
           const res = r.resultat || {};
           setAdEtat({ phase: res.ok ? "fini" : "erreur", dc: d.dc, resultat: res, msg: res.message || "" });
@@ -3173,7 +3175,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const s = Math.round((Date.now() - debut) / 1000);
         setAdEtat({ phase: "attente", dc: d.dc, msg: "Script lancé sur " + d.dc + ", en attente du résultat… (" + s + " s)" });
       }
-      setAdEtat({ phase: "erreur", dc: d.dc, msg: "Pas de résultat après 2 minutes. Le script a peut-être été exécuté : vérifiez l'activité du serveur " + d.dc + " dans NinjaOne." });
+      setAdEtat({ phase: "erreur", dc: d.dc, msg: "Pas de résultat après 2 minutes. Le script a peut-être été exécuté : vérifiez l'activité du serveur " + d.dc + " dans NinjaOne." + (dernierDetail ? " Détail : " + dernierDetail : "") });
     } catch (e) {
       if (adPollRef.current === essai) setAdEtat({ phase: "erreur", msg: (e && e.message) || String(e) });
     } finally {
