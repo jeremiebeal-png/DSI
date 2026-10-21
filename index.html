@@ -3115,6 +3115,129 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     );
   };
 
+  // ====== DÉVERROUILLAGE D'UN COMPTE AD (Worker dsi-hotel-sophos → script NinjaOne sur le DC) ======
+  const [adTicket, setAdTicket] = useState(null);     // ticket pour lequel la fenêtre est ouverte
+  const [adCompte, setAdCompte] = useState("");
+  const [adSugg, setAdSugg] = useState([]);           // identifiants proposés d'après le ticket
+  const [adBusy, setAdBusy] = useState(false);
+  const [adEtat, setAdEtat] = useState(null);         // { phase: "envoi"|"attente"|"fini"|"erreur", msg, dc, resultat }
+  const [adTrace, setAdTrace] = useState(true);       // ajouter le résultat dans le fil du ticket (sans email)
+  const adPollRef = useRef(0);                         // identifie la demande en cours (annule les anciennes)
+
+  const ouvrirDeverrouillageAd = (t) => {
+    if (!isAdmin || !t) return;
+    adPollRef.current++;
+    setAdTicket(t); setAdEtat(null); setAdBusy(false); setAdTrace(true);
+    const sugg = [];
+    const ajoute = (v) => { v = String(v || "").trim().toLowerCase().replace(/\s+/g, ""); if (/^[a-z0-9._-]{2,64}$/.test(v) && !sugg.includes(v)) sugg.push(v); };
+    // 1) partie locale de l'email du demandeur (ex. guestrelation@gphotel.com -> guestrelation)
+    const loc = String(t.contact_email || "").split("@")[0];
+    if (loc && !/^(prvs|btv|bounce)/i.test(loc)) ajoute(loc);
+    // 2) « session X », « compte X », « utilisateur X » dans la demande et le fil
+    const txt = [t.subject || "", t.message || ""].concat((ticketMsgs[t.id] || []).map(m => m.body || "")).join(" ");
+    const re = /\b(?:session|compte|utilisateur|login|identifiant)\s+(?:windows\s+|ad\s+|de\s+|du\s+|d['’]\s*)?["«]?\s*([A-Za-z0-9._-]+(?:\s+[A-Za-z0-9._-]+)?)/gi;
+    let m;
+    while ((m = re.exec(txt)) && sugg.length < 6) {
+      const mots = m[1].split(/\s+/).filter(w => !/^(du|de|des|est|sur|qui|pour|bo|est|toujours|bloqu|verrou)/i.test(w));
+      if (mots.length) { ajoute(mots.join("")); if (mots.length > 1) ajoute(mots[0]); }
+    }
+    setAdSugg(sugg);
+    setAdCompte(sugg[0] || "");
+  };
+
+  const lancerDeverrouillageAd = async (mode) => {
+    const t = adTicket;
+    const compte = adCompte.trim();
+    if (!t || adBusy) return;
+    if (!t.hotel_id) { setAdEtat({ phase: "erreur", msg: "Ce ticket n'est rattaché à aucun établissement : rattachez-le d'abord à son hôtel." }); return; }
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(compte)) { setAdEtat({ phase: "erreur", msg: "Identifiant invalide : saisissez le nom de connexion Windows (ex. guestrelation), sans domaine ni espace." }); return; }
+    const h = hotels.find(x => x.id === t.hotel_id);
+    if (mode === "deverrouiller" && !window.confirm("Déverrouiller le compte « " + compte + " » dans l'Active Directory de " + (h ? h.name : "l'hôtel") + " ?")) return;
+    const essai = ++adPollRef.current;
+    setAdBusy(true);
+    setAdEtat({ phase: "envoi", msg: "Recherche du contrôleur de domaine dans NinjaOne…" });
+    try {
+      const d = await callSophosApi("/ad-deverrouiller", { hotelId: t.hotel_id, compte, mode });
+      setAdEtat({ phase: "attente", dc: d.dc, msg: "Script lancé sur " + d.dc + ", en attente du résultat…" });
+      const debut = Date.now();
+      while (Date.now() - debut < 120000) {
+        await new Promise(res => setTimeout(res, 4000));
+        if (adPollRef.current !== essai) return; // fenêtre fermée ou nouvelle demande
+        const r = await callSophosApi("/ad-resultat", { deviceId: d.deviceId, jeton: d.jeton });
+        if (r.pret) {
+          const res = r.resultat || {};
+          setAdEtat({ phase: res.ok ? "fini" : "erreur", dc: d.dc, resultat: res, msg: res.message || "" });
+          if (adTrace && res.ok) ajouterTraceAd(t, res, d.dc);
+          return;
+        }
+        const s = Math.round((Date.now() - debut) / 1000);
+        setAdEtat({ phase: "attente", dc: d.dc, msg: "Script lancé sur " + d.dc + ", en attente du résultat… (" + s + " s)" });
+      }
+      setAdEtat({ phase: "erreur", dc: d.dc, msg: "Pas de résultat après 2 minutes. Le script a peut-être été exécuté : vérifiez l'activité du serveur " + d.dc + " dans NinjaOne." });
+    } catch (e) {
+      if (adPollRef.current === essai) setAdEtat({ phase: "erreur", msg: (e && e.message) || String(e) });
+    } finally {
+      if (adPollRef.current === essai) setAdBusy(false);
+    }
+  };
+
+  const fmtAd = (iso) => { if (!iso) return "—"; try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch (e) { return iso; } };
+
+  const ajouterTraceAd = async (t, res, dc) => {
+    const qui = (profile && profile.full_name) || (session && session.user && session.user.email) || "Technicien DSI";
+    const quand = new Date().toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    const esc = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const titre = res.deverrouille ? "🔓 COMPTE AD DÉVERROUILLÉ" : (res.mode === "diagnostic" ? "🔎 DIAGNOSTIC COMPTE AD" : "ℹ️ COMPTE AD NON VERROUILLÉ");
+    const sources = (res.source_verrouillage || []).map(x => (x.poste || "?") + " (" + fmtAd(x.heure) + ")").join(", ");
+    const lignes = [
+      "Compte : " + res.compte + (res.nom ? " (" + res.nom + ")" : ""),
+      "Serveur : " + (dc || res.serveur || "?"),
+      "Échecs de mot de passe : " + (res.echecs == null ? "—" : res.echecs) + (res.dernier_echec ? " — dernier le " + fmtAd(res.dernier_echec) : ""),
+      sources ? "Verrouillé depuis le(s) poste(s) : " + sources : null,
+      res.mdp_expire ? "⚠ Mot de passe expiré" : null,
+    ].filter(Boolean);
+    const body = titre + " — par " + qui + " le " + quand + "\n" + lignes.join("\n") + (res.message ? "\n" + res.message : "");
+    const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
+      '<div style="background:' + (res.deverrouille ? "#2F855A" : "#2B6CB0") + ';color:#fff;border-radius:8px;padding:11px 15px;">' +
+        '<div style="font-size:15px;font-weight:bold;">' + esc(titre) + '</div>' +
+        '<div style="font-size:13px;margin-top:3px;">Par <b>' + esc(qui) + '</b> le ' + esc(quand) + '</div>' +
+      '</div>' +
+      '<div style="margin-top:8px;padding:8px 12px;background:#F4F7FB;border-left:3px solid #2B6CB0;font-size:13px;line-height:1.6;">' + lignes.map(esc).join("<br>") +
+        (res.message ? '<br><i>' + esc(res.message) + '</i>' : '') + '</div>' +
+    '</div>';
+    try {
+      const { error } = await sb.from("ticket_messages").insert({ ticket_id: t.id, sender_role: "admin", sender_name: qui, body, body_html });
+      if (!error) loadTicketMsgs(t.id);
+    } catch (e) {}
+  };
+
+  const preparerReponseAd = () => {
+    const res = adEtat && adEtat.resultat;
+    const t = adTicket;
+    if (!res || !t) return;
+    const escE = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const prenom = String(t.contact_name || "").trim();
+    const salut = "Bonjour" + (prenom ? " " + prenom : "") + ",";
+    const src = (res.source_verrouillage || [])[0];
+    let p1, p2 = "";
+    if (res.deverrouille) {
+      p1 = "La session « " + res.compte + " » est de nouveau déverrouillée, vous pouvez vous reconnecter.";
+      p2 = "Elle s'était bloquée après plusieurs saisies d'un mot de passe incorrect" + (src && src.poste ? " (depuis le poste " + src.poste + ")" : "") +
+        ". Si elle se bloque à nouveau, c'est généralement qu'un ancien mot de passe est encore enregistré sur un poste, un téléphone ou une imprimante : merci de nous l'indiquer et nous le corrigerons.";
+    } else {
+      p1 = "La session « " + res.compte + " » n'est pas verrouillée de notre côté.";
+      p2 = res.mdp_expire ? "Son mot de passe a expiré : il doit être changé à la prochaine connexion. Nous pouvons vous aider si besoin."
+        : "Si la connexion échoue toujours, vérifiez le mot de passe saisi (majuscules, clavier) ou envoyez-nous une capture du message affiché.";
+    }
+    const plain = salut + "\n\n" + p1 + "\n\n" + p2 + "\n\nCordialement,";
+    const html = "<p>" + escE(salut) + "</p><p>" + escE(p1) + "</p><p>" + escE(p2) + "</p><p>Cordialement,</p>";
+    setReplyHtmlOverride(null);
+    setReplyHtml(prev => (prev && prev.trim()) ? (prev + "<br>" + html) : html);
+    setReplyText(prev => { const q = (prev || "").trim(); return q ? (q + "\n\n" + plain) : plain; });
+    adPollRef.current++;
+    setAdTicket(null);
+  };
+
   // ====== BLOCAGE D'EXPÉDITEUR FRAUDULEUX (Worker dsi-hotel-blocage → Defender M365) ======
   const [blqTicket, setBlqTicket] = useState(null);          // ticket pour lequel la fenêtre est ouverte
   const [blqTenants, setBlqTenants] = useState(null);        // [{ key, nom, domaines }] — null = pas encore chargé
@@ -3145,7 +3268,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     let tenants = blqTenants;
     if (!tenants) {
       try { tenants = await callBlocageApi("GET", "/blocage/tenants"); setBlqTenants(tenants); }
-      catch (e) { tenants = []; setBlqMsg("❌ " + (e.message || e)); }
+      catch (e) { tenants = []; setBlqMsg("❌ " + (/non autoris/i.test(String((e && e.message) || e)) ? "Accès refusé par le Worker de blocage : votre compte n'est pas autorisé (variable ADMINS_AUTORISES). Contactez Jérémie." : (e.message || e))); }
     }
     // Établissement présélectionné d'après le domaine du demandeur
     const contact = String(t.contact_email || "").toLowerCase();
@@ -9005,6 +9128,7 @@ const nav = isAdmin
                 React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "7px 13px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
                 (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && React.createElement('button', { onClick: () => genererAttestation(t), title: "Télécharger l'attestation de validation (PDF)", style: { padding: "7px 13px", background: "#EAF6EC", border: "1px solid #B5DBB9", color: "#256029", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "\uD83D\uDCC4 Attestation"),
                 t.status === "closed"
                   ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
@@ -9191,6 +9315,7 @@ const nav = isAdmin
                   ),
                   React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                   isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
                   React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                   React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
                   React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
@@ -9260,6 +9385,7 @@ const nav = isAdmin
               t.status === "closed" && React.createElement('div', { style: { display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", flexWrap: "wrap" } },
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { marginRight: "auto", padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
                 React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
               ),
               // Éditeur de remarque interne (admin only) — vue cartes, ticket fermé
@@ -12373,6 +12499,60 @@ const nav = isAdmin
         )
       )
     ),
+    // Fenêtre « Déverrouiller un compte AD » (script NinjaOne sur le contrôleur de domaine)
+    adTicket && (() => {
+      const t = adTicket;
+      const h = hotels.find(x => x.id === t.hotel_id);
+      const res = adEtat && adEtat.resultat;
+      const enCours = adEtat && (adEtat.phase === "envoi" || adEtat.phase === "attente");
+      const ligne = (lbl, val, coul) => React.createElement('div', { style: { display: "flex", gap: 8, fontSize: 12.5, padding: "3px 0" } },
+        React.createElement('span', { style: { color: "#888", minWidth: 150 } }, lbl),
+        React.createElement('span', { style: { color: coul || "#222", fontWeight: 600 } }, val));
+      const fermer = () => { adPollRef.current++; setAdBusy(false); setAdTicket(null); };
+      return React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 500, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" } },
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, "🔓 Déverrouiller un compte Active Directory"),
+          React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, (t.reference ? t.reference + " · " : "") + (h ? h.name : "⚠ Ticket non rattaché à un hôtel")),
+          React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Identifiant Windows du compte *"),
+          React.createElement('input', { value: adCompte, onChange: e => setAdCompte(e.target.value), disabled: adBusy, placeholder: "ex. guestrelation", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, marginBottom: 8, boxSizing: "border-box", fontFamily: "monospace" } }),
+          adSugg.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 12 } },
+            React.createElement('span', { style: { fontSize: 11, color: "#888" } }, "Proposés d'après le ticket :"),
+            adSugg.map(a => React.createElement('button', { key: a, onClick: () => setAdCompte(a), disabled: adBusy, style: { padding: "3px 9px", borderRadius: 20, fontSize: 11.5, cursor: "pointer", fontFamily: "monospace", border: "1px solid " + (adCompte === a ? "#2B6CB0" : "#DDD"), background: adCompte === a ? "#EBF4FF" : "#FAFAFC", color: adCompte === a ? "#2B6CB0" : "#555" } }, a))
+          ),
+          React.createElement('div', { style: { fontSize: 11, color: "#7a5600", background: "#FEF4DC", borderRadius: 7, padding: "8px 10px", marginBottom: 12, lineHeight: 1.5 } },
+            "Vérifiez que la demande vient bien de l'hôtel. Les comptes administrateurs et les comptes désactivés sont refusés par le script. Si le compte se reverrouille souvent, regardez le poste à l'origine du verrouillage : un ancien mot de passe y est souvent enregistré."),
+          React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#555", marginBottom: 12, cursor: "pointer" } },
+            React.createElement('input', { type: "checkbox", checked: adTrace, onChange: e => setAdTrace(e.target.checked), disabled: adBusy }),
+            "Ajouter le résultat dans le fil du ticket (sans email au client)"),
+          adEtat && React.createElement('div', { style: { borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontSize: 12.5, lineHeight: 1.5,
+              background: adEtat.phase === "erreur" ? "#FDECEC" : adEtat.phase === "fini" ? (res && res.deverrouille ? "#E9F6EE" : "#EBF4FF") : "#F4F4F8",
+              color: adEtat.phase === "erreur" ? "#C53030" : "#333", border: "1px solid " + (adEtat.phase === "erreur" ? "#F5B5B5" : "#E2E2EA") } },
+            enCours && React.createElement('div', null, "⏳ " + adEtat.msg),
+            adEtat.phase === "erreur" && React.createElement('div', null, "❌ " + adEtat.msg),
+            adEtat.phase === "fini" && res && React.createElement('div', null,
+              React.createElement('div', { style: { fontWeight: 700, fontSize: 13.5, marginBottom: 6, color: res.deverrouille ? "#2F855A" : "#2B6CB0" } },
+                res.deverrouille ? "✅ Compte déverrouillé" : (res.mode === "diagnostic" ? "🔎 Diagnostic" : "ℹ️ Le compte n'était pas verrouillé")),
+              ligne("Compte", res.compte + (res.nom ? " — " + res.nom : "")),
+              ligne("Serveur", adEtat.dc || res.serveur || "—"),
+              ligne("Verrouillé", res.verrouille_avant ? ("oui" + (res.heure_verrouillage ? " depuis le " + fmtAd(res.heure_verrouillage) : "")) : "non", res.verrouille_avant ? "#C53030" : "#2F855A"),
+              res.verrouille_apres != null && res.deverrouille && ligne("Après l'action", res.verrouille_apres ? "toujours verrouillé" : "déverrouillé", res.verrouille_apres ? "#C53030" : "#2F855A"),
+              ligne("Échecs de mot de passe", (res.echecs == null ? "—" : String(res.echecs)) + (res.dernier_echec ? " (dernier le " + fmtAd(res.dernier_echec) + ")" : "")),
+              (res.source_verrouillage || []).length > 0 && ligne("Verrouillé depuis", res.source_verrouillage.map(x => (x.poste || "?") + " à " + fmtAd(x.heure)).join(", "), "#B7791F"),
+              res.mdp_expire && ligne("Mot de passe", "expiré", "#C53030"),
+              res.desactive && ligne("Compte", "désactivé", "#C53030"),
+              ligne("Mot de passe changé le", fmtAd(res.dernier_mdp)),
+              res.message && React.createElement('div', { style: { marginTop: 6, fontStyle: "italic", color: "#555" } }, res.message)
+            )
+          ),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
+            React.createElement('button', { onClick: fermer, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 14px" } }, adEtat && adEtat.phase === "fini" ? "Fermer" : "Annuler"),
+            adEtat && adEtat.phase === "fini" && React.createElement('button', { onClick: preparerReponseAd, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px" } }, "✉️ Préparer la réponse au client"),
+            !(adEtat && adEtat.phase === "fini") && React.createElement('button', { onClick: () => lancerDeverrouillageAd("diagnostic"), disabled: adBusy || !adCompte.trim(), style: { background: "white", border: "1px solid #2B6CB0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", opacity: (adBusy || !adCompte.trim()) ? 0.55 : 1 } }, "🔎 Diagnostiquer"),
+            !(adEtat && adEtat.phase === "fini") && React.createElement('button', { onClick: () => lancerDeverrouillageAd("deverrouiller"), disabled: adBusy || !adCompte.trim(), style: { background: "#2B6CB0", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", opacity: (adBusy || !adCompte.trim()) ? 0.55 : 1 } }, adBusy ? "En cours…" : "🔓 Déverrouiller")
+          )
+        )
+      );
+    })(),
     // Fenêtre « Bloquer un expéditeur » (Defender M365 via Worker dsi-hotel-blocage)
     blqTicket && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 } },
       React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 480, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" } },
