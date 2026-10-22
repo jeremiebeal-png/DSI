@@ -3973,6 +3973,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   //  optionnel (checkcentral_group_map) associe un groupe à un hôtel.
   // ============================================================
   const [bkChecks, setBkChecks] = useState([]);
+  const [bkVeeamHist, setBkVeeamHist] = useState({}); // { job_id: "loading" | { erreur } | [runs] } — Veeam direct
   // ============================================================
   //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
   //  (un compte par hôtel). Données alimentées par le Worker dsi-hotel-sophos.
@@ -5378,6 +5379,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (data.error) { setBkNote("Erreur : " + data.error + (data.detail ? " — " + data.detail : "")); setBkChecks([]); return; }
       setBkChecks(data.checks || []);
       setBkFetchedAt(data.fetchedAt || new Date().toISOString());
+      if (Array.isArray(data.erreurs) && data.erreurs.length) setBkNote("⚠ Lecture partielle : " + data.erreurs.join(" ; "));
       loadBackupNotes(); // charge les notes d'explication en parallèle
       if ((data.checks || []).length === 0) setBkNote("Aucun check retourné par CheckCentral.");
     } catch (e) {
@@ -5386,6 +5388,49 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     } finally {
       setBkLoading(false);
     }
+  };
+
+  // Historique 30 jours d'un job Veeam reçu en direct (table veeam_runs, lecture admin)
+  const bkToggleHistVeeam = async (c) => {
+    const jobId = String(c.id || "").replace(/^veeam:/, "");
+    if (!jobId) return;
+    if (bkVeeamHist[jobId]) { setBkVeeamHist(prev => { const m = { ...prev }; delete m[jobId]; return m; }); return; }
+    setBkVeeamHist(prev => ({ ...prev, [jobId]: "loading" }));
+    const depuis = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data, error } = await sb.from("veeam_runs").select("recu_le,statut,duree,taille_backup,transfere,message")
+      .eq("job_id", jobId).gte("recu_le", depuis).order("recu_le", { ascending: false }).limit(300);
+    setBkVeeamHist(prev => ({ ...prev, [jobId]: error ? { erreur: error.message + (/policy|permission/i.test(error.message) ? " — le script veeam_portail.sql a-t-il été exécuté ?" : "") } : (data || []) }));
+  };
+  const bkRenderHistVeeam = (c) => {
+    const jobId = String(c.id || "").replace(/^veeam:/, "");
+    const h = bkVeeamHist[jobId];
+    if (!h) return null;
+    if (h === "loading") return React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 6 } }, "Chargement de l'historique…");
+    if (h.erreur) return React.createElement('div', { style: { fontSize: 11, color: "#C53030", marginTop: 6 } }, "Historique illisible : " + h.erreur);
+    const jourFr = (d) => d.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit" });
+    const rangSt = (st) => st === "Failure" ? 0 : st === "Warning" ? 1 : 2;
+    const parJour = {};
+    h.forEach(r => { const k = jourFr(new Date(r.recu_le)); if (!(k in parJour) || rangSt(r.statut) < rangSt(parJour[k])) parJour[k] = r.statut; });
+    const cases = [];
+    for (let i = 29; i >= 0; i--) { const k = jourFr(new Date(Date.now() - i * 86400000)); cases.push({ k, st: parJour[k] || null }); }
+    const coul = (st) => st === "Success" ? "#38A169" : st === "Warning" ? "#DD6B20" : st === "Failure" ? "#E53E3E" : "#E2E2EA";
+    return React.createElement('div', { style: { marginTop: 8, padding: "8px 10px", background: "#FAFAFC", border: "1px solid #EEEEF4", borderRadius: 8 } },
+      React.createElement('div', { style: { display: "flex", gap: 2 } },
+        cases.map(x => React.createElement('div', { key: x.k, title: x.k + " — " + (x.st === "Success" ? "OK" : x.st === "Warning" ? "Avertissement" : x.st === "Failure" ? "Échec" : "aucun mail reçu"),
+          style: { flex: 1, height: 16, borderRadius: 3, background: coul(x.st), minWidth: 4 } }))),
+      React.createElement('div', { style: { display: "flex", justifyContent: "space-between", fontSize: 9.5, color: "#AAA", marginTop: 3 } },
+        React.createElement('span', null, cases[0].k), React.createElement('span', null, "30 derniers jours (gris = aucun mail)"), React.createElement('span', null, cases[29].k)),
+      h.length === 0
+        ? React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 6 } }, "Aucune exécution reçue sur 30 jours.")
+        : React.createElement('div', { style: { marginTop: 6 } }, h.slice(0, 6).map((r, i) =>
+            React.createElement('div', { key: i, style: { fontSize: 11, color: "#555", display: "flex", gap: 8, padding: "2px 0", flexWrap: "wrap" } },
+              React.createElement('span', { style: { color: coul(r.statut), fontWeight: 700, minWidth: 14 } }, r.statut === "Success" ? "✓" : r.statut === "Warning" ? "!" : "✖"),
+              React.createElement('span', { style: { minWidth: 110 } }, new Date(r.recu_le).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })),
+              r.duree && React.createElement('span', null, "⏱ " + r.duree),
+              r.taille_backup && React.createElement('span', null, "💾 " + r.taille_backup),
+              r.transfere && React.createElement('span', { style: { color: "#999" } }, "transféré " + r.transfere),
+              r.message && r.statut !== "Success" && React.createElement('span', { style: { color: "#C53030", flexBasis: "100%", paddingLeft: 22 } }, r.message))))
+    );
   };
 
   // Statut → couleur/priorité. Failure=rouge, Warning=orange, Success=vert,
@@ -5425,8 +5470,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const bkGroupes = (() => {
     const map = {};
     (bkChecks || []).forEach(c => {
-      const key = c.group_id || c.group || "(sans groupe)";
-      if (!map[key]) map[key] = { key, group_id: c.group_id, group: c.group || "(sans groupe)", checks: [] };
+      const veeam = c.origine === "veeam";
+      const key = veeam ? "veeam:" + (c.hotel_id || c.group || "") : (c.group_id || c.group || "(sans groupe)");
+      if (!map[key]) map[key] = { key, group_id: veeam ? null : c.group_id, hotel_id: veeam ? (c.hotel_id || null) : null, origine: veeam ? "veeam" : "checkcentral", group: c.group || "(sans groupe)", checks: [] };
       map[key].checks.push(c);
     });
     const arr = Object.values(map).map(g => {
@@ -10263,14 +10309,15 @@ const nav = isAdmin
 
   if (page === "backups" && isAdmin) {
     const nomGroupe = (g) => {
-      const hid = g.group_id && bkGroupMap[g.group_id];
-      const hotel = hid && hotels.find(h => h.id === hid);
+      const hid = g.hotel_id || (g.group_id && bkGroupMap[g.group_id]);
+      const hotel = hid && hotels.find(h => String(h.id) === String(hid));
+      if (g.origine === "veeam") return hotel ? hotel.name + " · Veeam direct" : g.group;
       return hotel ? hotel.name : g.group;
     };
     const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Statut des sauvegardes surveillées par CheckCentral, regroupées par site. Les groupes présentant un échec apparaissent en premier. Données lues en direct via l'API CheckCentral."
+        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Sources : API CheckCentral et mails Veeam reçus directement sur backup@dsihotel.com (« Veeam direct »)."
       ),
       // Alerte : backups sans exécution depuis plus de 7 jours.
       // Le compteur ne retient que les muets NON justifiés (sans note d'explication).
@@ -10294,8 +10341,8 @@ const nav = isAdmin
         ),
         bkOldOpen && React.createElement('div', { style: { borderTop: "1px solid " + (bkMuetsNonJustifies > 0 ? "#F5B5B5" : "#B7E0C6"), background: "white" } },
           bkAncienChecks.map((c, i) => {
-            const hid = c.group_id && bkGroupMap[c.group_id];
-            const hotel = hid && hotels.find(h => h.id === hid);
+            const hid = c.hotel_id || (c.group_id && bkGroupMap[c.group_id]);
+            const hotel = hid && hotels.find(h => String(h.id) === String(hid));
             const site = hotel ? hotel.name : (c.group || "(sans groupe)");
             return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
               React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: c.justifie ? "#2F855A" : "#E53E3E", flexShrink: 0, marginTop: 4 } }),
@@ -10434,7 +10481,12 @@ const nav = isAdmin
                           "📅 Sauvegarde " + bkLibFreq(fq.frequence_heures).toLowerCase() +
                           (cm.masquee ? " — défaut CheckCentral ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
                           (fq.derniere_reussite ? " · dernière réussite le " + new Date(fq.derniere_reussite).toLocaleDateString("fr-FR") : "")),
-                        noteEligible && renderBackupNote(c.id)
+                        c.origine === "veeam" && c.message && cm.rank <= 1 && React.createElement('div', { style: { fontSize: 11, color: "#C53030", marginTop: 2, fontFamily: "Consolas, monospace", wordBreak: "break-word" } }, c.message),
+                        noteEligible && renderBackupNote(c.id),
+                        c.origine === "veeam" && React.createElement('button', { onClick: () => bkToggleHistVeeam(c),
+                          style: { marginTop: 5, fontSize: 11, padding: "2px 9px", border: "1px solid #DDE3EE", background: "white", color: "#4A5A78", borderRadius: 6, cursor: "pointer" } },
+                          bkVeeamHist[String(c.id).replace(/^veeam:/, "")] ? "▲ Masquer l'historique" : "📊 Historique 30 jours"),
+                        c.origine === "veeam" && bkRenderHistVeeam(c)
                       ),
                       React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap", marginTop: 2 } }, fmtDateHeureFr2(c.updatedIso)),
                       c.id != null && React.createElement('select', { value: String((fq && fq.frequence_heures) || 24), title: "Fréquence d'exécution attendue : une sauvegarde non quotidienne n'alerte pas entre deux passages",
@@ -12885,4 +12937,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 </script>
 </body>
 </html>
- 
