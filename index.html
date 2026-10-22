@@ -3974,6 +3974,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // ============================================================
   const [bkChecks, setBkChecks] = useState([]);
   const [bkVeeamHist, setBkVeeamHist] = useState({}); // { job_id: "loading" | { erreur } | [runs] } — Veeam direct
+  const [bkVeeamRuns, setBkVeeamRuns] = useState({}); // { job_id: [{ id, t, s }] } — 10 dernières exécutions (frise)
+  const [bkRapport, setBkRapport] = useState(null);   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
   // ============================================================
   //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
   //  (un compte par hôtel). Données alimentées par le Worker dsi-hotel-sophos.
@@ -5381,6 +5383,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setBkFetchedAt(data.fetchedAt || new Date().toISOString());
       if (Array.isArray(data.erreurs) && data.erreurs.length) setBkNote("⚠ Lecture partielle : " + data.erreurs.join(" ; "));
       loadBackupNotes(); // charge les notes d'explication en parallèle
+      if ((data.checks || []).some(c => c.origine === "veeam")) {
+        sb.rpc("veeam_historique", { p_n: 10 }).then(({ data: hist, error }) => {
+          if (error) { console.warn("veeam_historique :", error.message); return; }
+          const m = {}; (hist || []).forEach(x => { m[x.job_id] = x.runs || []; });
+          setBkVeeamRuns(m);
+        });
+      }
       if ((data.checks || []).length === 0) setBkNote("Aucun check retourné par CheckCentral.");
     } catch (e) {
       setBkNote("Erreur : " + (e.message || e) + " (le Worker CheckCentral est-il déployé et l'URL correcte ?)");
@@ -5390,6 +5399,80 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // ---------- Rapport Veeam détaillé (HTML d'origine du mail, stocké compressé) ----------
+  const bkGunzip = async (b64) => {
+    const bin = atob(b64); const u = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  };
+  const bkOuvrirRapport = async (runId, titre) => {
+    if (!runId) return;
+    setBkRapport({ titre, chargement: true });
+    const { data, error } = await sb.from("veeam_runs").select("id,recu_le,statut,objet,duree,taille_backup,transfere,message,texte,html_gz").eq("id", runId).single();
+    if (error) { setBkRapport({ titre, erreur: error.message }); return; }
+    let html = null;
+    if (data.html_gz) {
+      try {
+        const brut = await bkGunzip(data.html_gz);
+        html = window.DOMPurify ? window.DOMPurify.sanitize(brut, { WHOLE_DOCUMENT: true, FORBID_TAGS: ["script", "iframe", "object", "embed", "form"] }) : null;
+      } catch (e) { console.warn("Rapport illisible :", e); }
+    }
+    setBkRapport({ titre, run: data, html, texte: data.texte || "" });
+  };
+  const bkImprimerRapport = () => {
+    const f = document.getElementById("bk-rapport-frame");
+    if (f && f.contentWindow) { f.contentWindow.focus(); f.contentWindow.print(); }
+  };
+  const bkTelechargerRapport = () => {
+    if (!bkRapport) return;
+    const r = bkRapport.run || {};
+    const contenu = bkRapport.html || ("<pre>" + String(bkRapport.texte || "").replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</pre>");
+    const blob = new Blob([contenu], { type: "text/html;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const d = r.recu_le ? new Date(r.recu_le).toISOString().slice(0, 16).replace(/[:T]/g, "-") : "rapport";
+    a.download = String(bkRapport.titre || "veeam").replace(/[^\w.-]+/g, "_") + "_" + d + ".html";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  const bkRenderRapport = () => {
+    const r = bkRapport; if (!r) return null;
+    const run = r.run || {};
+    const btn = { fontSize: 12, padding: "6px 12px", borderRadius: 7, border: "1px solid #DDE3EE", background: "white", color: "#334", cursor: "pointer", fontWeight: 600 };
+    return React.createElement('div', { onClick: () => setBkRapport(null), style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
+      React.createElement('div', { onClick: e => e.stopPropagation(), style: { background: "white", borderRadius: 12, width: "min(980px, 100%)", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 12px 40px rgba(0,0,0,.3)" } },
+        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #EEE", flexWrap: "wrap" } },
+          React.createElement('div', { style: { flex: 1, minWidth: 200 } },
+            React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: "#222" } }, "📄 " + (r.titre || "Rapport Veeam")),
+            run.recu_le && React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginTop: 2 } },
+              new Date(run.recu_le).toLocaleString("fr-FR", { timeZone: "Europe/Paris" }) + " · " + (run.statut === "Success" ? "OK" : run.statut === "Warning" ? "Avertissement" : "Échec") +
+              (run.duree ? " · durée " + run.duree : "") + (run.taille_backup ? " · " + run.taille_backup : ""))),
+          (r.html || r.texte) && React.createElement('button', { onClick: bkImprimerRapport, disabled: !r.html, title: r.html ? "Ouvre l'impression : choisissez « Enregistrer au format PDF »" : "Rapport d'origine non disponible pour cette exécution", style: { ...btn, opacity: r.html ? 1 : .5 } }, "🖨 PDF / Imprimer"),
+          (r.html || r.texte) && React.createElement('button', { onClick: bkTelechargerRapport, style: btn }, "⬇ Télécharger"),
+          React.createElement('button', { onClick: () => setBkRapport(null), style: { ...btn, border: "none", fontSize: 16 } }, "✕")),
+        React.createElement('div', { style: { flex: 1, overflow: "auto", background: "#F7F7FA" } },
+          r.chargement ? React.createElement('div', { style: { padding: 30, textAlign: "center", color: "#999" } }, "Chargement du rapport…")
+          : r.erreur ? React.createElement('div', { style: { padding: 20, color: "#C53030" } }, "Rapport illisible : " + r.erreur)
+          : r.html ? React.createElement('iframe', { id: "bk-rapport-frame", srcDoc: r.html, sandbox: "allow-same-origin allow-modals", title: "Rapport Veeam", style: { width: "100%", height: "72vh", border: "none", background: "white" } })
+          : React.createElement('div', { style: { padding: 16 } },
+              React.createElement('div', { style: { fontSize: 11.5, color: "#B7791F", marginBottom: 8 } }, "Rapport d'origine non conservé pour cette exécution (reçue avant la mise à jour ou plus de 60 jours) — contenu texte :"),
+              React.createElement('pre', { style: { whiteSpace: "pre-wrap", fontSize: 12, fontFamily: "Consolas, monospace", color: "#333", margin: 0 } }, r.texte || "—")))
+      ));
+  };
+  // Frise des 10 dernières exécutions (vert OK / orange avertissement / rouge échec), cliquable
+  const bkRenderFrise = (c) => {
+    const jobId = String(c.id || "").replace(/^veeam:/, "");
+    const runs = bkVeeamRuns[jobId] || [];
+    if (!runs.length) return null;
+    const coul = (st) => st === "Success" ? "#38A169" : st === "Warning" ? "#ECC94B" : "#E53E3E";
+    return React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 4, flexShrink: 0, marginTop: 1 } },
+      runs.map(r => React.createElement('span', { key: r.id, onClick: () => bkOuvrirRapport(r.id, c.name),
+        title: new Date(r.t).toLocaleString("fr-FR", { timeZone: "Europe/Paris" }) + " — " + (r.s === "Success" ? "OK" : r.s === "Warning" ? "Avertissement" : "Échec") + " (cliquer pour le rapport)",
+        style: { width: 14, height: 14, borderRadius: "50%", background: coul(r.s), cursor: "pointer", display: "inline-block" } })),
+      React.createElement('button', { onClick: () => bkOuvrirRapport(runs[runs.length - 1].id, c.name), title: "Rapport de la dernière exécution (PDF / impression)",
+        style: { marginLeft: 6, fontSize: 13, padding: "0 4px", border: "none", background: "transparent", cursor: "pointer" } }, "📄"));
+  };
+
   // Historique 30 jours d'un job Veeam reçu en direct (table veeam_runs, lecture admin)
   const bkToggleHistVeeam = async (c) => {
     const jobId = String(c.id || "").replace(/^veeam:/, "");
@@ -5397,7 +5480,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (bkVeeamHist[jobId]) { setBkVeeamHist(prev => { const m = { ...prev }; delete m[jobId]; return m; }); return; }
     setBkVeeamHist(prev => ({ ...prev, [jobId]: "loading" }));
     const depuis = new Date(Date.now() - 30 * 86400000).toISOString();
-    const { data, error } = await sb.from("veeam_runs").select("recu_le,statut,duree,taille_backup,transfere,message")
+    const { data, error } = await sb.from("veeam_runs").select("id,recu_le,statut,duree,taille_backup,transfere,message")
       .eq("job_id", jobId).gte("recu_le", depuis).order("recu_le", { ascending: false }).limit(300);
     setBkVeeamHist(prev => ({ ...prev, [jobId]: error ? { erreur: error.message + (/policy|permission/i.test(error.message) ? " — le script veeam_portail.sql a-t-il été exécuté ?" : "") } : (data || []) }));
   };
@@ -5423,7 +5506,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       h.length === 0
         ? React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 6 } }, "Aucune exécution reçue sur 30 jours.")
         : React.createElement('div', { style: { marginTop: 6 } }, h.slice(0, 6).map((r, i) =>
-            React.createElement('div', { key: i, style: { fontSize: 11, color: "#555", display: "flex", gap: 8, padding: "2px 0", flexWrap: "wrap" } },
+            React.createElement('div', { key: i, onClick: () => bkOuvrirRapport(r.id, c.name), title: "Voir le rapport de cette exécution", style: { fontSize: 11, color: "#555", display: "flex", gap: 8, padding: "2px 0", flexWrap: "wrap", cursor: "pointer" } },
               React.createElement('span', { style: { color: coul(r.statut), fontWeight: 700, minWidth: 14 } }, r.statut === "Success" ? "✓" : r.statut === "Warning" ? "!" : "✖"),
               React.createElement('span', { style: { minWidth: 110 } }, new Date(r.recu_le).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })),
               r.duree && React.createElement('span', null, "⏱ " + r.duree),
@@ -10317,8 +10400,9 @@ const nav = isAdmin
     const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Sources : API CheckCentral et mails Veeam reçus directement sur backup@dsihotel.com (« Veeam direct »)."
+        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Sources : API CheckCentral et mails Veeam reçus directement sur backup@dsihotel.com (« Veeam direct »). Cliquez sur une pastille ou sur 📄 pour ouvrir le rapport Veeam (impression PDF possible)."
       ),
+      bkRapport && bkRenderRapport(),
       // Alerte : backups sans exécution depuis plus de 7 jours.
       // Le compteur ne retient que les muets NON justifiés (sans note d'explication).
       // Si tous les muets sont justifiés, le bandeau passe au vert (informatif).
@@ -10488,6 +10572,7 @@ const nav = isAdmin
                           bkVeeamHist[String(c.id).replace(/^veeam:/, "")] ? "▲ Masquer l'historique" : "📊 Historique 30 jours"),
                         c.origine === "veeam" && bkRenderHistVeeam(c)
                       ),
+                      c.origine === "veeam" && bkRenderFrise(c),
                       React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap", marginTop: 2 } }, fmtDateHeureFr2(c.updatedIso)),
                       c.id != null && React.createElement('select', { value: String((fq && fq.frequence_heures) || 24), title: "Fréquence d'exécution attendue : une sauvegarde non quotidienne n'alerte pas entre deux passages",
                         onChange: e => { const h = parseInt(e.target.value, 10); definirFrequenceBackup(c, h).catch(err => alert("Impossible d'enregistrer la fréquence : " + (err.message || err))); },
