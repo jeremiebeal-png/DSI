@@ -3975,7 +3975,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkChecks, setBkChecks] = useState([]);
   const [bkVeeamHist, setBkVeeamHist] = useState({}); // { job_id: "loading" | { erreur } | [runs] } — Veeam direct
   const [bkVeeamRuns, setBkVeeamRuns] = useState({}); // { job_id: [{ id, t, s }] } — 10 dernières exécutions (frise)
-  const [bkRapport, setBkRapport] = useState(null);   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
+  const [bkRapport, setBkRapport] = useState(null);
+  const [bkVue, setBkVue] = useState(() => { try { return localStorage.getItem("bkVue") || "tout"; } catch (e) { return "tout"; } }); // tout | checkcentral | veeam | comparaison
+  const [bkCmpOpen, setBkCmpOpen] = useState({});
+  const choisirBkVue = (v) => { setBkVue(v); try { localStorage.setItem("bkVue", v); } catch (e) {} };   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
   // ============================================================
   //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
   //  (un compte par hôtel). Données alimentées par le Worker dsi-hotel-sophos.
@@ -4386,7 +4389,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const rows = [];
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,nom,role,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien,licence_fin,licence_alerte").range(from, from + 999);
+        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien").range(from, from + 999);
         if (error) throw error;
         (data || []).forEach(x => rows.push(x));
         if (!data || data.length < 1000) break;
@@ -5549,10 +5552,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   const fmtDateHeureFr2 = (iso) => { try { return iso ? new Date(iso).toLocaleString("fr-FR") : "—"; } catch (e) { return "—"; } };
 
+  // Sous-onglet de la page Sauvegardes : ne filtre que sur cette page (le tableau de bord garde le total)
+  const bkChecksVue = (page === "backups" && (bkVue === "checkcentral" || bkVue === "veeam"))
+    ? (bkChecks || []).filter(c => bkVue === "veeam" ? c.origine === "veeam" : c.origine !== "veeam")
+    : (bkChecks || []);
+
   // Regroupe les checks par groupe et calcule le pire statut du groupe.
   const bkGroupes = (() => {
     const map = {};
-    (bkChecks || []).forEach(c => {
+    bkChecksVue.forEach(c => {
       const veeam = c.origine === "veeam";
       const key = veeam ? "veeam:" + (c.hotel_id || c.group || "") : (c.group_id || c.group || "(sans groupe)");
       if (!map[key]) map[key] = { key, group_id: veeam ? null : c.group_id, hotel_id: veeam ? (c.hotel_id || null) : null, origine: veeam ? "veeam" : "checkcentral", group: c.group || "(sans groupe)", checks: [] };
@@ -5578,14 +5586,65 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return arr;
   })();
 
+  // ---------- Comparaison CheckCentral (ancien) / Veeam direct (nouveau), par hôtel ----------
+  const bkNormJob = (n) => String(n || "").toLowerCase().replace(/^dsihotel\+/, "").replace(/@.*$/, "").replace(/[^a-z0-9]/g, "");
+  const bkSimilarite = (a, b) => {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (a.length >= 6 && b.length >= 6 && (a.includes(b) || b.includes(a))) return 0.9;
+    const m = a.length, n = b.length;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const cur = [i];
+      for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return 1 - prev[n] / Math.max(m, n);
+  };
+  const bkComparaison = (() => {
+    if (page !== "backups" || bkVue !== "comparaison") return [];
+    const parHotel = {};
+    const cle = (hid, nomGroupe) => hid ? "h:" + hid : "g:" + (nomGroupe || "(sans groupe)");
+    (bkChecks || []).forEach(c => {
+      const veeam = c.origine === "veeam";
+      const hid = veeam ? c.hotel_id : (c.group_id && bkGroupMap[c.group_id]);
+      const k = cle(hid, veeam ? c.group : c.group);
+      if (!parHotel[k]) {
+        const h = hid && hotels.find(x => String(x.id) === String(hid));
+        parHotel[k] = { k, nom: h ? h.name : (c.group || "(sans groupe)"), cc: [], vd: [] };
+      }
+      (veeam ? parHotel[k].vd : parHotel[k].cc).push(c);
+    });
+    return Object.values(parHotel).map(h => {
+      // Appariement glouton par similarité de nom (seuil 0,75)
+      const cand = [];
+      h.cc.forEach((a, i) => h.vd.forEach((b, j) => {
+        const sc = bkSimilarite(bkNormJob(a.name), bkNormJob(b.name));
+        if (sc >= 0.75) cand.push({ i, j, sc });
+      }));
+      cand.sort((x, y) => y.sc - x.sc);
+      const pi = new Set(), pj = new Set(), paires = [];
+      cand.forEach(x => { if (!pi.has(x.i) && !pj.has(x.j)) { pi.add(x.i); pj.add(x.j); paires.push({ cc: h.cc[x.i], vd: h.vd[x.j] }); } });
+      const ccSeuls = h.cc.filter((_, i) => !pi.has(i));
+      const vdSeuls = h.vd.filter((_, j) => !pj.has(j));
+      const ecarts = paires.filter(p => (bkMetaCheck(p.cc).rank === 0) !== (bkMetaCheck(p.vd).rank === 0));
+      let etat;
+      if (!h.vd.length) etat = { r: 0, l: "Non migré", c: "#718096", bg: "#F0F0F4" };
+      else if (!h.cc.length) etat = { r: 3, l: "Veeam seulement", c: "#2B6CB0", bg: "#EBF8FF" };
+      else if (ccSeuls.length || ecarts.length) etat = { r: 1, l: (ccSeuls.length ? ccSeuls.length + " manquant(s)" : "") + (ccSeuls.length && ecarts.length ? " · " : "") + (ecarts.length ? ecarts.length + " écart(s) de statut" : ""), c: "#C05621", bg: "#FEF0E4" };
+      else etat = { r: 2, l: "Complet", c: "#2F855A", bg: "#E9F6EE" };
+      return { ...h, paires, ccSeuls, vdSeuls, ecarts, etat };
+    }).sort((a, b) => a.etat.r - b.etat.r || a.nom.localeCompare(b.nom));
+  })();
+
   const bkStats = (() => {
     let echec = 0, warn = 0, ok = 0, autre = 0;
-    (bkChecks || []).forEach(c => {
+    bkChecksVue.forEach(c => {
       const r = bkMetaCheck(c).rank;
       if (r === 0) echec++; else if (r === 1) warn++; else if (r === 3) ok++; else autre++;
     });
     const groupesEnEchec = bkGroupes.filter(g => g.pireRank === 0).length;
-    return { total: bkChecks.length, echec, warn, ok, autre, groupesEnEchec, nbGroupes: bkGroupes.length };
+    return { total: bkChecksVue.length, echec, warn, ok, autre, groupesEnEchec, nbGroupes: bkGroupes.length };
   })();
 
   // Backups « obsolètes » : checks dont la dernière exécution (updatedIso)
@@ -5595,7 +5654,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const now = Date.now();
     const limite = BK_SEUIL_JOURS * 24 * 60 * 60 * 1000;
     const arr = [];
-    (bkChecks || []).forEach(c => {
+    bkChecksVue.forEach(c => {
       if (!c.updatedIso) return;
       const t = new Date(c.updatedIso).getTime();
       if (isNaN(t)) return;
@@ -10398,6 +10457,38 @@ const nav = isAdmin
       return hotel ? hotel.name : g.group;
     };
     const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+    const pastille = (c) => { const m = bkMetaCheck(c); return React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: m.color, background: m.bg, padding: "1px 7px", borderRadius: 10, whiteSpace: "nowrap" } }, m.label); };
+    const ligneCmp = (gauche, droite, fond, note) => React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 2 : 12, padding: "7px 16px", borderBottom: "1px solid #F3F3F8", background: fond || "white", fontSize: 12 } },
+      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } }, gauche ? [React.createElement('span', { key: "n", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#333" } }, gauche.name), React.createElement('span', { key: "p" }, pastille(gauche))] : React.createElement('span', { style: { color: "#C05621", fontStyle: "italic" } }, note || "—")),
+      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } }, droite ? [React.createElement('span', { key: "n", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#333" } }, droite.name), React.createElement('span', { key: "p" }, pastille(droite)), React.createElement('span', { key: "d", style: { fontSize: 10.5, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(droite.updatedIso))] : React.createElement('span', { style: { color: "#C05621", fontStyle: "italic" } }, note || "—")));
+    const rendreComparaison = () => {
+      const nb = (r) => bkComparaison.filter(h => h.etat.r === r).length;
+      return React.createElement('div', null,
+        React.createElement('div', { style: { fontSize: 12, color: "#666", background: "#F7F9FC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "10px 14px", marginBottom: 12, lineHeight: 1.6 } },
+          "Pour chaque hôtel : à gauche les checks CheckCentral (ancien), à droite les jobs Veeam reçus directement (nouveau). L'appariement se fait sur la ressemblance des noms. ",
+          React.createElement('b', null, nb(2) + " complet(s)"), " · ",
+          React.createElement('b', { style: { color: "#C05621" } }, nb(1) + " à vérifier"), " · ",
+          React.createElement('b', { style: { color: "#718096" } }, nb(0) + " non migré(s)"),
+          nb(3) ? " · " + nb(3) + " Veeam seulement" : ""),
+        React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          bkComparaison.map(h => {
+            const ouvert = !!bkCmpOpen[h.k];
+            return React.createElement('div', { key: h.k, style: { background: "white", border: "1px solid #E8E8F0", borderLeft: "5px solid " + h.etat.c, borderRadius: 10, overflow: "hidden" } },
+              React.createElement('div', { onClick: () => setBkCmpOpen(p => ({ ...p, [h.k]: !p[h.k] })), style: { padding: "11px 16px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", flexWrap: "wrap" } },
+                React.createElement('div', { style: { flex: 1, minWidth: 160, fontSize: 14, fontWeight: 600, color: "#222" } }, h.nom),
+                React.createElement('span', { style: { fontSize: 11.5, color: "#666" } }, "CheckCentral : " + h.cc.length),
+                React.createElement('span', { style: { fontSize: 11.5, color: "#666" } }, "Veeam direct : " + h.vd.length),
+                React.createElement('span', { style: { fontSize: 11, fontWeight: 700, color: h.etat.c, background: h.etat.bg, padding: "3px 10px", borderRadius: 20 } }, h.etat.l),
+                React.createElement('span', { style: { fontSize: 12, color: "#AAA" } }, ouvert ? "▲" : "▼")),
+              ouvert && React.createElement('div', { style: { borderTop: "1px solid #EEE" } },
+                React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, padding: "6px 16px", background: "#FAFAFC", fontSize: 10.5, fontWeight: 700, color: "#888", textTransform: "uppercase" } },
+                  React.createElement('div', null, "CheckCentral (ancien)"), !isMobile && React.createElement('div', null, "Veeam direct (nouveau)")),
+                h.paires.map((p, i) => ligneCmp(p.cc, p.vd, h.ecarts.includes(p) ? "#FFF5EB" : null)).concat(
+                  h.ccSeuls.map((c, i) => ligneCmp(c, null, "#FFFAF0", h.vd.length ? "⚠ Aucun job Veeam correspondant reçu" : "Hôtel non encore branché sur backup@")),
+                  h.vdSeuls.map((c, i) => ligneCmp(null, c, "#F5FAFF", "Non surveillé par CheckCentral (nouveau)")))
+              ));
+          })));
+    };
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
         "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Sources : API CheckCentral et mails Veeam reçus directement sur backup@dsihotel.com (« Veeam direct »). Cliquez sur une pastille ou sur 📄 pour ouvrir le rapport Veeam (impression PDF possible)."
@@ -10458,7 +10549,10 @@ const nav = isAdmin
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
         React.createElement('button', { onClick: loadBackups, disabled: bkLoading, style: { padding: "8px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: bkLoading ? 0.6 : 1 } }, bkLoading ? "Actualisation..." : "🔄 Actualiser"),
         React.createElement('button', { onClick: () => lancerAlertesBackup("run", 24), title: "Crée directement un ticket pour chaque sauvegarde en défaut depuis plus de 24 h (sans doublon)", style: { padding: "8px 15px", background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🚨 Alertes + de 24 h"),
-        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt))
+        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt)),
+        React.createElement('div', { style: { display: "flex", gap: 0, border: "1px solid #DDE3EE", borderRadius: 8, overflow: "hidden", marginLeft: isMobile ? 0 : "auto" } },
+          [["tout", "Tout"], ["checkcentral", "CheckCentral"], ["veeam", "Veeam direct"], ["comparaison", "⇄ Comparaison"]].map(([v, l]) =>
+            React.createElement('button', { key: v, onClick: () => choisirBkVue(v), style: { padding: "7px 13px", fontSize: 12, fontWeight: 600, border: "none", borderRight: v !== "comparaison" ? "1px solid #DDE3EE" : "none", cursor: "pointer", background: bkVue === v ? "#0F0F24" : "white", color: bkVue === v ? "white" : "#445" } }, l)))
       ),
       // Fenêtre de test / lancement des alertes sauvegardes
       bkAlerte && React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !bkAlerte.loading) setBkAlerte(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", zIndex: 90, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? 12 : "40px 20px", overflowY: "auto" } },
@@ -10508,6 +10602,7 @@ const nav = isAdmin
       ),
       bkNote && React.createElement('div', { style: { fontSize: 12, color: bkNote.startsWith("Erreur") ? "#C53030" : "#666", marginBottom: 14, background: bkNote.startsWith("Erreur") ? "#FDECEC" : "#F6F6FA", border: "1px solid " + (bkNote.startsWith("Erreur") ? "#F5C6C6" : "#E8E8F0"), borderRadius: 8, padding: "9px 12px" } }, bkNote),
       // Liste des groupes
+      bkVue === "comparaison" && !(bkLoading && bkChecks.length === 0) ? rendreComparaison() :
       bkLoading && bkChecks.length === 0
         ? React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Chargement des statuts...")
         : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
@@ -10779,7 +10874,6 @@ const nav = isAdmin
     const ouiNon = (v) => v === "Oui" ? { c: "#2F855A", bg: "#E6F6EA" } : v === "Non" ? { c: "#C53030", bg: "#FDE2E2" } : v === "N/A" ? { c: "#718096", bg: "#EEF0F4" } : { c: "#999", bg: "#FFFBEB" };
     // ----- Licence Veeam (bandeau sous chaque serveur Veeam) -----
     const invEstVeeam = (r) => /veeam/i.test((r.nom || "") + " " + (r.role || ""));
-    const invJoursLicence = (d) => Math.round((new Date(d + "T12:00:00") - new Date(new Date().toISOString().slice(0, 10) + "T12:00:00")) / 86400000);
     const invMajLicence = async (r, champs) => {
       setInvRows(prev => prev.map(x => x.id === r.id ? { ...x, ...champs } : x));
       const { error } = await sb.from("inventaire_serveurs").update(champs).eq("id", r.id);
@@ -10826,7 +10920,6 @@ const nav = isAdmin
       if (r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)) p.push("antivirus ?");
       if (r.antivirus === "Oui" && r.av_a_jour === "Non") p.push("AV pas à jour");
       if (invEstVeeam(r) && r.licence_fin && new Date(r.licence_fin + "T23:59:59") < new Date()) p.push("licence Veeam expirée");
-      else if (invEstVeeam(r) && r.licence_fin && invJoursLicence(r.licence_fin) <= 30) p.push("licence Veeam : " + invJoursLicence(r.licence_fin) + " j restants");
       return p;
     };
     content = React.createElement('div', null,
@@ -10849,7 +10942,7 @@ const nav = isAdmin
         const ETATS = {
           vide:     { l: "Non renseigné", c: "#718096", bg: "#EEF0F4", rang: 4 },
           corriger: { l: "À corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
-          echeance: { l: "Échéance proche", c: "#C05621", bg: "#FFF3E8", rang: 2 },
+          echeance: { l: "Care Pack < 90 j", c: "#C05621", bg: "#FFF3E8", rang: 2 },
           ok:       { l: "OK", c: "#2F855A", bg: "#E6F6EA", rang: 3 },
         };
         const lignes = hotels.map(h => {
@@ -10859,16 +10952,10 @@ const nav = isAdmin
           const cps = rs.map(invCarePack);
           const expires = cps.filter(c => c.l === "Expiré").length, bientot = cps.filter(c => c.l === "Moins de 90 j").length;
           const sansAv = rs.filter(r => r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)).length;
-          // Licences Veeam : jours restants sur les serveurs Veeam qui ont une date de fin
-          const lics = rs.filter(r => invEstVeeam(r) && r.licence_fin).map(r => ({ j: invJoursLicence(r.licence_fin), alerte: !!r.licence_alerte }));
-          const licExp = lics.filter(l => l.j < 0).length;
-          const licProche = lics.filter(l => l.j >= 0 && l.j <= 60);
-          const licJ = licProche.length ? Math.min(...licProche.map(l => l.j)) : null;
-          const licSansAlerte = lics.filter(l => !l.alerte).length;
-          const etat = !rs.length ? "vide" : (pasAJour || expires || sansAv || licExp) ? "corriger" : (bientot || licProche.length) ? "echeance" : "ok";
+          const etat = !rs.length ? "vide" : (pasAJour || expires || sansAv) ? "corriger" : bientot ? "echeance" : "ok";
           const dates = rs.map(r => r.date_controle).filter(Boolean).sort();
           const note = (invSynth.notes.find(n => n.hotel_id === h.id) || {}).notes || "";
-          return { h, n: rs.length, phys, vm, pasAJour, expires, bientot, sansAv, licExp, licJ, licSansAlerte, etat, dernier: dates.pop() || null, note };
+          return { h, n: rs.length, phys, vm, pasAJour, expires, bientot, sansAv, etat, dernier: dates.pop() || null, note };
         }).sort((a, b) => ETATS[a.etat].rang - ETATS[b.etat].rang || String(a.h.name).localeCompare(String(b.h.name)));
         const compte = (k) => lignes.filter(x => x.etat === k).length;
         const visibles = invFiltre === "tous" ? lignes : lignes.filter(x => x.etat === invFiltre);
@@ -10880,32 +10967,9 @@ const nav = isAdmin
           React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
             chip("tous", "Tous", lignes.length, "#1a1a3e", "#F1F1F6"),
             chip("corriger", "À corriger", compte("corriger"), ETATS.corriger.c, ETATS.corriger.bg),
-            chip("echeance", "Échéance proche", compte("echeance"), ETATS.echeance.c, ETATS.echeance.bg),
+            chip("echeance", "Care Pack < 90 j", compte("echeance"), ETATS.echeance.c, ETATS.echeance.bg),
             chip("ok", "OK", compte("ok"), ETATS.ok.c, ETATS.ok.bg),
             chip("vide", "Non renseignés", compte("vide"), ETATS.vide.c, ETATS.vide.bg)),
-          !invSynth.loading && (() => {
-            const urg = [];
-            invSynth.rows.forEach(r => {
-              if (!invEstVeeam(r) || !r.licence_fin) return;
-              const j = invJoursLicence(r.licence_fin);
-              if (j > 60) return;
-              const h = hotels.find(x => x.id === r.hotel_id);
-              urg.push({ j, hid: r.hotel_id, nom: h ? h.name : "?", fin: r.licence_fin, alerte: !!r.licence_alerte });
-            });
-            if (!urg.length) return null;
-            urg.sort((a, b) => a.j - b.j);
-            const rouge = urg.some(u => u.j <= 15);
-            return React.createElement('div', { style: { background: rouge ? "#FDECEC" : "#FFF7ED", border: "1px solid " + (rouge ? "#F5B5B5" : "#F6CFA4"), borderRadius: 10, padding: "10px 14px", marginBottom: 12 } },
-              React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: rouge ? "#C53030" : "#C05621", marginBottom: 6 } }, "🔑 Licences Veeam à renouveler (" + urg.length + ")"),
-              React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                urg.map(u => {
-                  const c = u.j < 0 || u.j <= 15 ? "#C53030" : "#C05621", bg = u.j < 0 || u.j <= 15 ? "#FDE2E2" : "#FFF3E8";
-                  const quand = u.j < 0 ? "expirée depuis " + (-u.j) + " j" : u.j === 0 ? "expire aujourd'hui" : "J-" + u.j;
-                  return React.createElement('button', { key: u.hid + u.fin, onClick: () => invChoisirHotel(u.hid), title: "Fin : " + fmtD(u.fin) + (u.alerte ? " · alerte email active" : " · alerte email désactivée"),
-                    style: { fontSize: 12, fontWeight: 700, color: c, background: bg, border: "1px solid " + c + "55", padding: "3px 10px", borderRadius: 20, cursor: "pointer" } },
-                    u.nom + " — " + quand + (u.alerte ? "" : " 🔕"));
-                })));
-          })(),
           invSynth.loading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…"),
           !invSynth.loading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
             !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
@@ -10918,9 +10982,6 @@ const nav = isAdmin
               if (x.expires) pts.push(badge(x.expires + " Care Pack expiré" + (x.expires > 1 ? "s" : ""), "#C53030", "#FDE2E2"));
               if (x.bientot) pts.push(badge(x.bientot + " Care Pack < 90 j", "#C05621", "#FFF3E8"));
               if (x.sansAv) pts.push(badge(x.sansAv + " sans antivirus", "#6B46C1", "#F3EEFC"));
-              if (x.licExp) pts.push(badge("🔑 Licence Veeam expirée", "#C53030", "#FDE2E2"));
-              if (x.licJ !== null) pts.push(badge("🔑 Licence Veeam " + (x.licJ === 0 ? "expire aujourd'hui" : "J-" + x.licJ), x.licJ <= 15 ? "#C53030" : "#C05621", x.licJ <= 15 ? "#FDE2E2" : "#FFF3E8"));
-              if (x.licSansAlerte) pts.push(badge("🔕 Alerte licence désactivée", "#718096", "#EEF0F4"));
               return React.createElement('div', { key: x.h.id, onClick: () => invChoisirHotel(x.h.id),
                 style: { display: "grid", gridTemplateColumns: cols, gap: isMobile ? 6 : 12, padding: "10px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", cursor: "pointer", borderLeft: "4px solid " + e.c },
                 onMouseEnter: ev => ev.currentTarget.style.background = "#FAFAFD", onMouseLeave: ev => ev.currentTarget.style.background = "white" },
