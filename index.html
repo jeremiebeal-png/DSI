@@ -4386,7 +4386,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const rows = [];
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien").range(from, from + 999);
+        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,nom,role,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien,licence_fin,licence_alerte").range(from, from + 999);
         if (error) throw error;
         (data || []).forEach(x => rows.push(x));
         if (!data || data.length < 1000) break;
@@ -10779,6 +10779,7 @@ const nav = isAdmin
     const ouiNon = (v) => v === "Oui" ? { c: "#2F855A", bg: "#E6F6EA" } : v === "Non" ? { c: "#C53030", bg: "#FDE2E2" } : v === "N/A" ? { c: "#718096", bg: "#EEF0F4" } : { c: "#999", bg: "#FFFBEB" };
     // ----- Licence Veeam (bandeau sous chaque serveur Veeam) -----
     const invEstVeeam = (r) => /veeam/i.test((r.nom || "") + " " + (r.role || ""));
+    const invJoursLicence = (d) => Math.round((new Date(d + "T12:00:00") - new Date(new Date().toISOString().slice(0, 10) + "T12:00:00")) / 86400000);
     const invMajLicence = async (r, champs) => {
       setInvRows(prev => prev.map(x => x.id === r.id ? { ...x, ...champs } : x));
       const { error } = await sb.from("inventaire_serveurs").update(champs).eq("id", r.id);
@@ -10825,6 +10826,7 @@ const nav = isAdmin
       if (r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)) p.push("antivirus ?");
       if (r.antivirus === "Oui" && r.av_a_jour === "Non") p.push("AV pas à jour");
       if (invEstVeeam(r) && r.licence_fin && new Date(r.licence_fin + "T23:59:59") < new Date()) p.push("licence Veeam expirée");
+      else if (invEstVeeam(r) && r.licence_fin && invJoursLicence(r.licence_fin) <= 30) p.push("licence Veeam : " + invJoursLicence(r.licence_fin) + " j restants");
       return p;
     };
     content = React.createElement('div', null,
@@ -10847,7 +10849,7 @@ const nav = isAdmin
         const ETATS = {
           vide:     { l: "Non renseigné", c: "#718096", bg: "#EEF0F4", rang: 4 },
           corriger: { l: "À corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
-          echeance: { l: "Care Pack < 90 j", c: "#C05621", bg: "#FFF3E8", rang: 2 },
+          echeance: { l: "Échéance proche", c: "#C05621", bg: "#FFF3E8", rang: 2 },
           ok:       { l: "OK", c: "#2F855A", bg: "#E6F6EA", rang: 3 },
         };
         const lignes = hotels.map(h => {
@@ -10857,10 +10859,16 @@ const nav = isAdmin
           const cps = rs.map(invCarePack);
           const expires = cps.filter(c => c.l === "Expiré").length, bientot = cps.filter(c => c.l === "Moins de 90 j").length;
           const sansAv = rs.filter(r => r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)).length;
-          const etat = !rs.length ? "vide" : (pasAJour || expires || sansAv) ? "corriger" : bientot ? "echeance" : "ok";
+          // Licences Veeam : jours restants sur les serveurs Veeam qui ont une date de fin
+          const lics = rs.filter(r => invEstVeeam(r) && r.licence_fin).map(r => ({ j: invJoursLicence(r.licence_fin), alerte: !!r.licence_alerte }));
+          const licExp = lics.filter(l => l.j < 0).length;
+          const licProche = lics.filter(l => l.j >= 0 && l.j <= 60);
+          const licJ = licProche.length ? Math.min(...licProche.map(l => l.j)) : null;
+          const licSansAlerte = lics.filter(l => !l.alerte).length;
+          const etat = !rs.length ? "vide" : (pasAJour || expires || sansAv || licExp) ? "corriger" : (bientot || licProche.length) ? "echeance" : "ok";
           const dates = rs.map(r => r.date_controle).filter(Boolean).sort();
           const note = (invSynth.notes.find(n => n.hotel_id === h.id) || {}).notes || "";
-          return { h, n: rs.length, phys, vm, pasAJour, expires, bientot, sansAv, etat, dernier: dates.pop() || null, note };
+          return { h, n: rs.length, phys, vm, pasAJour, expires, bientot, sansAv, licExp, licJ, licSansAlerte, etat, dernier: dates.pop() || null, note };
         }).sort((a, b) => ETATS[a.etat].rang - ETATS[b.etat].rang || String(a.h.name).localeCompare(String(b.h.name)));
         const compte = (k) => lignes.filter(x => x.etat === k).length;
         const visibles = invFiltre === "tous" ? lignes : lignes.filter(x => x.etat === invFiltre);
@@ -10872,9 +10880,32 @@ const nav = isAdmin
           React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
             chip("tous", "Tous", lignes.length, "#1a1a3e", "#F1F1F6"),
             chip("corriger", "À corriger", compte("corriger"), ETATS.corriger.c, ETATS.corriger.bg),
-            chip("echeance", "Care Pack < 90 j", compte("echeance"), ETATS.echeance.c, ETATS.echeance.bg),
+            chip("echeance", "Échéance proche", compte("echeance"), ETATS.echeance.c, ETATS.echeance.bg),
             chip("ok", "OK", compte("ok"), ETATS.ok.c, ETATS.ok.bg),
             chip("vide", "Non renseignés", compte("vide"), ETATS.vide.c, ETATS.vide.bg)),
+          !invSynth.loading && (() => {
+            const urg = [];
+            invSynth.rows.forEach(r => {
+              if (!invEstVeeam(r) || !r.licence_fin) return;
+              const j = invJoursLicence(r.licence_fin);
+              if (j > 60) return;
+              const h = hotels.find(x => x.id === r.hotel_id);
+              urg.push({ j, hid: r.hotel_id, nom: h ? h.name : "?", fin: r.licence_fin, alerte: !!r.licence_alerte });
+            });
+            if (!urg.length) return null;
+            urg.sort((a, b) => a.j - b.j);
+            const rouge = urg.some(u => u.j <= 15);
+            return React.createElement('div', { style: { background: rouge ? "#FDECEC" : "#FFF7ED", border: "1px solid " + (rouge ? "#F5B5B5" : "#F6CFA4"), borderRadius: 10, padding: "10px 14px", marginBottom: 12 } },
+              React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: rouge ? "#C53030" : "#C05621", marginBottom: 6 } }, "🔑 Licences Veeam à renouveler (" + urg.length + ")"),
+              React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                urg.map(u => {
+                  const c = u.j < 0 || u.j <= 15 ? "#C53030" : "#C05621", bg = u.j < 0 || u.j <= 15 ? "#FDE2E2" : "#FFF3E8";
+                  const quand = u.j < 0 ? "expirée depuis " + (-u.j) + " j" : u.j === 0 ? "expire aujourd'hui" : "J-" + u.j;
+                  return React.createElement('button', { key: u.hid + u.fin, onClick: () => invChoisirHotel(u.hid), title: "Fin : " + fmtD(u.fin) + (u.alerte ? " · alerte email active" : " · alerte email désactivée"),
+                    style: { fontSize: 12, fontWeight: 700, color: c, background: bg, border: "1px solid " + c + "55", padding: "3px 10px", borderRadius: 20, cursor: "pointer" } },
+                    u.nom + " — " + quand + (u.alerte ? "" : " 🔕"));
+                })));
+          })(),
           invSynth.loading && React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…"),
           !invSynth.loading && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "hidden" } },
             !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "9px 14px", background: SB, color: "white", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" } },
@@ -10887,6 +10918,9 @@ const nav = isAdmin
               if (x.expires) pts.push(badge(x.expires + " Care Pack expiré" + (x.expires > 1 ? "s" : ""), "#C53030", "#FDE2E2"));
               if (x.bientot) pts.push(badge(x.bientot + " Care Pack < 90 j", "#C05621", "#FFF3E8"));
               if (x.sansAv) pts.push(badge(x.sansAv + " sans antivirus", "#6B46C1", "#F3EEFC"));
+              if (x.licExp) pts.push(badge("🔑 Licence Veeam expirée", "#C53030", "#FDE2E2"));
+              if (x.licJ !== null) pts.push(badge("🔑 Licence Veeam " + (x.licJ === 0 ? "expire aujourd'hui" : "J-" + x.licJ), x.licJ <= 15 ? "#C53030" : "#C05621", x.licJ <= 15 ? "#FDE2E2" : "#FFF3E8"));
+              if (x.licSansAlerte) pts.push(badge("🔕 Alerte licence désactivée", "#718096", "#EEF0F4"));
               return React.createElement('div', { key: x.h.id, onClick: () => invChoisirHotel(x.h.id),
                 style: { display: "grid", gridTemplateColumns: cols, gap: isMobile ? 6 : 12, padding: "10px 14px", borderTop: "1px solid #F0F0F5", alignItems: "center", cursor: "pointer", borderLeft: "4px solid " + e.c },
                 onMouseEnter: ev => ev.currentTarget.style.background = "#FAFAFD", onMouseLeave: ev => ev.currentTarget.style.background = "white" },
