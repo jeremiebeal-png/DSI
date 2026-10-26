@@ -539,7 +539,7 @@ function videoEmbedUrl(url) {
 
 // ====== RAPPORT DE SUIVI DES TICKETS — dessin du PDF (jsPDF) ======
 // Fonction autonome : reçoit les données déjà calculées et dessine le PDF.
-// opts = { hotelName, logo: {data,w,h}|null, periode, rows, stats, genereLe }
+// opts = { hotelName, logo: {data,w?,h?,format?}|null, periode, rows, stats, genereLe?, timeZone? }
 // rows[i] = { reference, subject, status, created_at, closed_at, nbMessages, delaiH }
 function fmtDelaiHM(h) {
   if (h === null || h === undefined || isNaN(h)) return "—";
@@ -557,7 +557,8 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   const fill = (c) => doc.setFillColor(c[0], c[1], c[2]);
   const ink = (c) => doc.setTextColor(c[0], c[1], c[2]);
   const pale = (c, a) => [Math.round(255 - (255 - c[0]) * a), Math.round(255 - (255 - c[1]) * a), Math.round(255 - (255 - c[2]) * a)];
-  const fmtD = (d) => { try { const x = new Date(d); return x.toLocaleDateString("fr-FR") + " " + x.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); } catch (e) { return "—"; } };
+  const tzo = opts.timeZone ? { timeZone: opts.timeZone } : {};
+  const fmtD = (d) => { try { const x = new Date(d); return x.toLocaleDateString("fr-FR", tzo) + " " + x.toLocaleTimeString("fr-FR", { ...tzo, hour: "2-digit", minute: "2-digit" }); } catch (e) { return "—"; } };
   const couleurDelai = (h) => h === null || h === undefined ? GRIS : h < 1 ? VERT : h < 4 ? ORANGE : ROUGE;
   const rows = opts.rows || [], st = opts.stats || {};
   // jsPDF (police standard) ne sait pas afficher les emojis : on les retire des titres
@@ -578,11 +579,13 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   const boxW = 58, boxH = 24, boxX = pageW - mR - boxW, boxY = 4;
   doc.setFillColor(255, 255, 255); doc.roundedRect(boxX, boxY, boxW, boxH, 2.5, 2.5, "F");
   let logoOk = false;
-  if (opts.logo && opts.logo.data && opts.logo.w && opts.logo.h) {
+  if (opts.logo && opts.logo.data) {
     try {
-      const maxW = boxW - 8, maxH = boxH - 6, r = opts.logo.w / opts.logo.h;
+      let lw = opts.logo.w, lh = opts.logo.h;
+      if (!lw || !lh) { const pr = doc.getImageProperties(opts.logo.data); lw = pr.width; lh = pr.height; }
+      const maxW = boxW - 8, maxH = boxH - 6, r = lw / lh;
       let w = maxW, h = w / r; if (h > maxH) { h = maxH; w = h * r; }
-      doc.addImage(opts.logo.data, "PNG", boxX + (boxW - w) / 2, boxY + (boxH - h) / 2, w, h);
+      doc.addImage(opts.logo.data, opts.logo.format || "PNG", boxX + (boxW - w) / 2, boxY + (boxH - h) / 2, w, h);
       logoOk = true;
     } catch (e) {}
   }
@@ -3826,14 +3829,38 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     doc.save("Rapport_tickets_" + nomHotel + "_" + (rapTkDu || "") + "_" + (rapTkAu || "") + ".pdf");
   };
 
-  // ---- Envoi du rapport au superviseur du client (email + PDF joint) ----
-  // Destinataire = l'email de compte de l'hôtel (account_email), qui est celui
-  // du superviseur. On peut aussi retomber sur standard_email si besoin.
-  const envoyerRapportTicketsEmail = async () => {
+  // ---- Envoi du rapport par email (PDF joint) : superviseur, contacts de l'hôtel et adresses externes ----
+  const [rtkEnvoiModal, setRtkEnvoiModal] = useState(null); // { choix: [{email, label, coche}], manuel, message }
+  const emailValide = (a) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(a || "").trim());
+  const contactsHotelRapport = (hotel) => {
+    if (!hotel) return [];
+    const liste = [
+      [hotel.account_email, "Superviseur"], [hotel.gm_email, "Directeur général"], [hotel.rh_email, "RH"],
+      [hotel.tech_email, "Technique"], [hotel.standard_email, "Compte standard"],
+    ];
+    const vus = new Set(), out = [];
+    liste.forEach(([e, l]) => { const a = nettoyerEmail(e || "").trim().toLowerCase(); if (a && emailValide(a) && !vus.has(a)) { vus.add(a); out.push({ email: a, label: l }); } });
+    return out;
+  };
+  const ouvrirEnvoiRapport = () => {
     const hotel = hotels.find(h => h.id === rapTkHotel);
     if (!hotel) { setRapTkNote("Veuillez d'abord choisir un établissement et générer le rapport."); return; }
-    const dest = nettoyerEmail((hotel.account_email || hotel.standard_email || "")).trim();
-    if (!dest) { setRapTkNote("⚠️ Aucun email de compte pour cet établissement : impossible d'envoyer."); return; }
+    const contacts = contactsHotelRapport(hotel);
+    setRtkEnvoiModal({ choix: contacts.map((c, i) => ({ ...c, coche: i === 0 })), manuel: "", message: "" });
+  };
+  const destinatairesEnvoi = (m) => {
+    const set = new Set((m.choix || []).filter(c => c.coche).map(c => c.email));
+    String(m.manuel || "").split(/[\s,;]+/).map(a => nettoyerEmail(a).trim().toLowerCase()).filter(Boolean).forEach(a => set.add(a));
+    return Array.from(set);
+  };
+  const envoyerRapportTicketsEmail = async (destList, messagePerso) => {
+    const hotel = hotels.find(h => h.id === rapTkHotel);
+    if (!hotel) { setRapTkNote("Veuillez d'abord choisir un établissement et générer le rapport."); return; }
+    const destinataires = (destList || []).filter(Boolean);
+    const invalides = destinataires.filter(a => !emailValide(a));
+    if (!destinataires.length) { setRapTkNote("⚠️ Choisissez au moins un destinataire."); return; }
+    if (invalides.length) { setRapTkNote("⚠️ Adresse(s) invalide(s) : " + invalides.join(", ")); return; }
+    const dest = destinataires.join(",");
     setRapTkEnvoi(true);
     setRapTkNote("Envoi en cours…");
     try {
@@ -3844,10 +3871,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const bodyText =
         "Bonjour,\n\n" +
         "Veuillez trouver ci-joint le rapport de suivi de vos tickets de support pour la période du " + periode + ".\n\n" +
-        "Synthèse : " + rapTkStats.total + " ticket(s) au total, dont " + rapTkStats.ouverts + " ouvert(s) et " + rapTkStats.fermes + " fermé(s).\n\n" +
-        "Ce rapport est également consultable à tout moment depuis votre espace, rubrique « Rapport Tickets ».\n\n" +
+        "Synthèse : " + rapTkStats.total + " ticket(s) au total, dont " + rapTkStats.ouverts + " ouvert(s) et " + rapTkStats.fermes + " fermé(s)" +
+        (rapTkStats.delaiMoyen != null ? " — délai moyen de 1re réponse : " + fmtDelai(rapTkStats.delaiMoyen) : "") + ".\n\n" +
         "Nous restons à votre disposition pour toute question.";
-      const mail = buildSignedEmail(bodyText);
+      const bodyFinal = (messagePerso && messagePerso.trim()) ? bodyText.replace("Bonjour,\n\n", "Bonjour,\n\n" + messagePerso.trim() + "\n\n") : bodyText;
+      const mail = buildSignedEmail(bodyFinal);
       const nomFichier = "Rapport_tickets_" + hotel.name.replace(/[^\w]+/g, "_") + ".pdf";
       const res = await fetchEmailApi({
         method: "POST",
@@ -3862,7 +3890,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const d = await res.text().catch(() => "");
         setRapTkNote("❌ L'email n'a pas pu partir (" + res.status + (d ? " — " + d.slice(0, 160) : "") + ").");
       } else {
-        setRapTkNote("✅ Rapport envoyé à " + dest);
+        setRapTkNote("✅ Rapport envoyé à " + destinataires.join(", "));
+        setRtkEnvoiModal(null);
       }
     } catch (e) {
       setRapTkNote("❌ Échec de l'envoi (" + (e.message || e) + ").");
@@ -11926,6 +11955,40 @@ const nav = isAdmin
   }
 
   if (page === "rapport-tickets" && isAdmin) {
+    const nomH = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "?"; };
+    const btnS = { padding: "5px 10px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 6, fontSize: 11.5, cursor: "pointer", whiteSpace: "nowrap" };
+    const inpS = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
+    const lblS = { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", margin: "10px 0 4px" };
+    // Fenêtre d'envoi immédiat
+    var renderFenetresRapport = () => React.createElement(React.Fragment, null,
+      rtkEnvoiModal && (() => {
+        const m = rtkEnvoiModal;
+        const hotel = hotels.find(h => h.id === rapTkHotel);
+        const dest = destinatairesEnvoi(m);
+        return React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !rapTkEnvoi) setRtkEnvoiModal(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 } },
+          React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 520, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto" } },
+            React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, "✉️ Envoyer le rapport par email"),
+            React.createElement('div', { style: { fontSize: 12, color: "#888", margin: "3px 0 12px" } }, (hotel ? hotel.name : "") + " — " + (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui") + " · PDF joint"),
+            React.createElement('div', { style: lblS }, "Contacts de l'établissement"),
+            m.choix.length === 0 && React.createElement('div', { style: { fontSize: 12, color: "#999" } }, "Aucun email enregistré sur la fiche de l'établissement."),
+            m.choix.map((c, i) => React.createElement('label', { key: c.email, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 2px", fontSize: 13, cursor: "pointer" } },
+              React.createElement('input', { type: "checkbox", checked: c.coche, onChange: e => setRtkEnvoiModal({ ...m, choix: m.choix.map((x, j) => j === i ? { ...x, coche: e.target.checked } : x) }) }),
+              React.createElement('span', { style: { color: "#1a1a3e" } }, c.email),
+              React.createElement('span', { style: { fontSize: 11, color: "#888", background: "#F0F0F8", padding: "1px 7px", borderRadius: 10 } }, c.label))),
+            React.createElement('div', { style: lblS }, "Autres destinataires (externes)"),
+            React.createElement('input', { value: m.manuel, onChange: e => setRtkEnvoiModal({ ...m, manuel: e.target.value }), list: "rtk-adresses", placeholder: "ex. direction@groupe.com, comptable@cabinet.fr", style: inpS }),
+            React.createElement('datalist', { id: "rtk-adresses" }, adressesConnues().map(a => React.createElement('option', { key: a, value: a }))),
+            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 3 } }, "Séparez plusieurs adresses par une virgule."),
+            React.createElement('div', { style: lblS }, "Message (facultatif)"),
+            React.createElement('textarea', { value: m.message, onChange: e => setRtkEnvoiModal({ ...m, message: e.target.value }), rows: 3, placeholder: "Ajouté en tête de l'email", style: { ...inpS, resize: "vertical" } }),
+            React.createElement('div', { style: { fontSize: 12, color: dest.length ? "#2B6CB0" : "#C53030", marginTop: 12 } }, dest.length ? "Sera envoyé à : " + dest.join(", ") : "Aucun destinataire sélectionné."),
+            rapTkNote && /^(⚠️|❌)/.test(rapTkNote) && React.createElement('div', { style: { fontSize: 12, color: "#C53030", marginTop: 6 } }, rapTkNote),
+            React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, flexWrap: "wrap" } },
+              React.createElement('button', { onClick: () => setRtkEnvoiModal(null), disabled: rapTkEnvoi, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+              React.createElement('button', { onClick: () => envoyerRapportTicketsEmail(dest, m.message), disabled: rapTkEnvoi || !dest.length, style: { padding: "8px 18px", background: "#0F0F24", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: (rapTkEnvoi || !dest.length) ? 0.6 : 1 } }, rapTkEnvoi ? "Envoi…" : "Envoyer"))
+          ));
+      })()
+    );
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
         "Générez un rapport de suivi des tickets par établissement et par période. Vous pouvez l'exporter (PDF / Excel) ou l'envoyer au superviseur du client, qui pourra le consulter depuis son espace."
@@ -11952,10 +12015,11 @@ const nav = isAdmin
       rapTkNote && React.createElement('div', { style: { fontSize: 12, color: rapTkNote.startsWith("Erreur") ? "#C53030" : "#666", marginBottom: 14 } }, rapTkNote),
       // Envoi au superviseur (visible seulement après génération, si hôtel choisi)
       rapTkGenere && rapTkRows.length > 0 && React.createElement('div', { style: { background: "#FBFBFD", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px", marginBottom: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
-        React.createElement('span', { style: { fontSize: 12, color: "#555", flex: "1 1 auto" } }, "Le superviseur de cet établissement peut déjà consulter ce rapport depuis son espace (rubrique « Rapport Tickets »). Vous pouvez aussi le lui envoyer par email avec le PDF joint."),
-        React.createElement('button', { onClick: () => envoyerRapportTicketsEmail(), disabled: rapTkEnvoi, style: { padding: "8px 15px", background: "#0F0F24", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: rapTkEnvoi ? 0.6 : 1 } }, rapTkEnvoi ? "Envoi..." : "✉️ Envoyer au client")
+        React.createElement('span', { style: { fontSize: 12, color: "#555", flex: "1 1 auto" } }, "Le superviseur de cet établissement peut déjà consulter ce rapport depuis son espace (rubrique « Suivi des tickets »). Vous pouvez aussi l'envoyer par email avec le PDF joint, à lui et à d'autres destinataires (adresses externes acceptées)."),
+        React.createElement('button', { onClick: ouvrirEnvoiRapport, disabled: rapTkEnvoi, style: { padding: "8px 15px", background: "#0F0F24", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: rapTkEnvoi ? 0.6 : 1 } }, rapTkEnvoi ? "Envoi..." : "✉️ Envoyer au client")
       ),
-      renderRapportTicketsTable()
+      renderRapportTicketsTable(),
+      renderFenetresRapport()
     );
   }
 
