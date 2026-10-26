@@ -537,6 +537,161 @@ function videoEmbedUrl(url) {
   return null;
 }
 
+// ====== RAPPORT DE SUIVI DES TICKETS — dessin du PDF (jsPDF) ======
+// Fonction autonome : reçoit les données déjà calculées et dessine le PDF.
+// opts = { hotelName, logo: {data,w,h}|null, periode, rows, stats, genereLe }
+// rows[i] = { reference, subject, status, created_at, closed_at, nbMessages, delaiH }
+function fmtDelaiHM(h) {
+  if (h === null || h === undefined || isNaN(h)) return "—";
+  const totalMin = Math.max(0, Math.round(h * 60));
+  const j = Math.floor(totalMin / 1440);
+  const hh = Math.floor((totalMin % 1440) / 60);
+  const mm = String(totalMin % 60).padStart(2, "0");
+  return (j ? j + " j " : "") + hh + " h " + mm + " min";
+}
+function dessinerRapportTicketsPdf(jsPDF, opts) {
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+  const pageW = 297, pageH = 210, mL = 12, mR = 12, W = pageW - mL - mR;
+  const NAVY = [15, 15, 36], GOLD = [201, 168, 76], GOLD2 = [168, 135, 46];
+  const BLEU = [43, 108, 176], VERT = [47, 133, 90], ORANGE = [221, 107, 32], ROUGE = [197, 48, 48], GRIS = [113, 128, 150];
+  const fill = (c) => doc.setFillColor(c[0], c[1], c[2]);
+  const ink = (c) => doc.setTextColor(c[0], c[1], c[2]);
+  const pale = (c, a) => [Math.round(255 - (255 - c[0]) * a), Math.round(255 - (255 - c[1]) * a), Math.round(255 - (255 - c[2]) * a)];
+  const fmtD = (d) => { try { const x = new Date(d); return x.toLocaleDateString("fr-FR") + " " + x.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); } catch (e) { return "—"; } };
+  const couleurDelai = (h) => h === null || h === undefined ? GRIS : h < 1 ? VERT : h < 4 ? ORANGE : ROUGE;
+  const rows = opts.rows || [], st = opts.stats || {};
+  // jsPDF (police standard) ne sait pas afficher les emojis : on les retire des titres
+  const propre = (t) => String(t || "").replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, "-").replace(/[^\u0000-\u00FF\u2022\u20AC]/g, "").replace(/\s+/g, " ").trim();
+  let y = 0;
+
+  // ---- En-tête : bandeau bleu nuit + liseré or ----
+  fill(NAVY); doc.rect(0, 0, pageW, 32, "F");
+  fill(GOLD); doc.rect(0, 32, pageW, 1.2, "F");
+  ink(GOLD); doc.setFont("helvetica", "bold"); doc.setFontSize(18);
+  doc.text("DSI HOTEL", mL, 13);
+  doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "normal"); doc.setFontSize(11);
+  doc.text("Rapport de suivi des tickets", mL, 20.5);
+  doc.setFontSize(7.5); doc.setTextColor(185, 185, 205);
+  doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23  •  support@dsihotel.com", mL, 26.5);
+
+  // Logo de l'hôtel dans un cartouche blanc (ou nom de l'hôtel à défaut)
+  const boxW = 58, boxH = 24, boxX = pageW - mR - boxW, boxY = 4;
+  doc.setFillColor(255, 255, 255); doc.roundedRect(boxX, boxY, boxW, boxH, 2.5, 2.5, "F");
+  let logoOk = false;
+  if (opts.logo && opts.logo.data && opts.logo.w && opts.logo.h) {
+    try {
+      const maxW = boxW - 8, maxH = boxH - 6, r = opts.logo.w / opts.logo.h;
+      let w = maxW, h = w / r; if (h > maxH) { h = maxH; w = h * r; }
+      doc.addImage(opts.logo.data, "PNG", boxX + (boxW - w) / 2, boxY + (boxH - h) / 2, w, h);
+      logoOk = true;
+    } catch (e) {}
+  }
+  if (!logoOk) {
+    ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    const l = doc.splitTextToSize(opts.hotelName || "—", boxW - 6).slice(0, 2);
+    doc.text(l, boxX + boxW / 2, boxY + boxH / 2 + (l.length > 1 ? -1.2 : 1.5), { align: "center" });
+  }
+
+  // ---- Établissement + période ----
+  y = 43;
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+  doc.text(opts.hotelName || "—", mL, y);
+  const per = "Période : " + (opts.periode || "—");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+  const pw = doc.getTextWidth(per) + 10;
+  fill(pale(GOLD, 0.18)); doc.roundedRect(pageW - mR - pw, y - 5.5, pw, 8, 4, 4, "F");
+  ink(GOLD2); doc.text(per, pageW - mR - pw / 2, y - 0.3, { align: "center" });
+
+  // ---- Tuiles chiffres clés ----
+  y = 50;
+  const tuiles = [
+    { l: "TICKETS", v: String(st.total || 0), c: NAVY },
+    { l: "OUVERTS", v: String(st.ouverts || 0), c: BLEU },
+    { l: "FERMÉS", v: String(st.fermes || 0), c: VERT },
+    { l: "DÉLAI MOYEN 1RE RÉPONSE", v: fmtDelaiHM(st.delaiMoyen), c: couleurDelai(st.delaiMoyen) },
+  ];
+  const gap = 5, tw = (W - gap * 3) / 4, th = 19;
+  tuiles.forEach((t, i) => {
+    const x = mL + i * (tw + gap);
+    fill(pale(t.c, 0.09)); doc.roundedRect(x, y, tw, th, 2.5, 2.5, "F");
+    fill(t.c); doc.rect(x, y + 2.5, 1.6, th - 5, "F");
+    ink(t.c); doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+    doc.text(t.l, x + 6, y + 6.5);
+    doc.setFontSize(16); doc.text(t.v, x + 6, y + 15);
+  });
+  y += th + 7;
+
+  // ---- Tableau ----
+  const cols = [
+    { t: "Référence", w: 30 },
+    { t: "Titre", w: 111 },
+    { t: "Statut", w: 22 },
+    { t: "Ouvert le", w: 31 },
+    { t: "Fermé le", w: 31 },
+    { t: "Msg", w: 13, a: "center" },
+    { t: "Délai 1re rép.", w: 35 },
+  ];
+  const drawHeader = () => {
+    fill(NAVY); doc.roundedRect(mL, y, W, 8.5, 1.5, 1.5, "F");
+    ink(GOLD); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+    let x = mL;
+    cols.forEach(c => { doc.text(c.t, c.a === "center" ? x + c.w / 2 : x + 2.5, y + 5.6, c.a === "center" ? { align: "center" } : undefined); x += c.w; });
+    y += 10;
+  };
+  drawHeader();
+
+  if (!rows.length) {
+    ink(GRIS); doc.setFont("helvetica", "italic"); doc.setFontSize(10);
+    doc.text("Aucun ticket sur cette période.", mL + 2.5, y + 6);
+  }
+  const pill = (txt, c, x, yy) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+    const w = doc.getTextWidth(txt) + 6;
+    fill(pale(c, 0.16)); doc.roundedRect(x, yy - 3.6, w, 5.2, 2.6, 2.6, "F");
+    ink(c); doc.text(txt, x + 3, yy);
+  };
+  rows.forEach((r, i) => {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+    const titreLines = doc.splitTextToSize(propre(r.subject) || "(sans objet)", cols[1].w - 5).slice(0, 3);
+    const rowH = Math.max(8, titreLines.length * 3.8 + 4.2);
+    if (y + rowH > pageH - 14) { doc.addPage(); y = 14; drawHeader(); }
+    const ferme = r.status === "closed";
+    if (i % 2 === 0) { doc.setFillColor(247, 247, 251); doc.rect(mL, y, W, rowH, "F"); }
+    fill(ferme ? VERT : BLEU); doc.rect(mL, y, 1.2, rowH, "F");
+    const yt = y + 5.2;
+    let x = mL;
+    // Référence
+    ink(GOLD2); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+    doc.text(String(r.reference || "—"), x + 3, yt); x += cols[0].w;
+    // Titre
+    ink([30, 30, 46]); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+    doc.text(titreLines, x + 2.5, yt); x += cols[1].w;
+    // Statut
+    pill(ferme ? "Fermé" : "Ouvert", ferme ? VERT : BLEU, x + 2, yt); x += cols[2].w;
+    // Dates
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(80, 80, 95);
+    doc.text(r.created_at ? fmtD(r.created_at) : "—", x + 2.5, yt); x += cols[3].w;
+    doc.text(r.closed_at ? fmtD(r.closed_at) : "—", x + 2.5, yt); x += cols[4].w;
+    // Messages
+    doc.text(String(r.nbMessages == null ? "—" : r.nbMessages), x + cols[5].w / 2, yt, { align: "center" }); x += cols[5].w;
+    // Délai (vert < 1 h, orange < 4 h, rouge au-delà)
+    if (r.delaiH === null || r.delaiH === undefined) { ink(GRIS); doc.text("—", x + 2.5, yt); }
+    else pill(fmtDelaiHM(r.delaiH), couleurDelai(r.delaiH), x + 2, yt);
+    y += rowH;
+  });
+
+  // Légende + pied de page sur chaque page
+  const pages = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(226, 226, 234); doc.setLineWidth(0.3); doc.line(mL, pageH - 10, pageW - mR, pageH - 10);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(150, 150, 160);
+    doc.text("Document généré le " + (opts.genereLe || new Date().toLocaleString("fr-FR")) + " — DSI Hotel  •  Délai de 1re réponse : vert < 1 h, orange < 4 h, rouge au-delà", mL, pageH - 5.5);
+    doc.text("Page " + p + " / " + pages, pageW - mR, pageH - 5.5, { align: "right" });
+  }
+  return doc;
+}
+
 function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null); // { role, hotel_id }
@@ -3560,10 +3715,12 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       let q = sb.from("tickets").select(TICKET_COLS).eq("hotel_id", hid).order("created_at", { ascending: false });
       if (bDu) q = q.gte("created_at", bDu);
       if (bAu) q = q.lte("created_at", bAu);
-      const { data: tks, error } = await q;
+      const { data: tksBruts, error } = await q;
       if (error) throw error;
+      // Les alertes automatiques de sauvegarde (CheckCentral / Veeam, catégorie « Sauvegarde ») ne figurent pas dans le rapport client
+      const tks = (tksBruts || []).filter(t => !estAlerteBackup(t) && t.category !== "Sauvegarde");
 
-      const ids = (tks || []).map(t => t.id);
+      const ids = tks.map(t => t.id);
       // Récupère tous les messages de ces tickets pour compter et mesurer le délai.
       let msgsByTicket = {};
       if (ids.length > 0) {
@@ -3574,7 +3731,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         (msgs || []).forEach(m => { (msgsByTicket[m.ticket_id] = msgsByTicket[m.ticket_id] || []).push(m); });
       }
 
-      const rows = (tks || []).map(t => {
+      const rows = tks.map(t => {
         const ms = msgsByTicket[t.id] || [];
         const nbMessages = ms.length;
         // Délai de 1re réponse = écart entre création du ticket et 1er message "admin".
@@ -3616,14 +3773,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return { total, ouverts, fermes, delaiMoyen };
   })();
 
-  // Formatage lisible d'un délai en heures (ex. "3 h", "1 j 4 h").
-  const fmtDelai = (h) => {
-    if (h === null || h === undefined) return "—";
-    if (h < 24) return Math.round(h) + " h";
-    const j = Math.floor(h / 24);
-    const reste = Math.round(h % 24);
-    return j + " j" + (reste ? " " + reste + " h" : "");
-  };
+  // Formatage lisible d'un délai (ex. "4 h 12 min", "1 j 2 h 05 min").
+  const fmtDelai = fmtDelaiHM;
   const fmtDateHeureFr = (d) => { try { return new Date(d).toLocaleString("fr-FR"); } catch (e) { return d || "—"; } };
 
   // ---- Export CSV (ouvre directement dans Excel) ----
@@ -3635,9 +3786,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const s = String(v === null || v === undefined ? "" : v);
       return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const entete = ["Référence", "Titre", "Catégorie", "Priorité", "Statut", "Ouvert le", "Fermé le", "Nb messages", "Délai 1re réponse"];
+    const entete = ["Référence", "Titre", "Statut", "Ouvert le", "Fermé le", "Nb messages", "Délai 1re réponse"];
     const lignes = rapTkRows.map(r => [
-      r.reference, r.subject, r.category, r.priority,
+      r.reference, r.subject,
       r.status === "closed" ? "Fermé" : "Ouvert",
       fmtDateHeureFr(r.created_at),
       r.closed_at ? fmtDateHeureFr(r.closed_at) : "",
@@ -3655,107 +3806,22 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     URL.revokeObjectURL(url);
   };
 
-  // ---- Export PDF (jsPDF) — dessine le tableau manuellement ----
-  const buildRapportTicketsPdf = () => {
+  // ---- Export PDF (jsPDF) : logo de l'hôtel + mise en page couleur (dessinerRapportTicketsPdf) ----
+  const buildRapportTicketsPdf = async () => {
     const hotel = hotels.find(h => h.id === (rapTkHotel || myHotelId));
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
-    const pageW = 297, pageH = 210, mL = 12, mR = 12;
-    let y = 18;
-
-    // En-tête (même charte que le rapport d'intervention)
-    doc.setFillColor(15, 15, 36);
-    doc.rect(0, 0, pageW, 26, "F");
-    doc.setTextColor(201, 168, 76);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(17);
-    doc.text("DSI HOTEL", mL, 12);
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10);
-    doc.text("Rapport de suivi des tickets", mL, 20);
-    doc.setFontSize(8);
-    doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23", pageW - mR, 11, { align: "right" });
-    doc.text("support@dsihotel.com  •  www.dsihotel.com", pageW - mR, 17, { align: "right" });
-
-    y = 36;
-    doc.setTextColor(20, 20, 40);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-    doc.text("Établissement : " + (hotel ? hotel.name : "—"), mL, y);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    const periode = "Période : " + (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui");
-    doc.text(periode, pageW - mR, y, { align: "right" });
-    y += 7;
-
-    // Bandeau de synthèse
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(60, 60, 70);
-    doc.text(
-      "Total : " + rapTkStats.total + "   |   Ouverts : " + rapTkStats.ouverts +
-      "   |   Fermés : " + rapTkStats.fermes +
-      "   |   Délai moyen 1re réponse : " + fmtDelai(rapTkStats.delaiMoyen),
-      mL, y
-    );
-    y += 6;
-
-    // Tableau : colonnes (largeurs en mm, total ~ 273)
-    const cols = [
-      { t: "Référence", w: 24 },
-      { t: "Titre", w: 78 },
-      { t: "Catégorie", w: 30 },
-      { t: "Prio.", w: 18 },
-      { t: "Statut", w: 18 },
-      { t: "Ouvert le", w: 34 },
-      { t: "Fermé le", w: 34 },
-      { t: "Msg", w: 12 },
-      { t: "Délai 1re rép.", w: 25 },
-    ];
-    const drawHeader = () => {
-      doc.setFillColor(15, 15, 36);
-      doc.rect(mL, y, cols.reduce((a, c) => a + c.w, 0), 8, "F");
-      doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
-      let x = mL;
-      cols.forEach(c => { doc.text(c.t, x + 1.5, y + 5.3); x += c.w; });
-      y += 8;
-      doc.setTextColor(30, 30, 30); doc.setFont("helvetica", "normal");
-    };
-    drawHeader();
-
-    rapTkRows.forEach((r, i) => {
-      // Retour à la ligne du titre si trop long
-      const titreLines = doc.splitTextToSize(r.subject, cols[1].w - 3);
-      const rowH = Math.max(6, titreLines.length * 4 + 2);
-      if (y + rowH > pageH - 12) { doc.addPage(); y = 16; drawHeader(); }
-      if (i % 2 === 0) { doc.setFillColor(245, 245, 250); doc.rect(mL, y, cols.reduce((a, c) => a + c.w, 0), rowH, "F"); }
-      doc.setFontSize(8); doc.setTextColor(30, 30, 30);
-      const cells = [
-        r.reference,
-        null, // titre géré à part (multi-lignes)
-        r.category,
-        r.priority,
-        r.status === "closed" ? "Fermé" : "Ouvert",
-        r.created_at ? fmtDateFr(r.created_at) : "—",
-        r.closed_at ? fmtDateFr(r.closed_at) : "—",
-        String(r.nbMessages),
-        fmtDelai(r.delaiH),
-      ];
-      let x = mL;
-      cols.forEach((c, ci) => {
-        if (ci === 1) {
-          doc.text(titreLines, x + 1.5, y + 4);
-        } else {
-          doc.text(String(cells[ci] || "—"), x + 1.5, y + 4);
-        }
-        x += c.w;
-      });
-      y += rowH;
+    const logo = hotel && hotel.logo_url ? await chargerImageBase64(hotel.logo_url) : null;
+    const doc = dessinerRapportTicketsPdf(window.jspdf.jsPDF, {
+      hotelName: hotel ? hotel.name : "—",
+      logo,
+      periode: (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui"),
+      rows: rapTkRows,
+      stats: rapTkStats,
     });
-
-    // Pied de page
-    doc.setFontSize(7); doc.setTextColor(150, 150, 150);
-    doc.text("Document généré le " + new Date().toLocaleString("fr-FR") + " — DSI Hotel", mL, pageH - 6);
     return { doc, hotel };
   };
 
-  const exportRapportTicketsPdf = () => {
-    const { doc, hotel } = buildRapportTicketsPdf();
+  const exportRapportTicketsPdf = async () => {
+    const { doc, hotel } = await buildRapportTicketsPdf();
     const nomHotel = hotel ? hotel.name.replace(/[^\w]+/g, "_") : "etablissement";
     doc.save("Rapport_tickets_" + nomHotel + "_" + (rapTkDu || "") + "_" + (rapTkAu || "") + ".pdf");
   };
@@ -3771,7 +3837,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setRapTkEnvoi(true);
     setRapTkNote("Envoi en cours…");
     try {
-      const { doc } = buildRapportTicketsPdf();
+      const { doc } = await buildRapportTicketsPdf();
       const pdfB64 = doc.output("datauristring").split(",")[1];
       const periode = (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui");
       const subject = "Rapport de suivi des tickets — " + hotel.name + " — " + periode;
@@ -10117,7 +10183,7 @@ const nav = isAdmin
             React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 860 } },
               React.createElement('thead', null,
                 React.createElement('tr', null,
-                  th("Référence"), th("Titre"), th("Catégorie"), th("Priorité"), th("Statut"),
+                  th("Référence"), th("Titre"), th("Statut"),
                   th("Ouvert le"), th("Fermé le"), th("Msg", { textAlign: "center" }), th("Délai 1re rép.")
                 )
               ),
@@ -10125,13 +10191,11 @@ const nav = isAdmin
                 rapTkRows.map((r, i) => React.createElement('tr', { key: i },
                   td(React.createElement('span', { style: { fontWeight: 600, color: G2 } }, r.reference)),
                   td(r.subject, { minWidth: 240 }),
-                  td(r.category),
-                  td(React.createElement('span', { style: { fontWeight: 600, color: prColor(r.priority) } }, r.priority)),
                   td(React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: stColor(r.status), background: stColor(r.status) + "18", padding: "2px 9px", borderRadius: 20 } }, r.status === "closed" ? "Fermé" : "Ouvert")),
                   td(fmtDateHeureFr(r.created_at), { whiteSpace: "nowrap", fontSize: 11 }),
                   td(r.closed_at ? fmtDateHeureFr(r.closed_at) : "—", { whiteSpace: "nowrap", fontSize: 11 }),
                   td(String(r.nbMessages), { textAlign: "center" }),
-                  td(fmtDelai(r.delaiH), { whiteSpace: "nowrap" })
+                  td(r.delaiH == null ? "—" : React.createElement('span', { style: { fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, color: r.delaiH < 1 ? "#2F855A" : r.delaiH < 4 ? "#C05621" : "#C53030", background: r.delaiH < 1 ? "#E9F6EE" : r.delaiH < 4 ? "#FFF3E8" : "#FDECEC" } }, fmtDelai(r.delaiH)), { whiteSpace: "nowrap" })
                 ))
               )
             )
