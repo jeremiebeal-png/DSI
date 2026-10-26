@@ -4076,6 +4076,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkRapport, setBkRapport] = useState(null);
   const [bkVue, setBkVue] = useState(() => { try { return localStorage.getItem("bkVue") || "tout"; } catch (e) { return "tout"; } }); // tout | checkcentral | veeam | comparaison
   const [bkCmpOpen, setBkCmpOpen] = useState({});
+  const [bkFiltreSt, setBkFiltreSt] = useState([]); // rangs de statut affichés (vide = tous) : 3 OK, 1 avertissement, 0 échec, 2 pause/attente
   const choisirBkVue = (v) => { setBkVue(v); try { localStorage.setItem("bkVue", v); } catch (e) {} };   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
   // ============================================================
   //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
@@ -5795,6 +5796,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // Backups « obsolètes » : checks dont la dernière exécution (updatedIso)
   // remonte à plus de 7 jours — le backup n'a plus rien remonté depuis une semaine.
   const BK_SEUIL_JOURS = 7;
+  const BK_FILTRES = [{ r: 3, l: "OK", c: "#22A45D" }, { r: 1, l: "Avertissement", c: "#F2B705" }, { r: 0, l: "Échec", c: "#E53E3E" }, { r: 2, l: "En pause / attente", c: "#A0AEC0" }];
   const bkAncienChecks = (() => {
     const now = Date.now();
     const limite = BK_SEUIL_JOURS * 24 * 60 * 60 * 1000;
@@ -10601,7 +10603,10 @@ const nav = isAdmin
       if (g.origine === "veeam") return hotel ? hotel.name + " · Veeam direct" : g.group;
       return hotel ? hotel.name : g.group;
     };
-    const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+    const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !(prev[key] !== undefined ? prev[key] : bkFiltreSt.length > 0) }));
+    // Filtre par statut : on ne garde dans chaque groupe que les checks des statuts choisis (groupes vides masqués)
+    const bkGroupesAff = bkFiltreSt.length === 0 ? bkGroupes
+      : bkGroupes.map(g => ({ ...g, checks: g.checks.filter(c => bkFiltreSt.includes(bkMetaCheck(c).rank)) })).filter(g => g.checks.length > 0);
     // Licence Veeam de l'hôtel : date de fin + jours restants (cliquer pour modifier)
     const rendreLicenceVeeam = (hid) => {
       const stop = (e) => e.stopPropagation();
@@ -10703,18 +10708,37 @@ const nav = isAdmin
           })
         )
       ),
-      // Bandeau de synthèse
-      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
-        [
-          { l: "Checks au total", v: bkStats.total, c: "#0F0F24" },
-          { l: "En échec", v: bkStats.echec, c: "#E53E3E" },
-          { l: "Avertissements", v: bkStats.warn, c: "#DD6B20" },
-          { l: "OK", v: bkStats.ok, c: "#2F855A" },
-          { l: "Sites en échec", v: bkStats.groupesEnEchec + " / " + bkStats.nbGroupes, c: bkStats.groupesEnEchec > 0 ? "#E53E3E" : "#2F855A" },
-        ].map((s, i) => React.createElement('div', { key: i, style: { flex: "1 1 130px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
-          React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 5 } }, s.l),
-          React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: s.c } }, String(s.v))
-        ))
+      // Vue d'ensemble façon CheckCentral : pastilles vert / jaune / rouge (cliquables = filtre)
+      React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: isMobile ? "14px 12px" : "16px 22px", marginBottom: 14, display: "flex", alignItems: "center", gap: isMobile ? 14 : 34, flexWrap: "wrap" } },
+        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: isMobile ? 14 : 30, flexWrap: "wrap", flex: "1 1 auto", justifyContent: isMobile ? "center" : "flex-start" } },
+          BK_FILTRES.filter(f => f.r !== 2 || bkStats.autre > 0).map(f => {
+            const n = f.r === 3 ? bkStats.ok : f.r === 1 ? bkStats.warn : f.r === 0 ? bkStats.echec : bkStats.autre;
+            const taille = f.r === 0 && n > 0 ? (isMobile ? 78 : 96) : f.r === 2 ? (isMobile ? 52 : 60) : (isMobile ? 66 : 80);
+            const seul = bkFiltreSt.length === 1 && bkFiltreSt[0] === f.r;
+            const estompe = bkFiltreSt.length > 0 && !bkFiltreSt.includes(f.r);
+            return React.createElement('div', { key: f.r, onClick: () => setBkFiltreSt(seul ? [] : [f.r]), title: seul ? "Afficher tout" : "Afficher uniquement : " + f.l,
+                style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", opacity: estompe ? .35 : 1, transition: "opacity .15s" } },
+              React.createElement('div', { style: { width: taille, height: taille, borderRadius: "50%", background: f.c, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: taille > 70 ? 26 : 20, fontWeight: 800, boxShadow: seul ? "0 0 0 4px white, 0 0 0 7px " + f.c : "0 2px 8px rgba(0,0,0,.12)" } }, String(n)),
+              React.createElement('div', { style: { fontSize: 11.5, fontWeight: 600, color: "#555" } }, f.l));
+          })),
+        React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#666", minWidth: 150 } },
+          React.createElement('div', null, React.createElement('b', { style: { fontSize: 18, color: "#0F0F24" } }, String(bkStats.total)), " checks au total"),
+          React.createElement('div', null, React.createElement('b', { style: { fontSize: 18, color: bkStats.groupesEnEchec > 0 ? "#E53E3E" : "#2F855A" } }, bkStats.groupesEnEchec + " / " + bkStats.nbGroupes), " sites en échec"))
+      ),
+      // Filtres par statut (plusieurs choix possibles)
+      bkVue !== "comparaison" && React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(" + (bkStats.autre > 0 ? 5 : 4) + ", 1fr)", gap: 10, marginBottom: 16 } },
+        [{ r: null, l: "Tout", c: "#0F0F24" }].concat(BK_FILTRES.filter(f => f.r !== 2 || bkStats.autre > 0)).map(f => {
+          const actif = f.r === null ? bkFiltreSt.length === 0 : bkFiltreSt.includes(f.r);
+          const n = f.r === null ? bkStats.total : f.r === 3 ? bkStats.ok : f.r === 1 ? bkStats.warn : f.r === 0 ? bkStats.echec : bkStats.autre;
+          const clic = () => {
+            if (f.r === null) { setBkFiltreSt([]); return; }
+            setBkFiltreSt(prev => { const nx = prev.includes(f.r) ? prev.filter(x => x !== f.r) : prev.concat(f.r); return nx.length >= BK_FILTRES.filter(x => x.r !== 2 || bkStats.autre > 0).length ? [] : nx; });
+          };
+          return React.createElement('button', { key: String(f.r), onClick: clic, title: f.r === null ? "Tout afficher" : (actif ? "Retirer du filtre" : "Ajouter au filtre"),
+              style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "11px 10px", fontSize: 13, fontWeight: 600, borderRadius: 7, cursor: "pointer", border: actif ? "1px solid #0B5CC2" : "1px solid #DDE3EE", background: actif ? "#0B5CC2" : "white", color: actif ? "white" : "#334" } },
+            f.r !== null && React.createElement('span', { style: { width: 13, height: 13, borderRadius: "50%", background: f.c, border: actif ? "2px solid white" : "none", flexShrink: 0 } }),
+            f.l, React.createElement('span', { style: { fontWeight: 400, opacity: .8 } }, "(" + n + ")"));
+        })
       ),
       // Barre d'actions
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
@@ -10777,9 +10801,10 @@ const nav = isAdmin
       bkLoading && bkChecks.length === 0
         ? React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Chargement des statuts...")
         : React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 10 } },
-            bkGroupes.map(g => {
+            bkGroupesAff.length === 0 && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucune sauvegarde avec ce statut."),
+            bkGroupesAff.map(g => {
               const meta = bkStatusMeta(g.pireRank === 0 ? "Failure" : g.pireRank === 1 ? "Warning" : g.pireRank === 3 ? "Success" : "Autre");
-              const ouvert = !!bkOpenGroups[g.key];
+              const ouvert = bkOpenGroups[g.key] !== undefined ? !!bkOpenGroups[g.key] : bkFiltreSt.length > 0;
               const enEchec = g.nbEchec > 0;
               const enWarn = !enEchec && g.pireRank === 1;
               return React.createElement('div', { key: g.key, style: { background: enEchec ? "#FDECEC" : (enWarn ? "#FEF7EF" : "white"), borderRadius: 10, border: enEchec ? "1.5px solid #E53E3E" : (enWarn ? "1px solid #F3C89B" : "1px solid #E8E8F0"), borderLeft: enEchec ? "6px solid #E53E3E" : (enWarn ? "6px solid #DD6B20" : "1px solid #E8E8F0"), overflow: "hidden", boxShadow: enEchec ? "0 2px 12px rgba(229,62,62,.20)" : "none" } },
