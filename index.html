@@ -5526,6 +5526,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (s === "failure") return { color: "#E53E3E", bg: "#FDECEC", label: "Échec", rank: 0 };
     if (s === "warning") return { color: "#DD6B20", bg: "#FEF0E4", label: "Avertissement", rank: 1 };
     if (s === "success") return { color: "#2F855A", bg: "#E9F6EE", label: "OK", rank: 3 };
+    if (s === "paused") return { color: "#718096", bg: "#F0F0F4", label: "En pause", rank: 2 };
+    if (s === "pending") return { color: "#718096", bg: "#F0F0F4", label: "En attente", rank: 2 };
     return { color: "#718096", bg: "#F0F0F4", label: statut || "—", rank: 2 };
   };
   // Fréquences possibles (heures). Mensuelle = 31 jours.
@@ -5660,7 +5662,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (isNaN(t)) return;
       const ageMs = now - t;
       const fq = c.id != null ? bkFreq[String(c.id)] : null;
-      const limiteC = fq && fq.frequence_heures > 24 ? Math.max(limite, (fq.frequence_heures + BK_MARGE_H) * 3600000) : limite;
+      if (c.origine === "veeam" && (c.desactiveVeeam || c.planifie === false || String(c.status || "").toLowerCase() === "paused")) return;
+      let limiteC = fq && fq.frequence_heures > 24 ? Math.max(limite, (fq.frequence_heures + BK_MARGE_H) * 3600000) : limite;
+      if (c.origine === "veeam" && c.intervalleH) limiteC = Math.max(limite, (c.intervalleH + 12) * 3600000);
       if (ageMs > limiteC) {
         // Un muet est « justifié » s'il porte une note d'explication non vide.
         const justifie = !!(c.id && bkNotes[c.id] && String(bkNotes[c.id].note || "").trim());
@@ -10661,6 +10665,9 @@ const nav = isAdmin
                           (cm.masquee ? " — défaut CheckCentral ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
                           (fq.derniere_reussite ? " · dernière réussite le " + new Date(fq.derniere_reussite).toLocaleDateString("fr-FR") : "")),
                         c.origine === "veeam" && c.message && cm.rank <= 1 && React.createElement('div', { style: { fontSize: 11, color: "#C53030", marginTop: 2, fontFamily: "Consolas, monospace", wordBreak: "break-word" } }, c.message),
+                        c.origine === "veeam" && c.message && cm.rank === 2 && React.createElement('div', { style: { fontSize: 11, color: "#718096", marginTop: 2 } }, "⏸ " + c.message),
+                        c.origine === "veeam" && c.planifDesc && React.createElement('div', { style: { fontSize: 11, color: "#2B6CB0", marginTop: 2 } },
+                          "📅 " + c.planifDesc + (c.prochaineExec ? " · prochaine : " + (isNaN(new Date(c.prochaineExec).getTime()) ? c.prochaineExec : new Date(c.prochaineExec).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })) : "")),
                         noteEligible && renderBackupNote(c.id),
                         c.origine === "veeam" && React.createElement('button', { onClick: () => bkToggleHistVeeam(c),
                           style: { marginTop: 5, fontSize: 11, padding: "2px 9px", border: "1px solid #DDE3EE", background: "white", color: "#4A5A78", borderRadius: 6, cursor: "pointer" } },
@@ -10669,6 +10676,8 @@ const nav = isAdmin
                       ),
                       c.origine === "veeam" && bkRenderFrise(c),
                       React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap", marginTop: 2 } }, fmtDateHeureFr2(c.updatedIso)),
+                      (c.origine === "veeam" && c.planifDesc) ? React.createElement('span', { title: "Planification lue automatiquement dans Veeam (inventaire NinjaOne" + (c.inventaireIso ? " du " + new Date(c.inventaireIso).toLocaleString("fr-FR") : "") + ")",
+                        style: { fontSize: 11, padding: "3px 8px", border: "1px solid #BEE3F8", borderRadius: 6, background: "#EBF8FF", color: "#2B6CB0", marginTop: 1, whiteSpace: "nowrap" } }, "🔄 Planif. Veeam") :
                       c.id != null && React.createElement('select', { value: String((fq && fq.frequence_heures) || 24), title: "Fréquence d'exécution attendue : une sauvegarde non quotidienne n'alerte pas entre deux passages",
                         onChange: e => { const h = parseInt(e.target.value, 10); definirFrequenceBackup(c, h).catch(err => alert("Impossible d'enregistrer la fréquence : " + (err.message || err))); },
                         style: { fontSize: 11, padding: "2px 5px", border: "1px solid " + (fq ? "#BEE3F8" : "#E2E2EA"), borderRadius: 6, background: fq ? "#EBF8FF" : "white", color: fq ? "#2B6CB0" : "#777", marginTop: 1 } },
