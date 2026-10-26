@@ -3717,8 +3717,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (bAu) q = q.lte("created_at", bAu);
       const { data: tksBruts, error } = await q;
       if (error) throw error;
-      // Les alertes automatiques de sauvegarde (CheckCentral / Veeam, catégorie « Sauvegarde ») ne figurent pas dans le rapport client
-      const tks = (tksBruts || []).filter(t => !estAlerteBackup(t) && t.category !== "Sauvegarde");
+      // Les alertes automatiques de sauvegarde (CheckCentral / Veeam, catégorie « Sauvegarde ») et les alertes Sophos / Microsoft 365 (Defender) ne figurent pas dans le rapport client
+      const tks = (tksBruts || []).filter(t => !estAlerteAuto(t) && t.category !== "Sauvegarde" && !/\[Sophos\]/i.test(String(t.subject || "")));
 
       const ids = tks.map(t => t.id);
       // Récupère tous les messages de ces tickets pour compter et mesurer le délai.
