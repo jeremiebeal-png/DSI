@@ -575,21 +575,24 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   doc.setFontSize(7.5); doc.setTextColor(185, 185, 205);
   doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23  •  support@dsihotel.com", mL, 26.5);
 
-  // Logo de l'hôtel dans un cartouche blanc (ou nom de l'hôtel à défaut)
-  const boxW = 58, boxH = 24, boxX = pageW - mR - boxW, boxY = 4;
-  doc.setFillColor(255, 255, 255); doc.roundedRect(boxX, boxY, boxW, boxH, 2.5, 2.5, "F");
+  // Logo de l'hôtel : cadre blanc ajusté au logo, avec une fine marge (ou nom de l'hôtel à défaut)
+  const PAD = 1.8, maxLW = 60, maxLH = 22, bandeH = 32;
   let logoOk = false;
   if (opts.logo && opts.logo.data) {
     try {
       let lw = opts.logo.w, lh = opts.logo.h;
       if (!lw || !lh) { const pr = doc.getImageProperties(opts.logo.data); lw = pr.width; lh = pr.height; }
-      const maxW = boxW - 8, maxH = boxH - 6, r = lw / lh;
-      let w = maxW, h = w / r; if (h > maxH) { h = maxH; w = h * r; }
-      doc.addImage(opts.logo.data, opts.logo.format || "PNG", boxX + (boxW - w) / 2, boxY + (boxH - h) / 2, w, h);
+      const r = lw / lh;
+      let w = maxLW, h = w / r; if (h > maxLH) { h = maxLH; w = h * r; }
+      const boxW = w + PAD * 2, boxH = h + PAD * 2, boxX = pageW - mR - boxW, boxY = (bandeH - boxH) / 2;
+      doc.setFillColor(255, 255, 255); doc.roundedRect(boxX, boxY, boxW, boxH, 1.5, 1.5, "F");
+      doc.addImage(opts.logo.data, opts.logo.format || "PNG", boxX + PAD, boxY + PAD, w, h);
       logoOk = true;
     } catch (e) {}
   }
   if (!logoOk) {
+    const boxW = 58, boxH = 20, boxX = pageW - mR - boxW, boxY = (bandeH - boxH) / 2;
+    doc.setFillColor(255, 255, 255); doc.roundedRect(boxX, boxY, boxW, boxH, 1.5, 1.5, "F");
     ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
     const l = doc.splitTextToSize(opts.hotelName || "—", boxW - 6).slice(0, 2);
     doc.text(l, boxX + boxW / 2, boxY + boxH / 2 + (l.length > 1 ? -1.2 : 1.5), { align: "center" });
