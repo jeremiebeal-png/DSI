@@ -5136,6 +5136,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkNote, setBkNote] = useState("");
   const [bkFetchedAt, setBkFetchedAt] = useState(null);
   const [bkGroupMap, setBkGroupMap] = useState({}); // { group_id: hotel_id }
+  const [bkLicences, setBkLicences] = useState({}); // { hotel_id: [lignes Veeam de l'inventaire serveurs (licence_fin…)] }
+  const [bkLicEdit, setBkLicEdit] = useState(null); // { hid, fin, info } — saisie de la licence Veeam depuis Sauvegardes
   const [bkMapBusy, setBkMapBusy] = useState("");
   // Rattache un groupe CheckCentral à un hôtel (et les tickets d'alerte déjà ouverts de ce groupe)
   const bkRattacherGroupe = async (g, hotelId) => {
@@ -5452,6 +5454,47 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // ---------- Licence Veeam par hôtel (lue / écrite dans inventaire_serveurs) ----------
+  const bkEstVeeam = (r) => /veeam/i.test((r.nom || "") + " " + (r.role || ""));
+  const bkChargerLicences = async () => {
+    const tout = [];
+    for (let from = 0; from < 20000; from += 1000) {
+      const { data, error } = await sb.from("inventaire_serveurs").select("id,hotel_id,nom,role,licence_fin,licence_info,licence_alerte").range(from, from + 999);
+      if (error) throw error;
+      tout.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const ml = {};
+    tout.filter(bkEstVeeam).forEach(r => { (ml[r.hotel_id] = ml[r.hotel_id] || []).push(r); });
+    setBkLicences(ml);
+  };
+  // Ligne Veeam qui porte la licence : celle qui a déjà une date, sinon la première
+  const bkLigneLicence = (hid) => { const l = bkLicences[hid] || []; return l.find(r => r.licence_fin) || l[0] || null; };
+  const bkJoursRestants = (fin) => fin ? Math.round((new Date(fin + "T12:00:00") - new Date(new Date().toISOString().slice(0, 10) + "T12:00:00")) / 86400000) : null;
+  const bkEnregLicence = async () => {
+    const ed = bkLicEdit; if (!ed || !ed.hid) return;
+    const fin = ed.fin || null, info = (ed.info || "").trim() || null;
+    let ligne = bkLigneLicence(ed.hid);
+    try {
+      if (ligne) {
+        const champs = { licence_info: info };
+        if ((ligne.licence_fin || null) !== fin) { champs.licence_fin = fin; champs.licence_alertes_envoyees = []; }
+        if (fin && ligne.licence_alerte == null) champs.licence_alerte = true;
+        const { error } = await sb.from("inventaire_serveurs").update(champs).eq("id", ligne.id);
+        if (error) throw error;
+      } else {
+        const hotel = hotels.find(h => String(h.id) === String(ed.hid));
+        if (!confirm("Aucun serveur Veeam dans l'inventaire serveurs de « " + (hotel ? hotel.name : "cet hôtel") + " ».\n\nCréer une ligne « VEEAM » dans son inventaire pour y enregistrer la licence ?")) return;
+        const { error } = await sb.from("inventaire_serveurs").insert({ hotel_id: ed.hid, ordre: 9990, nom: "VEEAM", type: "VM", role: "Sauvegarde Veeam", licence_fin: fin, licence_info: info, licence_alerte: !!fin, licence_alertes_envoyees: [] });
+        if (error) throw error;
+      }
+      setBkLicEdit(null);
+      await bkChargerLicences();
+    } catch (e) {
+      alert("Enregistrement impossible : " + (e.message || e) + (/licence_/i.test(String(e.message || "")) ? "\n\nLe script licence_veeam.sql a-t-il été exécuté ?" : ""));
+    }
+  };
+
   const loadBackups = async () => {
     setBkLoading(true);
     setBkNote("");
@@ -5469,6 +5512,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         (maps || []).forEach(x => { if (x.group_id) m[x.group_id] = x.hotel_id; });
         setBkGroupMap(m);
       } catch (e) { /* table peut ne pas exister encore */ }
+      // Licences Veeam (portées par les lignes « Veeam » de l'inventaire serveurs)
+      try { await bkChargerLicences(); } catch (e) { /* colonnes licence_* absentes : pas d'affichage */ }
 
       const { data: sessBk } = await sb.auth.getSession();
       const res = await fetch(CHECKCENTRAL_API_URL, { method: "GET", headers: { Authorization: "Bearer " + (sessBk.session?.access_token || "") } });
@@ -10557,6 +10602,32 @@ const nav = isAdmin
       return hotel ? hotel.name : g.group;
     };
     const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
+    // Licence Veeam de l'hôtel : date de fin + jours restants (cliquer pour modifier)
+    const rendreLicenceVeeam = (hid) => {
+      const stop = (e) => e.stopPropagation();
+      const ligne = bkLigneLicence(hid);
+      if (bkLicEdit && String(bkLicEdit.hid) === String(hid)) {
+        const champ = { fontSize: 11.5, padding: "3px 7px", border: "1px solid #CBD5E0", borderRadius: 6 };
+        return React.createElement('span', { onClick: stop, style: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", background: "white", border: "1px solid #E2E8F0", borderRadius: 8, padding: "4px 8px", fontSize: 11.5, color: "#444" } },
+          React.createElement('b', null, "🔑 Fin de licence"),
+          React.createElement('input', { type: "date", value: bkLicEdit.fin || "", onChange: e => setBkLicEdit({ ...bkLicEdit, fin: e.target.value }), style: champ }),
+          React.createElement('input', { value: bkLicEdit.info || "", placeholder: "Édition / instances (facultatif)", onChange: e => setBkLicEdit({ ...bkLicEdit, info: e.target.value }), style: { ...champ, width: 190 } }),
+          React.createElement('button', { onClick: bkEnregLicence, style: { fontSize: 11.5, padding: "3px 10px", border: "none", background: "#2F855A", color: "white", borderRadius: 6, cursor: "pointer", fontWeight: 600 } }, "Enregistrer"),
+          React.createElement('button', { onClick: () => setBkLicEdit(null), style: { fontSize: 11.5, padding: "3px 8px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 6, cursor: "pointer" } }, "Annuler"));
+      }
+      const ouvrir = (e) => { e.stopPropagation(); setBkLicEdit({ hid, fin: (ligne && ligne.licence_fin) || "", info: (ligne && ligne.licence_info) || "" }); };
+      if (!ligne || !ligne.licence_fin) {
+        return React.createElement('span', { onClick: ouvrir, title: "Renseigner la date de fin de la licence Veeam", style: { fontSize: 11, fontWeight: 600, color: "#8A6D1F", background: "#FFFBEB", border: "1px dashed #E0C068", padding: "2px 9px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap" } }, "🔑 Licence Veeam : à renseigner");
+      }
+      const j = bkJoursRestants(ligne.licence_fin);
+      const c = j < 0 ? { c: "#C53030", bg: "#FDE2E2", b: "#F5B5B5" } : j <= 30 ? { c: "#C05621", bg: "#FFF3E8", b: "#F6C9A0" } : j <= 90 ? { c: "#B7791F", bg: "#FFFBEB", b: "#F0D98A" } : { c: "#2F855A", bg: "#E9F6EE", b: "#B5E0C3" };
+      const dateFr = new Date(ligne.licence_fin + "T12:00:00").toLocaleDateString("fr-FR");
+      const reste = j < 0 ? "expirée depuis " + (-j) + " j" : j === 0 ? "expire aujourd'hui" : j + " jour" + (j > 1 ? "s" : "") + " restant" + (j > 1 ? "s" : "");
+      return React.createElement('span', { onClick: ouvrir, title: "Licence Veeam" + (ligne.licence_info ? " — " + ligne.licence_info : "") + (ligne.licence_alerte ? "\nAlerte email à l'équipe : activée" : "\nAlerte email à l'équipe : désactivée") + "\nCliquer pour modifier", style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: c.c, background: c.bg, border: "1px solid " + c.b, padding: "2px 10px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap" } },
+        "🔑 Licence Veeam : " + dateFr,
+        React.createElement('span', { style: { fontWeight: 800 } }, "· " + reste),
+        ligne.licence_info && React.createElement('span', { style: { fontWeight: 400, opacity: .8 } }, "· " + ligne.licence_info));
+    };
     const pastille = (c) => { const m = bkMetaCheck(c); return React.createElement('span', { style: { fontSize: 10.5, fontWeight: 600, color: m.color, background: m.bg, padding: "1px 7px", borderRadius: 10, whiteSpace: "nowrap" } }, m.label); };
     const ligneCmp = (gauche, droite, fond, note) => React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 2 : 12, padding: "7px 16px", borderBottom: "1px solid #F3F3F8", background: fond || "white", fontSize: 12 } },
       React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } }, gauche ? [React.createElement('span', { key: "n", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#333" } }, gauche.name), React.createElement('span', { key: "p" }, pastille(gauche))] : React.createElement('span', { style: { color: "#C05621", fontStyle: "italic" } }, note || "—")),
@@ -10716,7 +10787,9 @@ const nav = isAdmin
                 React.createElement('div', { onClick: () => toggleGroupe(g.key), style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
                   React.createElement('span', { style: { width: enEchec ? 13 : 10, height: enEchec ? 13 : 10, borderRadius: "50%", background: meta.color, flexShrink: 0, boxShadow: enEchec ? "0 0 0 4px rgba(229,62,62,.20)" : "none" } }),
                   React.createElement('div', { style: { flex: 1 } },
-                    React.createElement('div', { style: { fontSize: 14, fontWeight: enEchec ? 700 : 600, color: enEchec ? "#C53030" : "#222" } }, (enEchec ? "⛔ " : "") + nomGroupe(g)),
+                    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                      React.createElement('div', { style: { fontSize: 14, fontWeight: enEchec ? 700 : 600, color: enEchec ? "#C53030" : "#222" } }, (enEchec ? "⛔ " : "") + nomGroupe(g)),
+                      g.origine === "veeam" && g.hotel_id && rendreLicenceVeeam(g.hotel_id)),
                     React.createElement('div', { style: { fontSize: 11, color: enEchec ? "#B03030" : "#999", marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                       g.checks.length + " check" + (g.checks.length > 1 ? "s" : ""),
                       g.group_id && (() => {
