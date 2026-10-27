@@ -537,10 +537,142 @@ function videoEmbedUrl(url) {
   return null;
 }
 
-// ====== RAPPORT DE SUIVI DES TICKETS — dessin du PDF (jsPDF) ======
-// Fonction autonome : reçoit les données déjà calculées et dessine le PDF.
-// opts = { hotelName, logo: {data,w?,h?,format?}|null, periode, rows, stats, genereLe?, timeZone? }
-// rows[i] = { reference, subject, status, created_at, closed_at, nbMessages, delaiH }
+// ====== RAPPORT DE SUIVI DES TICKETS : SLA, heures ouvrées, type, dessin du PDF ======
+// Cibles SLA en HEURES OUVRÉES (lundi-vendredi, de SLA_H_DEBUT à SLA_H_FIN, heure de Paris).
+// Ces valeurs apparaissent dans le rapport envoyé aux clients : à valider avec la direction.
+const SLA_H_DEBUT = 8, SLA_H_FIN = 19;
+const SLA_JOUR_H = SLA_H_FIN - SLA_H_DEBUT;
+const SLA_PRIORITES = [
+  { p: "Urgent",  code: "P1", rep: 1, res: 4 },
+  { p: "Haute",   code: "P2", rep: 2, res: SLA_JOUR_H },
+  { p: "Moyenne", code: "P3", rep: 4, res: 2 * SLA_JOUR_H },
+  { p: "Basse",   code: "P4", rep: 8, res: 5 * SLA_JOUR_H },
+];
+const slaDe = (prio) => SLA_PRIORITES.find(x => x.p === prio) || SLA_PRIORITES[2];
+const fmtCibleSla = (h) => (h >= SLA_JOUR_H && h % SLA_JOUR_H === 0) ? (h / SLA_JOUR_H) + " j ouvré" + (h / SLA_JOUR_H > 1 ? "s" : "") : h + " h";
+
+// Heures ouvrées écoulées entre deux dates (jours fériés non déduits).
+const _fmtParis = (() => { try { return new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }); } catch (e) { return null; } })();
+function partiesParis(ms) {
+  const p = {};
+  if (_fmtParis) _fmtParis.formatToParts(new Date(ms)).forEach(x => { p[x.type] = x.value; });
+  else { const d = new Date(ms); p.year = d.getFullYear(); p.month = d.getMonth() + 1; p.day = d.getDate(); p.hour = d.getHours(); p.minute = d.getMinutes(); p.second = d.getSeconds(); }
+  return { y: +p.year, m: +p.month - 1, d: +p.day, h: (+p.hour) % 24, mi: +p.minute, s: +p.second };
+}
+function parisVersUtc(y, m, d, h) {
+  const approx = Date.UTC(y, m, d, h);
+  const q = partiesParis(approx);
+  return approx - (Date.UTC(q.y, q.m, q.d, q.h, q.mi, q.s) - approx);
+}
+function heuresOuvrees(debut, fin) {
+  const a = new Date(debut).getTime(), b = new Date(fin).getTime();
+  if (isNaN(a) || isNaN(b) || b <= a) return 0;
+  const pa = partiesParis(a), pb = partiesParis(b);
+  let jour = Date.UTC(pa.y, pa.m, pa.d);
+  const dernier = Date.UTC(pb.y, pb.m, pb.d);
+  let total = 0, garde = 0;
+  while (jour <= dernier && garde++ < 1200) {
+    const dt = new Date(jour), dow = dt.getUTCDay();
+    if (dow !== 0 && dow !== 6) {
+      const y = dt.getUTCFullYear(), m = dt.getUTCMonth(), d = dt.getUTCDate();
+      const lo = Math.max(a, parisVersUtc(y, m, d, SLA_H_DEBUT)), hi = Math.min(b, parisVersUtc(y, m, d, SLA_H_FIN));
+      if (hi > lo) total += hi - lo;
+    }
+    jour += 86400000;
+  }
+  return total / 3600000;
+}
+
+// Incident ou demande : choix manuel du technicien (colonne type_ticket), sinon détection automatique.
+const TYPE_DEMANDE_CATS = ["Création de compte", "Installation logiciel", "Problème Mot de Passe"];
+const RE_INCIDENT = /probl[eè]me|panne|bloqu|erreur|ne (fonctionne|marche|s'allume|d[ée]marre|r[ée]pond)|n'arrive|impossible|bug|plant|lent(eur)?\b|coup[ée]|hors service|\bhs\b|souci|incident|ne re[çc]oi|plus d'acc[eè]s|plus de (connexion|r[ée]seau|wi-?fi|internet)|virus|phishing|hame[çc]on|frauduleu|piratage/i;
+const RE_DEMANDE = /cr[ée]ation|cr[ée]er|nouve(l|lle|au|aux)\b|ajout|install|acc[eè]s|droits?\b|commande|devis|\brfq\b|demande|modifi|changement|mise en place|configur|param[eè]tr|besoin|d[ée]part|arriv[ée]e|transf[ée]r|r[ée]initialis|mot de passe|d[ée]m[ée]nagement|formation|mise [àa] jour|patch|planifi|reschedul|programm/i;
+function typeTicket(t) {
+  if (!t) return "incident";
+  if (t.type_ticket === "incident" || t.type_ticket === "demande") return t.type_ticket;
+  if (t.contact_role === "Demande interne" || /^\[Demande interne\]/i.test(t.subject || "")) return "demande";
+  if (TYPE_DEMANDE_CATS.includes(t.category)) return "demande";
+  if (t.category && t.category !== "Email entrant" && t.category !== "Autre") return "incident";
+  const sujet = String(t.subject || "");
+  const texte = sujet + " " + String(t.message || "").slice(0, 400);
+  if (RE_INCIDENT.test(sujet)) return "incident";
+  if (RE_DEMANDE.test(sujet)) return "demande";
+  if (RE_INCIDENT.test(texte)) return "incident";
+  if (RE_DEMANDE.test(texte)) return "demande";
+  return "incident";
+}
+
+const medianeDe = (arr) => { const a = (arr || []).filter(v => v !== null && v !== undefined && !isNaN(v)).sort((x, y) => x - y); if (!a.length) return null; const k = Math.floor(a.length / 2); return a.length % 2 ? a[k] : (a[k - 1] + a[k]) / 2; };
+const moyenneDe = (arr) => { const a = (arr || []).filter(v => v !== null && v !== undefined && !isNaN(v)); return a.length ? a.reduce((s, v) => s + v, 0) / a.length : null; };
+
+// Une ligne par ticket : délais en heures ouvrées, respect des SLA, appartenance à la période.
+function calculerRapportTickets(tks, msgsByTicket, bDuMs, bAuMs) {
+  const refFin = Math.min(Date.now(), bAuMs);
+  return (tks || []).map(t => {
+    const ms = msgsByTicket[t.id] || [];
+    const cree = new Date(t.created_at).getTime();
+    const ferme = t.status === "closed";
+    const fermeMs = t.closed_at ? new Date(t.closed_at).getTime() : null;
+    const sla = slaDe(t.priority);
+    const premiere = ms.find(m => m.sender_role === "admin");
+    let delaiH = null;
+    if (premiere) { const pm = new Date(premiere.created_at).getTime(); if (pm >= cree) delaiH = heuresOuvrees(cree, pm); }
+    let resolH = null;
+    if (ferme && fermeMs && fermeMs >= cree) resolH = heuresOuvrees(cree, fermeMs);
+    const ecouleH = (!ferme && refFin > cree) ? heuresOuvrees(cree, refFin) : 0;
+    const slaRep = delaiH !== null ? (delaiH > sla.rep ? "ko" : "ok") : (!ferme && ecouleH > sla.rep ? "ko" : null);
+    const slaRes = resolH !== null ? (resolH > sla.res ? "ko" : "ok") : (!ferme && ecouleH > sla.res ? "ko" : null);
+    const creeDansPeriode = cree >= bDuMs && cree <= bAuMs;
+    const fermeDansPeriode = ferme && (fermeMs ? (fermeMs >= bDuMs && fermeMs <= bAuMs) : creeDansPeriode);
+    const ouvertFin = cree <= bAuMs && !(ferme && (!fermeMs || fermeMs <= bAuMs));
+    return {
+      id: t.id,
+      reference: t.reference || "—",
+      subject: t.subject || t.category || "(sans objet)",
+      category: t.category || "—",
+      priority: sla.p,
+      type: typeTicket(t),
+      status: t.status,
+      created_at: t.created_at,
+      closed_at: t.closed_at || null,
+      nbMessages: ms.length,
+      delaiH, resolH, slaRep, slaRes,
+      creeDansPeriode, fermeDansPeriode, ouvertFin,
+    };
+  });
+}
+
+// Indicateurs du tableau de bord (calculés sur les tickets créés pendant la période,
+// sauf « fermés » et « en cours en fin de période »).
+function statsRapportTickets(rows) {
+  rows = rows || [];
+  const crees = rows.filter(r => r.creeDansPeriode);
+  const fermes = rows.filter(r => r.fermeDansPeriode);
+  const evalues = crees.filter(r => r.slaRep || r.slaRes);
+  const hors = evalues.filter(r => r.slaRep === "ko" || r.slaRes === "ko");
+  return {
+    total: rows.length,
+    crees: crees.length,
+    fermes: fermes.length,
+    enCoursFin: rows.filter(r => r.ouvertFin).length,
+    ouverts: rows.filter(r => r.status !== "closed").length,
+    delaiMed: medianeDe(crees.map(r => r.delaiH)),
+    delaiMoy: moyenneDe(crees.map(r => r.delaiH)),
+    resolMed: medianeDe(fermes.map(r => r.resolH)),
+    resolMoy: moyenneDe(fermes.map(r => r.resolH)),
+    slaPct: evalues.length ? Math.round(100 * (evalues.length - hors.length) / evalues.length) : null,
+    horsSla: hors.length,
+    slaEvalues: evalues.length,
+    incidents: crees.filter(r => r.type === "incident").length,
+    demandes: crees.filter(r => r.type === "demande").length,
+    parPrio: SLA_PRIORITES.map(s => {
+      const l = crees.filter(r => r.priority === s.p);
+      return { ...s, n: l.length, horsRep: l.filter(r => r.slaRep === "ko").length, horsRes: l.filter(r => r.slaRes === "ko").length, resolMed: medianeDe(l.map(r => r.resolH)) };
+    }),
+  };
+}
+
+// Dessin du PDF (jsPDF). opts = { hotelName, logo, periode, finPeriode, rows, stats, genereLe?, timeZone? }
 function fmtDelaiHM(h) {
   if (h === null || h === undefined || isNaN(h)) return "—";
   const totalMin = Math.max(0, Math.round(h * 60));
@@ -553,16 +685,16 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
   const pageW = 297, pageH = 210, mL = 12, mR = 12, W = pageW - mL - mR;
   const NAVY = [15, 15, 36], GOLD = [201, 168, 76], GOLD2 = [168, 135, 46];
-  const BLEU = [43, 108, 176], VERT = [47, 133, 90], ORANGE = [221, 107, 32], ROUGE = [197, 48, 48], GRIS = [113, 128, 150];
+  const BLEU = [43, 108, 176], VERT = [47, 133, 90], ORANGE = [221, 107, 32], ROUGE = [197, 48, 48], GRIS = [113, 128, 150], VIOLET = [107, 70, 193];
   const fill = (c) => doc.setFillColor(c[0], c[1], c[2]);
   const ink = (c) => doc.setTextColor(c[0], c[1], c[2]);
   const pale = (c, a) => [Math.round(255 - (255 - c[0]) * a), Math.round(255 - (255 - c[1]) * a), Math.round(255 - (255 - c[2]) * a)];
   const tzo = opts.timeZone ? { timeZone: opts.timeZone } : {};
   const fmtD = (d) => { try { const x = new Date(d); return x.toLocaleDateString("fr-FR", tzo) + " " + x.toLocaleTimeString("fr-FR", { ...tzo, hour: "2-digit", minute: "2-digit" }); } catch (e) { return "—"; } };
-  const couleurDelai = (h) => h === null || h === undefined ? GRIS : h < 1 ? VERT : h < 4 ? ORANGE : ROUGE;
-  const rows = opts.rows || [], st = opts.stats || {};
+  const PRIO_C = { "Urgent": ROUGE, "Haute": ORANGE, "Moyenne": BLEU, "Basse": GRIS };
+  const rows = opts.rows || [], st = opts.stats || statsRapportTickets(rows);
   // jsPDF (police standard) ne sait pas afficher les emojis : on les retire des titres
-  const propre = (t) => String(t || "").replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, "-").replace(/[^\u0000-\u00FF\u2022\u20AC]/g, "").replace(/\s+/g, " ").trim();
+  const propre = (t) => String(t || "").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/[^\u0000-ÿ•€]/g, "").replace(/\s+/g, " ").trim();
   let y = 0;
 
   // ---- En-tête : bandeau bleu nuit + liseré or ----
@@ -575,7 +707,7 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   doc.setFontSize(7.5); doc.setTextColor(185, 185, 205);
   doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23  •  support@dsihotel.com", mL, 26.5);
 
-  // Logo de l'hôtel : cadre blanc ajusté au logo, avec une fine marge (ou nom de l'hôtel à défaut)
+  // Logo de l'hôtel : cadre blanc ajusté au logo (ou nom de l'hôtel à défaut)
   const PAD = 1.8, maxLW = 60, maxLH = 22, bandeH = 32;
   let logoOk = false;
   if (opts.logo && opts.logo.data) {
@@ -608,40 +740,102 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   fill(pale(GOLD, 0.18)); doc.roundedRect(pageW - mR - pw, y - 5.5, pw, 8, 4, 4, "F");
   ink(GOLD2); doc.text(per, pageW - mR - pw / 2, y - 0.3, { align: "center" });
 
-  // ---- Tuiles chiffres clés ----
-  y = 50;
+  // ---- Tableau de bord, ligne 1 : 4 tuiles ----
+  y = 49;
+  const slaC = st.slaPct == null ? GRIS : st.slaPct >= 90 ? VERT : st.slaPct >= 75 ? ORANGE : ROUGE;
   const tuiles = [
-    { l: "TICKETS", v: String(st.total || 0), c: NAVY },
-    { l: "OUVERTS", v: String(st.ouverts || 0), c: BLEU },
-    { l: "FERMÉS", v: String(st.fermes || 0), c: VERT },
-    { l: "DÉLAI MOYEN 1RE RÉPONSE", v: fmtDelaiHM(st.delaiMoyen), c: couleurDelai(st.delaiMoyen) },
+    { l: "CRÉÉS SUR LA PÉRIODE", v: String(st.crees || 0), s: "nouvelles demandes de l'hôtel", c: NAVY },
+    { l: "FERMÉS SUR LA PÉRIODE", v: String(st.fermes || 0), s: "y compris tickets antérieurs", c: VERT },
+    { l: "EN COURS AU " + (opts.finPeriode || "").toUpperCase(), v: String(st.enCoursFin || 0), s: "reste à traiter en fin de période", c: BLEU },
+    { l: "RESPECT DES SLA", v: st.slaPct == null ? "—" : st.slaPct + " %", s: st.slaEvalues ? st.horsSla + " ticket(s) hors SLA sur " + st.slaEvalues : "aucun ticket évaluable", c: slaC },
   ];
-  const gap = 5, tw = (W - gap * 3) / 4, th = 19;
+  const gap = 5, tw = (W - gap * 3) / 4, th = 20;
   tuiles.forEach((t, i) => {
     const x = mL + i * (tw + gap);
     fill(pale(t.c, 0.09)); doc.roundedRect(x, y, tw, th, 2.5, 2.5, "F");
     fill(t.c); doc.rect(x, y + 2.5, 1.6, th - 5, "F");
-    ink(t.c); doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
-    doc.text(t.l, x + 6, y + 6.5);
-    doc.setFontSize(16); doc.text(t.v, x + 6, y + 15);
+    ink(t.c); doc.setFont("helvetica", "bold"); doc.setFontSize(7.3);
+    doc.text(t.l, x + 6, y + 5.8);
+    doc.setFontSize(16); doc.text(t.v, x + 6, y + 13.8);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(110, 110, 125);
+    doc.text(t.s, x + 6, y + 17.8);
   });
-  y += th + 7;
+  y += th + 5;
 
-  // ---- Tableau ----
+  // ---- Ligne 2 à gauche : tableau par priorité ----
+  const boxH = 36, Lw = 153, Rx = mL + Lw + gap, Rw = W - Lw - gap;
+  fill([247, 247, 251]); doc.roundedRect(mL, y, Lw, boxH, 2.5, 2.5, "F");
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+  doc.text("PAR PRIORITÉ (tickets créés sur la période)", mL + 4, y + 5.3);
+  const pc = [{ t: "Priorité", w: 30 }, { t: "Cible 1re rép.", w: 22 }, { t: "Cible résolution", w: 26 }, { t: "Tickets", w: 16, a: "center" }, { t: "Hors SLA réponse", w: 29, a: "center" }, { t: "Hors SLA résolution", w: 30, a: "center" }];
+  let px = mL;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(6.6); doc.setTextColor(120, 120, 135);
+  pc.forEach(c => { doc.text(c.t, c.a === "center" ? px + c.w / 2 : px + 4, y + 10.5, c.a === "center" ? { align: "center" } : undefined); px += c.w; });
+  doc.setDrawColor(226, 226, 234); doc.setLineWidth(0.2); doc.line(mL + 3, y + 12, mL + Lw - 3, y + 12);
+  const pctTxt = (n, tot) => n + (tot ? " (" + Math.round(100 * n / tot) + " %)" : "");
+  (st.parPrio || []).forEach((p, i) => {
+    const yy = y + 16.4 + i * 5;
+    const c = PRIO_C[p.p] || GRIS;
+    px = mL;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.2);
+    const lab = p.code + " " + p.p, lw = doc.getTextWidth(lab) + 5;
+    fill(pale(c, 0.16)); doc.roundedRect(px + 3, yy - 3.2, lw, 4.4, 2.2, 2.2, "F");
+    ink(c); doc.text(lab, px + 5.5, yy); px += pc[0].w;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.6); doc.setTextColor(70, 70, 85);
+    doc.text(fmtCibleSla(p.rep), px + 4, yy); px += pc[1].w;
+    doc.text(fmtCibleSla(p.res), px + 4, yy); px += pc[2].w;
+    doc.setFont("helvetica", "bold"); ink(NAVY); doc.text(String(p.n), px + pc[3].w / 2, yy, { align: "center" }); px += pc[3].w;
+    ink(p.horsRep ? ROUGE : VERT); doc.text(pctTxt(p.horsRep, p.n), px + pc[4].w / 2, yy, { align: "center" }); px += pc[4].w;
+    ink(p.horsRes ? ROUGE : VERT); doc.text(pctTxt(p.horsRes, p.n), px + pc[5].w / 2, yy, { align: "center" });
+  });
+
+  // ---- Ligne 2 à droite : délais + incidents / demandes ----
+  const hh = (boxH - 3) / 2;
+  fill([247, 247, 251]); doc.roundedRect(Rx, y, Rw, hh, 2.5, 2.5, "F");
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(7.3);
+  doc.text("DÉLAIS MÉDIANS (heures ouvrées)", Rx + 4, y + 5.2);
+  const demi = (Rw - 8) / 2;
+  [["1re réponse", st.delaiMed, st.delaiMoy], ["Résolution", st.resolMed, st.resolMoy]].forEach(([lbl, med, moy], i) => {
+    const x = Rx + 4 + i * demi;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(110, 110, 125);
+    doc.text(lbl + (moy != null ? "  (moy. " + fmtDelaiHM(moy) + ")" : ""), x, y + 9.6);
+    ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(12);
+    doc.text(fmtDelaiHM(med), x, y + 15);
+  });
+  const y2 = y + hh + 3;
+  fill([247, 247, 251]); doc.roundedRect(Rx, y2, Rw, hh, 2.5, 2.5, "F");
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(7.3);
+  doc.text("INCIDENTS / DEMANDES", Rx + 4, y2 + 5.2);
+  const totT = (st.incidents || 0) + (st.demandes || 0);
+  const bw = Rw - 8, bx = Rx + 4, by = y2 + 7.6;
+  fill([226, 226, 234]); doc.roundedRect(bx, by, bw, 3.2, 1.6, 1.6, "F");
+  if (totT) {
+    const wi = bw * st.incidents / totT;
+    if (st.incidents) { fill(ORANGE); doc.roundedRect(bx, by, Math.max(wi, 3.2), 3.2, 1.6, 1.6, "F"); }
+    if (st.demandes) { fill(VIOLET); doc.roundedRect(bx + wi, by, Math.max(bw - wi, 3.2), 3.2, 1.6, 1.6, "F"); }
+  }
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.6);
+  ink(ORANGE); doc.text(st.incidents + " incident(s)" + (totT ? " - " + Math.round(100 * st.incidents / totT) + " %" : ""), bx, y2 + 15);
+  ink(VIOLET); doc.text(st.demandes + " demande(s)" + (totT ? " - " + Math.round(100 * st.demandes / totT) + " %" : ""), bx + bw, y2 + 15, { align: "right" });
+  y += boxH + 5;
+
+  // ---- Tableau des tickets ----
   const cols = [
-    { t: "Référence", w: 30 },
-    { t: "Titre", w: 111 },
-    { t: "Statut", w: 22 },
-    { t: "Ouvert le", w: 31 },
-    { t: "Fermé le", w: 31 },
-    { t: "Msg", w: 13, a: "center" },
-    { t: "Délai 1re rép.", w: 35 },
+    { t: "Référence", w: 27 },
+    { t: "Titre", w: 76 },
+    { t: "Type", w: 20 },
+    { t: "Priorité", w: 19 },
+    { t: "Statut", w: 18 },
+    { t: "Ouvert le", w: 27 },
+    { t: "Fermé le", w: 27 },
+    { t: "1re réponse", w: 28 },
+    { t: "Résolution", w: 31 },
   ];
   const drawHeader = () => {
     fill(NAVY); doc.roundedRect(mL, y, W, 8.5, 1.5, 1.5, "F");
     ink(GOLD); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
     let x = mL;
-    cols.forEach(c => { doc.text(c.t, c.a === "center" ? x + c.w / 2 : x + 2.5, y + 5.6, c.a === "center" ? { align: "center" } : undefined); x += c.w; });
+    cols.forEach(c => { doc.text(c.t, x + 2.5, y + 5.6); x += c.w; });
     y += 10;
   };
   drawHeader();
@@ -651,49 +845,55 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
     doc.text("Aucun ticket sur cette période.", mL + 2.5, y + 6);
   }
   const pill = (txt, c, x, yy) => {
-    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
-    const w = doc.getTextWidth(txt) + 6;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.3);
+    const w = doc.getTextWidth(txt) + 5;
     fill(pale(c, 0.16)); doc.roundedRect(x, yy - 3.6, w, 5.2, 2.6, 2.6, "F");
-    ink(c); doc.text(txt, x + 3, yy);
+    ink(c); doc.text(txt, x + 2.5, yy);
+  };
+  const cellDelai = (h, etat, x, yy, enCours) => {
+    if (h === null || h === undefined) {
+      if (etat === "ko") pill("en retard", ROUGE, x, yy);
+      else { ink(GRIS); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.text(enCours ? "en cours" : "—", x + 0.5, yy); }
+      return;
+    }
+    pill(fmtDelaiHM(h), etat === "ko" ? ROUGE : VERT, x, yy);
   };
   rows.forEach((r, i) => {
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
-    const titreLines = doc.splitTextToSize(propre(r.subject) || "(sans objet)", cols[1].w - 5).slice(0, 3);
-    const rowH = Math.max(8, titreLines.length * 3.8 + 4.2);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.3);
+    const titreLines = doc.splitTextToSize(propre(r.subject) || "(sans objet)", cols[1].w - 4).slice(0, 3);
+    const rowH = Math.max(8, titreLines.length * 3.7 + 4.2);
     if (y + rowH > pageH - 14) { doc.addPage(); y = 14; drawHeader(); }
     const ferme = r.status === "closed";
     if (i % 2 === 0) { doc.setFillColor(247, 247, 251); doc.rect(mL, y, W, rowH, "F"); }
     fill(ferme ? VERT : BLEU); doc.rect(mL, y, 1.2, rowH, "F");
     const yt = y + 5.2;
     let x = mL;
-    // Référence
-    ink(GOLD2); doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+    ink(GOLD2); doc.setFont("helvetica", "bold"); doc.setFontSize(7.6);
     doc.text(String(r.reference || "—"), x + 3, yt); x += cols[0].w;
-    // Titre
-    ink([30, 30, 46]); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
-    doc.text(titreLines, x + 2.5, yt); x += cols[1].w;
-    // Statut
-    pill(ferme ? "Fermé" : "Ouvert", ferme ? VERT : BLEU, x + 2, yt); x += cols[2].w;
-    // Dates
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(80, 80, 95);
-    doc.text(r.created_at ? fmtD(r.created_at) : "—", x + 2.5, yt); x += cols[3].w;
-    doc.text(r.closed_at ? fmtD(r.closed_at) : "—", x + 2.5, yt); x += cols[4].w;
-    // Messages
-    doc.text(String(r.nbMessages == null ? "—" : r.nbMessages), x + cols[5].w / 2, yt, { align: "center" }); x += cols[5].w;
-    // Délai (vert < 1 h, orange < 4 h, rouge au-delà)
-    if (r.delaiH === null || r.delaiH === undefined) { ink(GRIS); doc.text("—", x + 2.5, yt); }
-    else pill(fmtDelaiHM(r.delaiH), couleurDelai(r.delaiH), x + 2, yt);
+    ink([30, 30, 46]); doc.setFont("helvetica", "normal"); doc.setFontSize(8.3);
+    doc.text(titreLines, x + 2, yt); x += cols[1].w;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.6);
+    ink(r.type === "demande" ? VIOLET : ORANGE); doc.text(r.type === "demande" ? "Demande" : "Incident", x + 2.5, yt); x += cols[2].w;
+    pill(r.priority || "—", PRIO_C[r.priority] || GRIS, x + 1.5, yt); x += cols[3].w;
+    pill(ferme ? "Fermé" : "Ouvert", ferme ? VERT : BLEU, x + 1.5, yt); x += cols[4].w;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.6); doc.setTextColor(80, 80, 95);
+    doc.text(r.created_at ? fmtD(r.created_at) : "—", x + 2, yt); x += cols[5].w;
+    doc.text(r.closed_at ? fmtD(r.closed_at) : "—", x + 2, yt); x += cols[6].w;
+    cellDelai(r.delaiH, r.slaRep, x + 1.5, yt, false); x += cols[7].w;
+    cellDelai(r.resolH, r.slaRes, x + 1.5, yt, !ferme);
     y += rowH;
   });
 
   // Légende + pied de page sur chaque page
+  const cibles = SLA_PRIORITES.map(s => s.p + " " + fmtCibleSla(s.rep) + " / " + fmtCibleSla(s.res)).join("  ·  ");
   const pages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
     doc.setPage(p);
-    doc.setDrawColor(226, 226, 234); doc.setLineWidth(0.3); doc.line(mL, pageH - 10, pageW - mR, pageH - 10);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(150, 150, 160);
-    doc.text("Document généré le " + (opts.genereLe || new Date().toLocaleString("fr-FR")) + " — DSI Hotel  •  Délai de 1re réponse : vert < 1 h, orange < 4 h, rouge au-delà", mL, pageH - 5.5);
-    doc.text("Page " + p + " / " + pages, pageW - mR, pageH - 5.5, { align: "right" });
+    doc.setDrawColor(226, 226, 234); doc.setLineWidth(0.3); doc.line(mL, pageH - 11, pageW - mR, pageH - 11);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(150, 150, 160);
+    doc.text("Délais en heures ouvrées (lun.-ven. " + SLA_H_DEBUT + " h-" + SLA_H_FIN + " h). Vert : dans la cible SLA, rouge : hors SLA. Cibles 1re réponse / résolution : " + cibles, mL, pageH - 7.3);
+    doc.text("Document généré le " + (opts.genereLe || new Date().toLocaleString("fr-FR")) + " - DSI Hotel", mL, pageH - 3.8);
+    doc.text("Page " + p + " / " + pages, pageW - mR, pageH - 3.8, { align: "right" });
   }
   return doc;
 }
@@ -1454,7 +1654,9 @@ function App() {
   // Liste explicite des colonnes de tickets à charger côté portail.
   // note_interne en est VOLONTAIREMENT exclue : elle n'est jamais transmise
   // au navigateur par les requêtes de liste, et reste protégée en base.
-  const TICKET_COLS = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,subject,message,category,priority,status,source,reference,created_at,closed_at,prestataire,en_attente,date_attente,assigned_to";
+  const TICKET_COLS_BASE = "id,hotel_id,contact_name,contact_email,contact_phone,contact_role,subject,message,category,priority,status,source,reference,created_at,closed_at,prestataire,en_attente,date_attente,assigned_to";
+  // type_ticket (incident / demande) : script tickets_type.sql. Sans lui, repli automatique sur TICKET_COLS_BASE.
+  const TICKET_COLS = TICKET_COLS_BASE + ",type_ticket";
   const [replyText, setReplyText] = useState("");
   const [replyHtml, setReplyHtml] = useState(""); // contenu riche (HTML) de la réponse admin — images inline au curseur
   const [replyBusy, setReplyBusy] = useState(false);
@@ -2744,6 +2946,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     };
     (async () => {
       let { data, error } = await fetchAll(TICKET_COLS);
+      if (error) ({ data, error } = await fetchAll(TICKET_COLS_BASE));
       if (error) {
         // Repli de sécurité : si la liste de colonnes explicite échoue (colonne
         // absente, etc.), on recharge avec select(*) pour ne jamais afficher 0 ticket.
@@ -3715,50 +3918,47 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setRapTkGenere(false);
     try {
       // Bornes de période : on inclut toute la journée de fin.
-      const bDu = rapTkDu ? new Date(rapTkDu + "T00:00:00").toISOString() : null;
-      const bAu = rapTkAu ? new Date(rapTkAu + "T23:59:59").toISOString() : null;
-
-      let q = sb.from("tickets").select(TICKET_COLS).eq("hotel_id", hid).order("created_at", { ascending: false });
-      if (bDu) q = q.gte("created_at", bDu);
-      if (bAu) q = q.lte("created_at", bAu);
-      const { data: tksBruts, error } = await q;
-      if (error) throw error;
+      const bDuMs = rapTkDu ? new Date(rapTkDu + "T00:00:00").getTime() : 0;
+      const bAuMs = rapTkAu ? new Date(rapTkAu + "T23:59:59").getTime() : Date.now();
+      const isoDu = new Date(bDuMs).toISOString(), isoAu = new Date(bAuMs).toISOString();
+      // Tickets concernés : créés sur la période, fermés sur la période, ou encore ouverts.
+      const charger = async (cols) => {
+        let tous = [];
+        for (let from = 0; from < 10000; from += 1000) {
+          const { data, error } = await sb.from("tickets").select(cols).eq("hotel_id", hid)
+            .lte("created_at", isoAu)
+            .or('created_at.gte."' + isoDu + '",closed_at.gte."' + isoDu + '",status.neq.closed')
+            .order("created_at", { ascending: false }).range(from, from + 999);
+          if (error) return { error };
+          tous = tous.concat(data || []);
+          if (!data || data.length < 1000) break;
+        }
+        return { data: tous };
+      };
+      let res = await charger(TICKET_COLS);
+      if (res.error) res = await charger(TICKET_COLS_BASE);
+      if (res.error) throw res.error;
       // Les alertes automatiques de sauvegarde (CheckCentral / Veeam, catégorie « Sauvegarde ») et les alertes Sophos / Microsoft 365 (Defender) ne figurent pas dans le rapport client
-      const tks = (tksBruts || []).filter(t => !estAlerteAuto(t) && t.category !== "Sauvegarde" && !/\[Sophos\]/i.test(String(t.subject || "")));
+      const tks = (res.data || []).filter(t => !estAlerteAuto(t) && t.category !== "Sauvegarde" && !/\[Sophos\]/i.test(String(t.subject || "")));
 
+      // Messages (1re réponse) : par lots de 100 tickets, pages de 1000 lignes.
       const ids = tks.map(t => t.id);
-      // Récupère tous les messages de ces tickets pour compter et mesurer le délai.
-      let msgsByTicket = {};
-      if (ids.length > 0) {
-        const { data: msgs } = await sb.from("ticket_messages")
-          .select("ticket_id,sender_role,created_at")
-          .in("ticket_id", ids)
-          .order("created_at", { ascending: true });
-        (msgs || []).forEach(m => { (msgsByTicket[m.ticket_id] = msgsByTicket[m.ticket_id] || []).push(m); });
+      const msgsByTicket = {};
+      for (let i = 0; i < ids.length; i += 100) {
+        const lot = ids.slice(i, i + 100);
+        for (let from = 0; from < 20000; from += 1000) {
+          const { data: msgs, error: eM } = await sb.from("ticket_messages")
+            .select("ticket_id,sender_role,created_at")
+            .in("ticket_id", lot)
+            .order("created_at", { ascending: true })
+            .range(from, from + 999);
+          if (eM) throw eM;
+          (msgs || []).forEach(m => { (msgsByTicket[m.ticket_id] = msgsByTicket[m.ticket_id] || []).push(m); });
+          if (!msgs || msgs.length < 1000) break;
+        }
       }
 
-      const rows = tks.map(t => {
-        const ms = msgsByTicket[t.id] || [];
-        const nbMessages = ms.length;
-        // Délai de 1re réponse = écart entre création du ticket et 1er message "admin".
-        const premiereReponse = ms.find(m => m.sender_role === "admin");
-        let delaiH = null;
-        if (premiereReponse) {
-          const diffMs = new Date(premiereReponse.created_at) - new Date(t.created_at);
-          if (diffMs >= 0) delaiH = diffMs / 3600000; // en heures
-        }
-        return {
-          reference: t.reference || "—",
-          subject: t.subject || t.category || "(sans objet)",
-          category: t.category || "—",
-          priority: t.priority || "—",
-          status: t.status,
-          created_at: t.created_at,
-          closed_at: t.closed_at || null,
-          nbMessages,
-          delaiH,
-        };
-      });
+      const rows = calculerRapportTickets(tks, msgsByTicket, bDuMs, bAuMs);
       setRapTkRows(rows);
       setRapTkGenere(true);
       if (rows.length === 0) setRapTkNote("Aucun ticket sur cette période pour cet établissement.");
@@ -3769,15 +3969,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
-  // Statistiques de synthèse à partir des lignes calculées.
-  const rapTkStats = (() => {
-    const total = rapTkRows.length;
-    const ouverts = rapTkRows.filter(r => r.status !== "closed").length;
-    const fermes = total - ouverts;
-    const delais = rapTkRows.map(r => r.delaiH).filter(v => v !== null);
-    const delaiMoyen = delais.length ? (delais.reduce((a, b) => a + b, 0) / delais.length) : null;
-    return { total, ouverts, fermes, delaiMoyen };
-  })();
+  // Indicateurs du tableau de bord (voir statsRapportTickets).
+  const rapTkStats = statsRapportTickets(rapTkRows);
 
   // Formatage lisible d'un délai (ex. "4 h 12 min", "1 j 2 h 05 min").
   const fmtDelai = fmtDelaiHM;
@@ -3792,14 +3985,20 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const s = String(v === null || v === undefined ? "" : v);
       return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const entete = ["Référence", "Titre", "Statut", "Ouvert le", "Fermé le", "Nb messages", "Délai 1re réponse"];
+    const hNum = (h) => h == null ? "" : String(Math.round(h * 100) / 100).replace(".", ",");
+    const slaTxt = (e) => e === "ok" ? "Respecté" : e === "ko" ? "Dépassé" : "";
+    const entete = ["Référence", "Titre", "Type", "Priorité", "Statut", "Ouvert le", "Fermé le", "Nb messages",
+      "Délai 1re réponse", "1re réponse (h ouvrées)", "SLA 1re réponse", "Résolution", "Résolution (h ouvrées)", "SLA résolution"];
     const lignes = rapTkRows.map(r => [
       r.reference, r.subject,
+      r.type === "demande" ? "Demande" : "Incident",
+      r.priority,
       r.status === "closed" ? "Fermé" : "Ouvert",
       fmtDateHeureFr(r.created_at),
       r.closed_at ? fmtDateHeureFr(r.closed_at) : "",
       r.nbMessages,
-      fmtDelai(r.delaiH),
+      fmtDelai(r.delaiH), hNum(r.delaiH), slaTxt(r.slaRep),
+      fmtDelai(r.resolH), hNum(r.resolH), slaTxt(r.slaRes),
     ]);
     const contenu = [entete, ...lignes].map(row => row.map(esc).join(sep)).join("\r\n");
     // BOM UTF-8 pour que les accents s'affichent correctement dans Excel
@@ -3820,6 +4019,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       hotelName: hotel ? hotel.name : "—",
       logo,
       periode: (rapTkDu ? fmtDateFr(rapTkDu) : "début") + " au " + (rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui"),
+      finPeriode: rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui",
       rows: rapTkRows,
       stats: rapTkStats,
     });
@@ -3874,8 +4074,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const bodyText =
         "Bonjour,\n\n" +
         "Veuillez trouver ci-joint le rapport de suivi de vos tickets de support pour la période du " + periode + ".\n\n" +
-        "Synthèse : " + rapTkStats.total + " ticket(s) au total, dont " + rapTkStats.ouverts + " ouvert(s) et " + rapTkStats.fermes + " fermé(s)" +
-        (rapTkStats.delaiMoyen != null ? " — délai moyen de 1re réponse : " + fmtDelai(rapTkStats.delaiMoyen) : "") + ".\n\n" +
+        "Synthèse : " + rapTkStats.crees + " ticket(s) créé(s) et " + rapTkStats.fermes + " fermé(s) sur la période, " + rapTkStats.enCoursFin + " en cours au " + (rapTkAu ? fmtDateFr(rapTkAu) : "jour") + "." +
+        (rapTkStats.slaPct != null ? " Respect des SLA : " + rapTkStats.slaPct + " %." : "") +
+        (rapTkStats.delaiMed != null ? " Délai médian de 1re réponse : " + fmtDelai(rapTkStats.delaiMed) + " (heures ouvrées)." : "") + "\n\n" +
         "Nous restons à votre disposition pour toute question.";
       const bodyFinal = (messagePerso && messagePerso.trim()) ? bodyText.replace("Bonjour,\n\n", "Bonjour,\n\n" + messagePerso.trim() + "\n\n") : bodyText;
       const mail = buildSignedEmail(bodyFinal);
@@ -6017,8 +6218,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ---------- TICKETS : CHANGER LE STATUT ----------
   const setTicketStatus = async (ticket, newStatus) => {
-    const { error } = await sb.from("tickets").update({ status: newStatus }).eq("id", ticket.id);
-    if (!error) setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: newStatus } : t));
+    const fermeLe = newStatus === "closed" ? new Date().toISOString() : null;
+    const { error } = await sb.from("tickets").update({ status: newStatus, closed_at: fermeLe }).eq("id", ticket.id);
+    if (!error) setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: newStatus, closed_at: fermeLe } : t));
   };
 
   const adminFromName = () => {
@@ -6707,12 +6909,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setHcLoading(true); setHcErr("");
     try {
       let rows = [];
+      let hcCols = TICKET_COLS;
       for (let from = 0; from < 10000; from += 1000) {
-        let q = sb.from("tickets").select(TICKET_COLS)
+        let q = sb.from("tickets").select(hcCols)
           .or('contact_role.eq."Demande interne",category.eq."Création de compte"')
           .order("created_at", { ascending: false }).range(from, from + 999);
         if (!isAdmin) q = q.eq("hotel_id", myHotelId || "00000000-0000-0000-0000-000000000000");
         const { data, error } = await q;
+        if (error && hcCols !== TICKET_COLS_BASE && /type_ticket/i.test(error.message || "")) { hcCols = TICKET_COLS_BASE; from -= 1000; continue; }
         if (error) throw error;
         rows = rows.concat(data || []);
         if (!data || data.length < 1000) break;
@@ -9341,7 +9545,7 @@ const nav = isAdmin
       const CHUNK = 200;
       for (let i = 0; i < closeSel.length; i += CHUNK) {
         const lot = closeSel.slice(i, i + CHUNK);
-        const { error } = await sb.from("tickets").update({ status: "closed" }).in("id", lot);
+        const { error } = await sb.from("tickets").update({ status: "closed", closed_at: new Date().toISOString() }).in("id", lot);
         if (error) throw error;
       }
       setCloseMode(false);
@@ -9374,7 +9578,7 @@ const nav = isAdmin
           body: `--- Ticket ${o.reference || o.id} (${o.subject || "sans objet"}) fusionné ici ---`
         });
         // Ferme le ticket source
-        await sb.from("tickets").update({ status: "closed", subject: "[Fusionné dans " + (dest.reference || dest.id) + "] " + (o.subject || "") }).eq("id", o.id);
+        await sb.from("tickets").update({ status: "closed", closed_at: new Date().toISOString(), subject: "[Fusionné dans " + (dest.reference || dest.id) + "] " + (o.subject || "") }).eq("id", o.id);
       }
       // Rouvre le ticket de destination si besoin
       await sb.from("tickets").update({ status: "open" }).eq("id", dest.id);
@@ -9668,6 +9872,17 @@ const nav = isAdmin
                   techniciens.map(tc => React.createElement('option', { key: tc.id, value: tc.id }, tc.nom))
                 ),
                 (session && session.user && t.assigned_to !== session.user.id) && React.createElement('button', { onClick: () => assignerTechnicien(t, session.user.id), style: { padding: "4px 9px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 6, fontSize: 11.5, cursor: "pointer" } }, "M'assigner"),
+                React.createElement('span', { style: { width: 1, height: 18, background: "#E0E0E8" } }),
+                React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "⚡ Priorité :"),
+                React.createElement('select', { value: slaDe(t.priority).p, title: "Priorité utilisée pour les SLA du rapport client", onChange: async (e) => { const val = e.target.value; const { error } = await sb.from("tickets").update({ priority: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, priority: val } : x)); else alert("Erreur : " + error.message); }, style: { padding: "5px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+                  SLA_PRIORITES.map(sp => React.createElement('option', { key: sp.p, value: sp.p }, sp.code + " " + sp.p))
+                ),
+                React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "🏷️ Type :"),
+                React.createElement('select', { value: t.type_ticket || "", title: "Incident ou demande (rapport client). « Auto » = détection d'après la catégorie et l'objet", onChange: async (e) => { const val = e.target.value || null; const { error } = await sb.from("tickets").update({ type_ticket: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, type_ticket: val } : x)); else alert("Erreur : " + error.message + (/type_ticket/i.test(error.message || "") ? "\n\nLe script tickets_type.sql a-t-il été exécuté dans Supabase ?" : "")); }, style: { padding: "5px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
+                  React.createElement('option', { value: "" }, "Auto (" + (typeTicket({ ...t, type_ticket: null }) === "demande" ? "demande" : "incident") + ")"),
+                  React.createElement('option', { value: "incident" }, "Incident"),
+                  React.createElement('option', { value: "demande" }, "Demande")
+                ),
                 React.createElement('span', { style: { width: 1, height: 18, background: "#E0E0E8" } }),
                 React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "🔗 Prestataire :"),
                 React.createElement('select', { value: t.prestataire || "", onChange: async (e) => { const val = e.target.value || null; const { error } = await sb.from("tickets").update({ prestataire: val }).eq("id", t.id); if (!error) setTickets(prev => prev.map(x => x.id === t.id ? { ...x, prestataire: val } : x)); else alert("Erreur : " + error.message); }, style: { padding: "5px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
@@ -10234,22 +10449,68 @@ const nav = isAdmin
   // ---------- RAPPORT DE SUIVI DES TICKETS ----------
   // Tableau + barre de synthèse + boutons export, partagés admin/superviseur.
   const renderRapportTicketsTable = () => {
+    const st = rapTkStats;
     const stColor = (s) => s === "closed" ? "#999" : "#2F855A";
-    const prColor = (p) => ({ "Urgent": "#E53E3E", "Haute": "#DD6B20", "Moyenne": "#3182CE", "Basse": "#718096" }[p] || "#718096");
+    const PRIO_COUL = { "Urgent": "#C53030", "Haute": "#DD6B20", "Moyenne": "#2B6CB0", "Basse": "#718096" };
+    const prColor = (p) => PRIO_COUL[p] || "#718096";
+    const pastille = (txt, c, bg) => React.createElement('span', { style: { fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, color: c, background: bg, whiteSpace: "nowrap" } }, txt);
+    const cellDelai = (h, etat, enCours) => {
+      if (h === null || h === undefined) return etat === "ko" ? pastille("en retard", "#C53030", "#FDECEC") : React.createElement('span', { style: { color: "#AAA", fontSize: 11 } }, enCours ? "en cours" : "—");
+      return etat === "ko" ? pastille(fmtDelai(h), "#C53030", "#FDECEC") : pastille(fmtDelai(h), "#2F855A", "#E9F6EE");
+    };
+    const finLbl = rapTkAu ? fmtDateFr(rapTkAu) : "aujourd'hui";
+    const slaCoul = st.slaPct == null ? "#718096" : st.slaPct >= 90 ? "#2F855A" : st.slaPct >= 75 ? "#C05621" : "#C53030";
+    const totType = (st.incidents || 0) + (st.demandes || 0);
+    const pct = (n, tot) => tot ? Math.round(100 * n / tot) + " %" : "";
+    const carte = { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" };
+    const tuile = (lbl, val, sous, coul) => React.createElement('div', { style: { ...carte, flex: "1 1 160px", borderLeft: "4px solid " + coul } },
+      React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 4 } }, lbl),
+      React.createElement('div', { style: { fontSize: 24, fontWeight: 700, color: coul, lineHeight: 1.15 } }, String(val)),
+      sous && React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 3 } }, sous));
     const th = (txt, extra) => React.createElement('th', { style: Object.assign({ textAlign: "left", padding: "9px 10px", fontSize: 11, fontWeight: 600, color: "#666", borderBottom: "2px solid #E8E8F0", whiteSpace: "nowrap" }, extra || {}) }, txt);
     const td = (child, extra) => React.createElement('td', { style: Object.assign({ padding: "9px 10px", fontSize: 12, color: "#333", borderBottom: "1px solid #F2F2F6", verticalAlign: "top" }, extra || {}) }, child);
+    const delaiBloc = (lbl, med, moy) => React.createElement('div', { style: { flex: 1 } },
+      React.createElement('div', { style: { fontSize: 11, color: "#888" } }, lbl + " (médiane)"),
+      React.createElement('div', { style: { fontSize: 19, fontWeight: 700, color: "#1a1a3e" } }, fmtDelai(med)),
+      moy != null && React.createElement('div', { style: { fontSize: 11, color: "#999" } }, "moyenne " + fmtDelai(moy)));
     return React.createElement('div', null,
-      // Bandeau de synthèse (4 chiffres clés)
-      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
-        [
-          { l: "Total tickets", v: rapTkStats.total, c: "#0F0F24" },
-          { l: "Ouverts", v: rapTkStats.ouverts, c: "#2F855A" },
-          { l: "Fermés", v: rapTkStats.fermes, c: "#888" },
-          { l: "Délai moyen 1re réponse", v: fmtDelai(rapTkStats.delaiMoyen), c: G2 },
-        ].map((s, i) => React.createElement('div', { key: i, style: { flex: "1 1 150px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
-          React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 5 } }, s.l),
-          React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: s.c } }, String(s.v))
-        ))
+      // ---- Tableau de bord : ligne 1 ----
+      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 } },
+        tuile("Créés sur la période", st.crees, "nouvelles demandes de l'hôtel", "#0F0F24"),
+        tuile("Fermés sur la période", st.fermes, "y compris tickets antérieurs", "#2F855A"),
+        tuile("En cours au " + finLbl, st.enCoursFin, "reste à traiter en fin de période", "#2B6CB0"),
+        tuile("Respect des SLA", st.slaPct == null ? "—" : st.slaPct + " %", st.slaEvalues ? st.horsSla + " ticket(s) hors SLA sur " + st.slaEvalues : "aucun ticket évaluable", slaCoul)
+      ),
+      // ---- Tableau de bord : ligne 2 ----
+      React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16, alignItems: "stretch" } },
+        React.createElement('div', { style: { ...carte, flex: "3 1 420px", overflowX: "auto" } },
+          React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#1a1a3e", marginBottom: 8 } }, "Par priorité ", React.createElement('span', { style: { fontWeight: 400, color: "#999" } }, "(tickets créés sur la période · délais en heures ouvrées, lun.-ven. " + SLA_H_DEBUT + " h-" + SLA_H_FIN + " h)")),
+          React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 480 } },
+            React.createElement('thead', null, React.createElement('tr', null,
+              th("Priorité"), th("Cible 1re réponse"), th("Cible résolution"), th("Tickets", { textAlign: "center" }), th("Hors SLA réponse", { textAlign: "center" }), th("Hors SLA résolution", { textAlign: "center" }), th("Résolution médiane"))),
+            React.createElement('tbody', null, (st.parPrio || []).map(p => React.createElement('tr', { key: p.p },
+              td(pastille(p.code + " " + p.p, prColor(p.p), prColor(p.p) + "1A")),
+              td(fmtCibleSla(p.rep)), td(fmtCibleSla(p.res)),
+              td(React.createElement('b', null, String(p.n)), { textAlign: "center" }),
+              td(React.createElement('b', { style: { color: p.horsRep ? "#C53030" : "#2F855A" } }, p.horsRep + (p.n ? " (" + pct(p.horsRep, p.n) + ")" : "")), { textAlign: "center" }),
+              td(React.createElement('b', { style: { color: p.horsRes ? "#C53030" : "#2F855A" } }, p.horsRes + (p.n ? " (" + pct(p.horsRes, p.n) + ")" : "")), { textAlign: "center" }),
+              td(fmtDelai(p.resolMed))
+            )))
+          )
+        ),
+        React.createElement('div', { style: { flex: "2 1 280px", display: "flex", flexDirection: "column", gap: 12 } },
+          React.createElement('div', { style: { ...carte, display: "flex", gap: 14 } },
+            delaiBloc("1re réponse", st.delaiMed, st.delaiMoy),
+            delaiBloc("Résolution", st.resolMed, st.resolMoy)),
+          React.createElement('div', { style: carte },
+            React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 7 } }, "Incidents / demandes (tickets créés)"),
+            React.createElement('div', { style: { display: "flex", height: 10, borderRadius: 5, overflow: "hidden", background: "#E2E2EA", marginBottom: 7 } },
+              totType > 0 && React.createElement('div', { style: { width: (100 * st.incidents / totType) + "%", background: "#DD6B20" } }),
+              totType > 0 && React.createElement('div', { style: { width: (100 * st.demandes / totType) + "%", background: "#6B46C1" } })),
+            React.createElement('div', { style: { display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700 } },
+              React.createElement('span', { style: { color: "#DD6B20" } }, st.incidents + " incident(s) " + pct(st.incidents, totType)),
+              React.createElement('span', { style: { color: "#6B46C1" } }, st.demandes + " demande(s) " + pct(st.demandes, totType))))
+        )
       ),
       // Boutons d'export
       rapTkRows.length > 0 && React.createElement('div', { style: { display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" } },
@@ -10259,27 +10520,32 @@ const nav = isAdmin
       // Tableau
       rapTkRows.length > 0
         ? React.createElement('div', { style: { background: "white", borderRadius: 10, border: "1px solid #E8E8F0", overflow: "auto" } },
-            React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 860 } },
+            React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 1020 } },
               React.createElement('thead', null,
                 React.createElement('tr', null,
-                  th("Référence"), th("Titre"), th("Statut"),
-                  th("Ouvert le"), th("Fermé le"), th("Msg", { textAlign: "center" }), th("Délai 1re rép.")
+                  th("Référence"), th("Titre"), th("Type"), th("Priorité"), th("Statut"),
+                  th("Ouvert le"), th("Fermé le"), th("Msg", { textAlign: "center" }), th("1re réponse"), th("Résolution")
                 )
               ),
               React.createElement('tbody', null,
                 rapTkRows.map((r, i) => React.createElement('tr', { key: i },
                   td(React.createElement('span', { style: { fontWeight: 600, color: G2 } }, r.reference)),
-                  td(r.subject, { minWidth: 240 }),
+                  td(r.subject, { minWidth: 220 }),
+                  td(React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: r.type === "demande" ? "#6B46C1" : "#DD6B20" } }, r.type === "demande" ? "Demande" : "Incident")),
+                  td(pastille(r.priority, prColor(r.priority), prColor(r.priority) + "1A")),
                   td(React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: stColor(r.status), background: stColor(r.status) + "18", padding: "2px 9px", borderRadius: 20 } }, r.status === "closed" ? "Fermé" : "Ouvert")),
                   td(fmtDateHeureFr(r.created_at), { whiteSpace: "nowrap", fontSize: 11 }),
                   td(r.closed_at ? fmtDateHeureFr(r.closed_at) : "—", { whiteSpace: "nowrap", fontSize: 11 }),
                   td(String(r.nbMessages), { textAlign: "center" }),
-                  td(r.delaiH == null ? "—" : React.createElement('span', { style: { fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, color: r.delaiH < 1 ? "#2F855A" : r.delaiH < 4 ? "#C05621" : "#C53030", background: r.delaiH < 1 ? "#E9F6EE" : r.delaiH < 4 ? "#FFF3E8" : "#FDECEC" } }, fmtDelai(r.delaiH)), { whiteSpace: "nowrap" })
+                  td(cellDelai(r.delaiH, r.slaRep, false), { whiteSpace: "nowrap" }),
+                  td(cellDelai(r.resolH, r.slaRes, r.status !== "closed"), { whiteSpace: "nowrap" })
                 ))
               )
             )
           )
-        : (rapTkGenere && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun ticket sur cette période."))
+        : (rapTkGenere && React.createElement('div', { style: { padding: 28, textAlign: "center", color: "#999", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0" } }, "Aucun ticket sur cette période.")),
+      rapTkRows.length > 0 && React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 8, lineHeight: 1.6 } },
+        "Délais en heures ouvrées (lun.-ven. " + SLA_H_DEBUT + " h-" + SLA_H_FIN + " h, jours fériés non déduits). Vert : dans la cible SLA, rouge : hors SLA. Le type et la priorité se corrigent dans le ticket (barre Technicien / Prestataire).")
     );
   };
 
