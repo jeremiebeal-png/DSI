@@ -621,7 +621,9 @@ function calculerRapportTickets(tks, msgsByTicket, bDuMs, bAuMs) {
     if (ferme && fermeMs && fermeMs >= cree) resolH = heuresOuvrees(cree, fermeMs);
     const ecouleH = (!ferme && refFin > cree) ? heuresOuvrees(cree, refFin) : 0;
     const slaRep = delaiH !== null ? (delaiH > sla.rep ? "ko" : "ok") : (!ferme && ecouleH > sla.rep ? "ko" : null);
-    const slaRes = resolH !== null ? (resolH > sla.res ? "ko" : "ok") : (!ferme && ecouleH > sla.res ? "ko" : null);
+    // Résolution dépendant d'un autre prestataire : pas de SLA de résolution (la 1re réponse reste mesurée)
+    const presta = t.prestataire ? String(t.prestataire) : null;
+    const slaRes = presta ? null : resolH !== null ? (resolH > sla.res ? "ko" : "ok") : (!ferme && ecouleH > sla.res ? "ko" : null);
     const creeDansPeriode = cree >= bDuMs && cree <= bAuMs;
     const fermeDansPeriode = ferme && (fermeMs ? (fermeMs >= bDuMs && fermeMs <= bAuMs) : creeDansPeriode);
     const ouvertFin = cree <= bAuMs && !(ferme && (!fermeMs || fermeMs <= bAuMs));
@@ -636,6 +638,7 @@ function calculerRapportTickets(tks, msgsByTicket, bDuMs, bAuMs) {
       created_at: t.created_at,
       closed_at: t.closed_at || null,
       nbMessages: ms.length,
+      prestataire: presta,
       delaiH, resolH, slaRep, slaRes,
       creeDansPeriode, fermeDansPeriode, ouvertFin,
     };
@@ -655,6 +658,7 @@ function statsRapportTickets(rows) {
     crees: crees.length,
     fermes: fermes.length,
     enCoursFin: rows.filter(r => r.ouvertFin).length,
+    enCoursPresta: rows.filter(r => r.ouvertFin && r.prestataire).length,
     ouverts: rows.filter(r => r.status !== "closed").length,
     delaiMed: medianeDe(crees.map(r => r.delaiH)),
     delaiMoy: moyenneDe(crees.map(r => r.delaiH)),
@@ -673,13 +677,148 @@ function statsRapportTickets(rows) {
 }
 
 // Dessin du PDF (jsPDF). opts = { hotelName, logo, periode, finPeriode, rows, stats, genereLe?, timeZone? }
+// Définitions affichées sur la page de garde du rapport (et à l'écran)
+const PRIORITE_DEFS = {
+  "Urgent":  { titre: "Arrêt de l'activité", txt: "L'hôtel ou un service critique est à l'arrêt, sans solution de contournement.", ex: "PMS Opera, Internet, caisses (POS), encodeur de clés" },
+  "Haute":   { titre: "Service fortement dégradé", txt: "Un service important ou un poste clé est bloqué ; l'activité continue avec difficulté.", ex: "poste de réception en panne, Wi-Fi clients instable" },
+  "Moyenne": { titre: "Gêne pour un utilisateur", txt: "Problème ou demande courante qui ne bloque pas l'activité de l'hôtel.", ex: "boîte mail d'un collaborateur, accès à un dossier, logiciel à installer" },
+  "Basse":   { titre: "Demande planifiable", txt: "Évolution, information ou intervention à programmer.", ex: "nouveau matériel à commander, mise à jour planifiée, devis" },
+};
+const COLONNES_DEFS = [
+  ["Créés / fermés", "Tickets ouverts par l'hôtel pendant la période / tickets clôturés pendant la période (y compris ouverts avant)."],
+  ["En cours au ...", "Tickets encore ouverts à la date de fin de la période, dont ceux suivis chez un prestataire."],
+  ["Respect des SLA", "Part des tickets traités dans les délais cibles de leur priorité (1re réponse et résolution)."],
+  ["Délais médians", "Délai du ticket « du milieu » : plus représentatif que la moyenne, qu'un cas exceptionnel fausse."],
+  ["Type", "Incident : quelque chose ne fonctionne plus. Demande : un besoin nouveau (compte, matériel, accès, devis)."],
+  ["Priorité", "P1 à P4, fixée par nos techniciens selon l'impact sur l'activité (voir ci-contre)."],
+  ["Statut", "Ouvert, Fermé, ou Prestataire : la résolution dépend d'un autre prestataire et nous assurons le suivi."],
+  ["1re réponse", "Délai entre l'ouverture du ticket et la première réponse d'un technicien DSI Hotel."],
+  ["Résolution", "Délai entre l'ouverture et la clôture du ticket. « en cours » : ticket non clôturé."],
+  ["Couleurs", "Vert : dans la cible SLA. Rouge / « en retard » : cible dépassée."],
+];
+
+function dessinerPageGarde(doc, opts, k) {
+  const { NAVY, GOLD, GOLD2, GRIS, VIOLET, fill, ink, pale, PRIO_C } = k;
+  const pageW = 297, mL = 12, mR = 12;
+  const gris = (v) => doc.setTextColor(v, v, v + 12);
+  // Bandeau
+  fill(NAVY); doc.rect(0, 0, pageW, 24, "F");
+  fill(GOLD); doc.rect(0, 24, pageW, 1.2, "F");
+  ink(GOLD); doc.setFont("helvetica", "bold"); doc.setFontSize(17); doc.text("DSI HOTEL", mL, 12);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.setTextColor(185, 185, 205);
+  doc.text("60 Rue François 1er, 75008 Paris  •  +33 1 84 18 02 23  •  support@dsihotel.com", mL, 18.5);
+  doc.setTextColor(255, 255, 255); doc.setFontSize(10);
+  doc.text("Rapport de suivi des tickets", pageW - mR, 14, { align: "right" });
+
+  // ---- Bloc identité (gauche) : logo, hôtel, période ----
+  const gx = mL, gw = 112, gy = 32, gh = 70;
+  fill([247, 247, 251]); doc.roundedRect(gx, gy, gw, gh, 3, 3, "F");
+  let logoBas = gy + 8;
+  if (opts.logo && opts.logo.data) {
+    try {
+      let lw = opts.logo.w, lh = opts.logo.h;
+      if (!lw || !lh) { const pr = doc.getImageProperties(opts.logo.data); lw = pr.width; lh = pr.height; }
+      const r = lw / lh; let w = 64, h = w / r; if (h > 30) { h = 30; w = h * r; }
+      doc.addImage(opts.logo.data, opts.logo.format || "PNG", gx + (gw - w) / 2, gy + 6, w, h);
+      logoBas = gy + 6 + h + 3;
+    } catch (e) {}
+  }
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(17);
+  const nom = doc.splitTextToSize(opts.hotelName || "—", gw - 12).slice(0, 2);
+  const yNom = Math.max(logoBas + 7, gy + 22);
+  doc.text(nom, gx + gw / 2, yNom, { align: "center" });
+  const yApres = yNom + (nom.length - 1) * 7;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); gris(90);
+  doc.text("Rapport de suivi des tickets de support", gx + gw / 2, yApres + 6.5, { align: "center" });
+  const per = "Période : " + (opts.periode || "—");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+  const pw = doc.getTextWidth(per) + 10;
+  fill(pale(GOLD, 0.2)); doc.roundedRect(gx + (gw - pw) / 2, yApres + 9.5, pw, 7.5, 3.7, 3.7, "F");
+  ink(GOLD2); doc.text(per, gx + gw / 2, yApres + 14.4, { align: "center" });
+
+  // ---- Bloc horaires / calcul (droite) ----
+  const hx = gx + gw + 6, hw = pageW - mR - hx;
+  fill(pale(NAVY, 0.06)); doc.roundedRect(hx, gy, hw, gh, 3, 3, "F");
+  fill(GOLD); doc.rect(hx, gy + 4, 1.6, gh - 8, "F");
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+  doc.text("Horaires du support et calcul des délais", hx + 7, gy + 8);
+  const points = [
+    ["Support ouvert du lundi au vendredi, de " + SLA_H_DEBUT + " h à " + SLA_H_FIN + " h", " (heure de Paris)."],
+    ["Délais en heures ouvrées : ", "les nuits, samedis et dimanches ne sont pas décomptés. Un ticket ouvert le vendredi à 18 h et traité le lundi à 9 h a ainsi un délai de 2 h. Un jour ouvré = " + SLA_JOUR_H + " h."],
+    ["Urgences du week-end : ", "nous restons joignables le week-end pour toute urgence P1 (arrêt de l'activité de l'hôtel)."],
+    ["Tickets suivis chez un prestataire : ", "quand la résolution dépend d'un autre prestataire (éditeur, opérateur, constructeur...), nous gardons le ticket ouvert pour en assurer le suivi jusqu'à la résolution complète. Son délai de résolution ne dépend pas de nous : il n'est pas compté dans le SLA de résolution, la 1re réponse reste mesurée."],
+  ];
+  let py = gy + 15.5;
+  points.forEach(([gras, txt]) => {
+    doc.setFontSize(8.4);
+    fill(GOLD); doc.circle(hx + 8.2, py - 1.1, 0.9, "F");
+    doc.setFont("helvetica", "bold"); ink(NAVY);
+    const gw2 = doc.getTextWidth(gras);
+    // 1re ligne : début en gras, suite en normal ; lignes suivantes en normal
+    doc.setFont("helvetica", "normal");
+    const largeur = hw - 18;
+    const premiere = doc.splitTextToSize(txt, largeur - gw2)[0] || "";
+    const reste = txt.slice(premiere.length).trim();
+    doc.setFont("helvetica", "bold"); ink(NAVY); doc.text(gras, hx + 11, py);
+    doc.setFont("helvetica", "normal"); gris(60); doc.text(premiere, hx + 11 + gw2, py);
+    const lignes = reste ? doc.splitTextToSize(reste, largeur) : [];
+    if (lignes.length) doc.text(lignes, hx + 11, py + 4);
+    py += 4 + lignes.length * 4 + 2.6;
+  });
+
+  // ---- Niveaux de priorité (bas gauche) ----
+  const by = gy + gh + 6, bh = 210 - 14 - by, pxw = 163;
+  fill([247, 247, 251]); doc.roundedRect(mL, by, pxw, bh, 3, 3, "F");
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+  doc.text("Niveaux de priorité et délais cibles (SLA)", mL + 5, by + 7.5);
+  doc.setFontSize(6.8); gris(120);
+  doc.text("1RE RÉPONSE", mL + pxw - 38, by + 7.5, { align: "center" });
+  doc.text("RÉSOLUTION", mL + pxw - 15, by + 7.5, { align: "center" });
+  const rh = (bh - 12) / 4;
+  SLA_PRIORITES.forEach((sp, i) => {
+    const d = PRIORITE_DEFS[sp.p] || {}, c = PRIO_C[sp.p] || GRIS;
+    const yy = by + 11 + i * rh;
+    if (i) { doc.setDrawColor(226, 226, 234); doc.setLineWidth(0.2); doc.line(mL + 4, yy - 1, mL + pxw - 4, yy - 1); }
+    fill(pale(c, 0.16)); doc.roundedRect(mL + 5, yy + 1.2, 22, 7, 3.5, 3.5, "F");
+    ink(c); doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    doc.text(sp.code + " " + sp.p, mL + 16, yy + 5.9, { align: "center" });
+    const tx = mL + 31, tw = pxw - 31 - 52;
+    ink(NAVY); doc.setFontSize(8.6); doc.text(d.titre || "", tx, yy + 4.2);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7.6); gris(70);
+    const l1 = doc.splitTextToSize(d.txt || "", tw).slice(0, 2);
+    doc.text(l1, tx, yy + 8);
+    doc.setFont("helvetica", "italic"); doc.setFontSize(7); gris(125);
+    doc.text(doc.splitTextToSize("Ex. : " + (d.ex || ""), tw).slice(0, 2), tx, yy + 8 + l1.length * 3.4);
+    ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text(fmtCibleSla(sp.rep), mL + pxw - 38, yy + 6.2, { align: "center" });
+    doc.text(fmtCibleSla(sp.res), mL + pxw - 15, yy + 6.2, { align: "center" });
+    if (sp.code === "P1") { doc.setFont("helvetica", "normal"); doc.setFontSize(6.4); ink(c); doc.text("+ astreinte week-end", mL + pxw - 26.5, yy + 10.5, { align: "center" }); }
+  });
+
+  // ---- Lecture du rapport (bas droite) ----
+  const cx = mL + pxw + 6, cw = pageW - mR - cx;
+  fill([247, 247, 251]); doc.roundedRect(cx, by, cw, bh, 3, 3, "F");
+  ink(NAVY); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+  doc.text("Comment lire ce rapport", cx + 5, by + 7.5);
+  let cy = by + 13.2;
+  COLONNES_DEFS.forEach(([t, d]) => {
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.3); ink(NAVY);
+    doc.text(t, cx + 5, cy);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); gris(75);
+    const l = doc.splitTextToSize(d, cw - 36);
+    doc.text(l, cx + 31, cy);
+    cy += Math.max(1, l.length) * 3.15 + 1.75;
+  });
+}
+
 function fmtDelaiHM(h) {
   if (h === null || h === undefined || isNaN(h)) return "—";
   const totalMin = Math.max(0, Math.round(h * 60));
-  const j = Math.floor(totalMin / 1440);
-  const hh = Math.floor((totalMin % 1440) / 60);
+  const jourMin = SLA_JOUR_H * 60;
+  const j = Math.floor(totalMin / jourMin);
+  const hh = Math.floor((totalMin % jourMin) / 60);
   const mm = String(totalMin % 60).padStart(2, "0");
-  return (j ? j + " j " : "") + hh + " h " + mm + " min";
+  return j ? j + " j ouvré" + (j > 1 ? "s" : "") + " " + hh + " h " + mm : hh + " h " + mm + " min";
 }
 function dessinerRapportTicketsPdf(jsPDF, opts) {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
@@ -696,6 +835,9 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   // jsPDF (police standard) ne sait pas afficher les emojis : on les retire des titres
   const propre = (t) => String(t || "").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/[^\u0000-ÿ•€]/g, "").replace(/\s+/g, " ").trim();
   let y = 0;
+
+  dessinerPageGarde(doc, opts, { NAVY, GOLD, GOLD2, BLEU, VERT, ORANGE, ROUGE, GRIS, VIOLET, fill, ink, pale, PRIO_C, propre });
+  doc.addPage();
 
   // ---- En-tête : bandeau bleu nuit + liseré or ----
   fill(NAVY); doc.rect(0, 0, pageW, 32, "F");
@@ -746,7 +888,7 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   const tuiles = [
     { l: "CRÉÉS SUR LA PÉRIODE", v: String(st.crees || 0), s: "nouvelles demandes de l'hôtel", c: NAVY },
     { l: "FERMÉS SUR LA PÉRIODE", v: String(st.fermes || 0), s: "y compris tickets antérieurs", c: VERT },
-    { l: "EN COURS AU " + (opts.finPeriode || "").toUpperCase(), v: String(st.enCoursFin || 0), s: "reste à traiter en fin de période", c: BLEU },
+    { l: "EN COURS AU " + (opts.finPeriode || "").toUpperCase(), v: String(st.enCoursFin || 0), s: st.enCoursPresta ? "dont " + st.enCoursPresta + " suivi(s) chez un prestataire" : "reste à traiter en fin de période", c: BLEU },
     { l: "RESPECT DES SLA", v: st.slaPct == null ? "—" : st.slaPct + " %", s: st.slaEvalues ? st.horsSla + " ticket(s) hors SLA sur " + st.slaEvalues : "aucun ticket évaluable", c: slaC },
   ];
   const gap = 5, tw = (W - gap * 3) / 4, th = 20;
@@ -822,10 +964,10 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
   // ---- Tableau des tickets ----
   const cols = [
     { t: "Référence", w: 27 },
-    { t: "Titre", w: 76 },
+    { t: "Titre", w: 74 },
     { t: "Type", w: 20 },
     { t: "Priorité", w: 19 },
-    { t: "Statut", w: 18 },
+    { t: "Statut", w: 20 },
     { t: "Ouvert le", w: 27 },
     { t: "Fermé le", w: 27 },
     { t: "1re réponse", w: 28 },
@@ -865,7 +1007,7 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
     if (y + rowH > pageH - 14) { doc.addPage(); y = 14; drawHeader(); }
     const ferme = r.status === "closed";
     if (i % 2 === 0) { doc.setFillColor(247, 247, 251); doc.rect(mL, y, W, rowH, "F"); }
-    fill(ferme ? VERT : BLEU); doc.rect(mL, y, 1.2, rowH, "F");
+    fill(ferme ? VERT : r.prestataire ? VIOLET : BLEU); doc.rect(mL, y, 1.2, rowH, "F");
     const yt = y + 5.2;
     let x = mL;
     ink(GOLD2); doc.setFont("helvetica", "bold"); doc.setFontSize(7.6);
@@ -875,12 +1017,16 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
     doc.setFont("helvetica", "bold"); doc.setFontSize(7.6);
     ink(r.type === "demande" ? VIOLET : ORANGE); doc.text(r.type === "demande" ? "Demande" : "Incident", x + 2.5, yt); x += cols[2].w;
     pill(r.priority || "—", PRIO_C[r.priority] || GRIS, x + 1.5, yt); x += cols[3].w;
-    pill(ferme ? "Fermé" : "Ouvert", ferme ? VERT : BLEU, x + 1.5, yt); x += cols[4].w;
+    if (!ferme && r.prestataire) pill("Prestataire", VIOLET, x + 1.5, yt); else pill(ferme ? "Fermé" : "Ouvert", ferme ? VERT : BLEU, x + 1.5, yt); x += cols[4].w;
     doc.setFont("helvetica", "normal"); doc.setFontSize(7.6); doc.setTextColor(80, 80, 95);
     doc.text(r.created_at ? fmtD(r.created_at) : "—", x + 2, yt); x += cols[5].w;
     doc.text(r.closed_at ? fmtD(r.closed_at) : "—", x + 2, yt); x += cols[6].w;
     cellDelai(r.delaiH, r.slaRep, x + 1.5, yt, false); x += cols[7].w;
-    cellDelai(r.resolH, r.slaRes, x + 1.5, yt, !ferme);
+    if (r.prestataire) {
+      if (r.resolH !== null) { ink(GRIS); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.text(fmtDelaiHM(r.resolH), x + 1.5, yt); }
+      ink(VIOLET); doc.setFont("helvetica", "bold"); doc.setFontSize(6.6);
+      doc.text(doc.splitTextToSize("Suivi " + propre(r.prestataire), cols[8].w - 3)[0], x + 1.5, r.resolH !== null ? yt + 3.4 : yt);
+    } else cellDelai(r.resolH, r.slaRes, x + 1.5, yt, !ferme);
     y += rowH;
   });
 
@@ -891,7 +1037,7 @@ function dessinerRapportTicketsPdf(jsPDF, opts) {
     doc.setPage(p);
     doc.setDrawColor(226, 226, 234); doc.setLineWidth(0.3); doc.line(mL, pageH - 11, pageW - mR, pageH - 11);
     doc.setFont("helvetica", "normal"); doc.setFontSize(6.8); doc.setTextColor(150, 150, 160);
-    doc.text("Délais en heures ouvrées (lun.-ven. " + SLA_H_DEBUT + " h-" + SLA_H_FIN + " h). Vert : dans la cible SLA, rouge : hors SLA. Cibles 1re réponse / résolution : " + cibles, mL, pageH - 7.3);
+    if (p > 1) doc.text("Délais en heures ouvrées (lun.-ven. " + SLA_H_DEBUT + " h-" + SLA_H_FIN + " h, 1 j ouvré = " + SLA_JOUR_H + " h). Vert : dans la cible SLA, rouge : hors SLA. Cibles 1re réponse / résolution : " + cibles + ". Définitions en page 1.", mL, pageH - 7.3);
     doc.text("Document généré le " + (opts.genereLe || new Date().toLocaleString("fr-FR")) + " - DSI Hotel", mL, pageH - 3.8);
     doc.text("Page " + p + " / " + pages, pageW - mR, pageH - 3.8, { align: "right" });
   }
@@ -10478,11 +10624,26 @@ const nav = isAdmin
       React.createElement('div', { style: { fontSize: 19, fontWeight: 700, color: "#1a1a3e" } }, fmtDelai(med)),
       moy != null && React.createElement('div', { style: { fontSize: 11, color: "#999" } }, "moyenne " + fmtDelai(moy)));
     return React.createElement('div', null,
+      React.createElement('details', { style: { ...carte, marginBottom: 12, fontSize: 12, color: "#444" } },
+        React.createElement('summary', { style: { cursor: "pointer", fontWeight: 700, color: "#1a1a3e" } }, "ℹ️ Comment lire ce rapport : horaires, priorités, colonnes"),
+        React.createElement('div', { style: { display: "flex", gap: 18, flexWrap: "wrap", marginTop: 10, lineHeight: 1.55 } },
+          React.createElement('div', { style: { flex: "1 1 300px" } },
+            React.createElement('div', { style: { fontWeight: 700, marginBottom: 4 } }, "Horaires et calcul des délais"),
+            React.createElement('div', null, "Support ouvert du lundi au vendredi, de " + SLA_H_DEBUT + " h à " + SLA_H_FIN + " h. Les délais sont en heures ouvrées : nuits et week-ends ne sont pas décomptés (1 jour ouvré = " + SLA_JOUR_H + " h)."),
+            React.createElement('div', null, "Le week-end, nous restons joignables pour toute urgence P1."),
+            React.createElement('div', null, "Statut « Prestataire » : la résolution dépend d'un autre prestataire ; nous gardons le ticket ouvert pour le suivi. Il n'est pas compté dans le SLA de résolution.")),
+          React.createElement('div', { style: { flex: "1 1 300px" } },
+            React.createElement('div', { style: { fontWeight: 700, marginBottom: 4 } }, "Priorités"),
+            SLA_PRIORITES.map(sp => React.createElement('div', { key: sp.p }, React.createElement('b', { style: { color: prColor(sp.p) } }, sp.code + " " + sp.p), " : " + ((PRIORITE_DEFS[sp.p] || {}).txt || "") + " Cibles : " + fmtCibleSla(sp.rep) + " / " + fmtCibleSla(sp.res) + "."))),
+          React.createElement('div', { style: { flex: "1 1 300px" } },
+            React.createElement('div', { style: { fontWeight: 700, marginBottom: 4 } }, "Colonnes"),
+            COLONNES_DEFS.map(([t, d]) => React.createElement('div', { key: t }, React.createElement('b', null, t), " : " + d))))
+      ),
       // ---- Tableau de bord : ligne 1 ----
       React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 } },
         tuile("Créés sur la période", st.crees, "nouvelles demandes de l'hôtel", "#0F0F24"),
         tuile("Fermés sur la période", st.fermes, "y compris tickets antérieurs", "#2F855A"),
-        tuile("En cours au " + finLbl, st.enCoursFin, "reste à traiter en fin de période", "#2B6CB0"),
+        tuile("En cours au " + finLbl, st.enCoursFin, st.enCoursPresta ? "dont " + st.enCoursPresta + " suivi(s) chez un prestataire" : "reste à traiter en fin de période", "#2B6CB0"),
         tuile("Respect des SLA", st.slaPct == null ? "—" : st.slaPct + " %", st.slaEvalues ? st.horsSla + " ticket(s) hors SLA sur " + st.slaEvalues : "aucun ticket évaluable", slaCoul)
       ),
       // ---- Tableau de bord : ligne 2 ----
@@ -10537,12 +10698,18 @@ const nav = isAdmin
                   td(r.subject, { minWidth: 220 }),
                   td(React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: r.type === "demande" ? "#6B46C1" : "#DD6B20" } }, r.type === "demande" ? "Demande" : "Incident")),
                   td(pastille(r.priority, prColor(r.priority), prColor(r.priority) + "1A")),
-                  td(React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: stColor(r.status), background: stColor(r.status) + "18", padding: "2px 9px", borderRadius: 20 } }, r.status === "closed" ? "Fermé" : "Ouvert")),
+                  td(r.status !== "closed" && r.prestataire
+                    ? React.createElement('span', { title: "Résolution dépendant de " + r.prestataire + " : suivi par DSI Hotel", style: { fontSize: 11, fontWeight: 600, color: "#6B46C1", background: "#F3EEFF", padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, "Prestataire")
+                    : React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: stColor(r.status), background: stColor(r.status) + "18", padding: "2px 9px", borderRadius: 20 } }, r.status === "closed" ? "Fermé" : "Ouvert")),
                   td(fmtDateHeureFr(r.created_at), { whiteSpace: "nowrap", fontSize: 11 }),
                   td(r.closed_at ? fmtDateHeureFr(r.closed_at) : "—", { whiteSpace: "nowrap", fontSize: 11 }),
                   td(String(r.nbMessages), { textAlign: "center" }),
                   td(cellDelai(r.delaiH, r.slaRep, false), { whiteSpace: "nowrap" }),
-                  td(cellDelai(r.resolH, r.slaRes, r.status !== "closed"), { whiteSpace: "nowrap" })
+                  td(r.prestataire
+                    ? React.createElement('div', { title: "Hors SLA de résolution : la résolution dépend de " + r.prestataire },
+                        r.resolH !== null && React.createElement('div', { style: { fontSize: 11, color: "#888" } }, fmtDelai(r.resolH)),
+                        React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: "#6B46C1" } }, "Suivi " + r.prestataire))
+                    : cellDelai(r.resolH, r.slaRes, r.status !== "closed"), { whiteSpace: "nowrap" })
                 ))
               )
             )
