@@ -35,8 +35,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
 const PAGE_URL = "https://portail.dsihotel.com/rh.html";
 
-// Période de référence : du 1er juin au 31 mai (doit correspondre à rh_periode() en SQL).
-const MOIS_DEBUT_PERIODE = 6;
+// Période de référence : année civile, du 1er janvier au 31 décembre (doit correspondre à rh_periode() en SQL).
 // Valeurs utilisées tant qu'aucun compteur n'a été saisi pour un salarié.
 const DEFAUT = { cp_droits: 25, cp_report: 0, rtt_droits: 0 };
 
@@ -88,8 +87,8 @@ function nbJours(debut, fin, am, fm) {
   if (fm && estOuvre(fin)) n -= 0.5;
   return Math.max(n, 0);
 }
-const periodeDe = (s) => { const a = +s.slice(0, 4), m = +s.slice(5, 7); return m >= MOIS_DEBUT_PERIODE ? a : a - 1; };
-const libPeriode = (p) => "1er " + MOIS_FR[MOIS_DEBUT_PERIODE - 1] + " " + p + " → " + "31 " + MOIS_FR[(MOIS_DEBUT_PERIODE + 10) % 12] + " " + (p + 1);
+const periodeDe = (s) => +s.slice(0, 4);
+const libPeriode = (p) => "1er janvier " + p + " → 31 décembre " + p;
 const fmtDate = (s, long) => s ? s2d(s).toLocaleDateString("fr-FR", { timeZone: "UTC", weekday: "short", day: "numeric", month: long ? "long" : "short", year: long ? "numeric" : undefined }) : "—";
 const fmtJ = (n) => { const v = Math.round(Number(n || 0) * 10) / 10; return v.toLocaleString("fr-FR") + " j"; };
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -323,7 +322,7 @@ function RH({ session, role }) {
     });
     const blob = new Blob(["\ufeff" + lignes.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    a.download = "Conges_equipe_" + periode + "-" + (periode + 1) + ".csv";
+    a.download = "Conges_equipe_" + periode + ".csv";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 
