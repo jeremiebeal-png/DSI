@@ -12,20 +12,22 @@
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #F0F2F8; color: #1a1a3e; }
   input, select, textarea, button { font-family: inherit; }
+  button:disabled { cursor: default; }
   @media (max-width: 768px) { input, select, textarea { font-size: 16px !important; } }
   .rh-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .rh-cal td, .rh-cal th { border-right: 1px solid #F0F0F5; }
+  .rh-table tr:hover td { background: #FAFAFD; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
 // =====================================================================
-//  DSI Hotel — Congés & absences (rh.html)
+//  DSI Hotel — Congés & absences (rh.html) — v2
 //  Page séparée du portail, même compte, même double authentification.
-//  Les droits d'accès sont appliqués par Supabase (script rh_conges.sql).
+//  Droits d'accès et calcul des compteurs : Supabase (script rh_conges.sql).
 // =====================================================================
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 const e = React.createElement;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
@@ -35,16 +37,19 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
 const PAGE_URL = "https://portail.dsihotel.com/rh.html";
 
-// Période de référence : année civile, du 1er janvier au 31 décembre (doit correspondre à rh_periode() en SQL).
-// Valeurs utilisées tant qu'aucun compteur n'a été saisi pour un salarié.
-const DEFAUT = { cp_droits: 25, cp_report: 0, rtt_droits: 0 };
-
+// Année de référence : année civile. Acquisition : 25 j ouvrés / an (2,08 j par mois)
+// pour CDI, CDD et alternance ; jours saisis sur la fiche pour un stage.
 const TYPES = [
   { v: "CP", l: "Congés payés", c: "#2F855A", bg: "#E6F6EA", court: "CP" },
-  { v: "RTT", l: "RTT", c: "#2B6CB0", bg: "#EBF4FF", court: "RTT" },
   { v: "Sans solde", l: "Congé sans solde", c: "#6B46C1", bg: "#F3EEFC", court: "SS" },
   { v: "Événement familial", l: "Événement familial", c: "#B7791F", bg: "#FFF6E5", court: "EF" },
   { v: "Maladie", l: "Arrêt maladie", c: "#C53030", bg: "#FDECEC", court: "M" },
+  { v: "Formation", l: "Formation", c: "#2B6CB0", bg: "#EBF4FF", court: "F" },
+  { v: "Naissance / paternité", l: "Congé naissance / paternité", c: "#2C7A7B", bg: "#E6FFFA", court: "N" },
+  { v: "Maternité", l: "Congé maternité", c: "#B83280", bg: "#FDEDF5", court: "Ma" },
+  { v: "Récupération", l: "Récupération", c: "#4A5568", bg: "#EDF2F7", court: "R" },
+  { v: "Révision examen", l: "Révision d'examen (alternance)", c: "#5A67D8", bg: "#EEF0FD", court: "Ex", alternance: true },
+  { v: "Télétravail", l: "Télétravail", c: "#0987A0", bg: "#E3F8FC", court: "TT" },
   { v: "Autre", l: "Autre absence", c: "#718096", bg: "#F0F0F4", court: "A" },
 ];
 const typeDe = (v) => TYPES.find(t => t.v === v) || TYPES[TYPES.length - 1];
@@ -54,6 +59,11 @@ const STATUTS = {
   refuse: { l: "Refusée", c: "#C53030", bg: "#FDECEC" },
   annule: { l: "Annulée", c: "#718096", bg: "#F0F0F4" },
 };
+const CONTRATS = {
+  CDI: { c: "#2F855A", bg: "#E6F6EA" }, CDD: { c: "#2B6CB0", bg: "#EBF4FF" },
+  Alternance: { c: "#5A67D8", bg: "#EEF0FD" }, Stage: { c: "#B7791F", bg: "#FFF6E5" },
+};
+const ANNEAU = { dispo: "#2F855A", pris: "#A0AEC0", attente: "#D69E2E", vide: "#E8E8F0" };
 const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
 // ---------- Dates (chaînes AAAA-MM-JJ, calcul en UTC pour éviter les décalages d'heure) ----------
@@ -61,6 +71,7 @@ const s2d = (s) => new Date(s + "T00:00:00Z");
 const d2s = (d) => d.toISOString().slice(0, 10);
 const ajout = (s, n) => { const d = s2d(s); d.setUTCDate(d.getUTCDate() + n); return d2s(d); };
 const aujourdhui = () => { const n = new Date(); return n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0"); };
+const finMois = (a, m) => d2s(new Date(Date.UTC(a, m, 0)));
 function paques(a) {
   const b = Math.floor(a / 100), c = a % 100, d = Math.floor(b / 4), ee = b % 4;
   const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
@@ -87,10 +98,34 @@ function nbJours(debut, fin, am, fm) {
   if (fm && estOuvre(fin)) n -= 0.5;
   return Math.max(n, 0);
 }
-const periodeDe = (s) => +s.slice(0, 4);
-const libPeriode = (p) => "1er janvier " + p + " → 31 décembre " + p;
+// Jours d'une demande compris entre a et b (pour l'export paie mensuel).
+function joursEntre(d, a, b) {
+  const deb = d.date_debut < a ? a : d.date_debut, fin = d.date_fin > b ? b : d.date_fin;
+  if (fin < deb) return 0;
+  return nbJours(deb, fin, d.debut_apres_midi && deb === d.date_debut, d.fin_matin && fin === d.date_fin);
+}
+// Même calcul que rh_acquis() en SQL (aperçu dans la fiche).
+function acquisJS(entree, fin, contrat, joursStage, annee, jusqua) {
+  if (!entree) return 0;
+  if (contrat === "Stage") return (+entree.slice(0, 4) === annee && entree <= jusqua) ? Number(joursStage || 0) : 0;
+  let s = 0, complet = true;
+  for (let m = 1; m <= 12; m++) {
+    const ms = annee + "-" + String(m).padStart(2, "0") + "-01", me = finMois(annee, m);
+    const a = entree > ms ? entree : ms, b = (fin && fin < me) ? fin : me;
+    if (b < a) continue;
+    if (b > jusqua) { complet = false; continue; }
+    const nbm = +me.slice(8), nb = (s2d(b) - s2d(a)) / 864e5 + 1;
+    s += nb / nbm * 25 / 12;
+  }
+  s = Math.round(s * 100) / 100;
+  if (complet && s !== Math.trunc(s)) s = Math.ceil(s);
+  return s;
+}
 const fmtDate = (s, long) => s ? s2d(s).toLocaleDateString("fr-FR", { timeZone: "UTC", weekday: "short", day: "numeric", month: long ? "long" : "short", year: long ? "numeric" : undefined }) : "—";
-const fmtJ = (n) => { const v = Math.round(Number(n || 0) * 10) / 10; return v.toLocaleString("fr-FR") + " j"; };
+const fmtCourt = (s) => s ? s.slice(8, 10) + "/" + s.slice(5, 7) + "/" + s.slice(0, 4) : "—";
+const arr1 = (n) => Math.round(Number(n || 0) * 10) / 10;
+const fmtJ = (n) => arr1(n).toLocaleString("fr-FR") + " j";
+const num = (v) => { const x = Number(String(v == null ? "" : v).replace(",", ".").trim()); return isNaN(x) ? null : x; };
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function descDates(d) {
   if (d.date_debut === d.date_fin) {
@@ -99,422 +134,621 @@ function descDates(d) {
   return "du " + fmtDate(d.date_debut, true) + (d.debut_apres_midi ? " (après-midi)" : "") +
     " au " + fmtDate(d.date_fin, true) + (d.fin_matin ? " (matin)" : "");
 }
-
-// ---------- Compteurs ----------
-function calculSoldes(userId, periode, demandes, compteurs) {
-  const c = compteurs.find(x => x.user_id === userId && Number(x.periode) === periode) || {};
-  const val = (k) => (c[k] === undefined || c[k] === null) ? DEFAUT[k] : Number(c[k]);
-  const mes = demandes.filter(d => d.user_id === userId && Number(d.periode) === periode);
-  const somme = (filtre) => mes.filter(filtre).reduce((n, d) => n + Number(d.nb_jours || 0), 0);
-  const cp = { droits: val("cp_droits"), report: val("cp_report"), pris: somme(d => d.type === "CP" && d.statut === "approuve"), attente: somme(d => d.type === "CP" && d.statut === "en_attente") };
-  cp.reste = cp.droits + cp.report - cp.pris; cp.dispo = cp.reste - cp.attente;
-  const rtt = { droits: val("rtt_droits"), report: 0, pris: somme(d => d.type === "RTT" && d.statut === "approuve"), attente: somme(d => d.type === "RTT" && d.statut === "en_attente") };
-  rtt.reste = rtt.droits - rtt.pris; rtt.dispo = rtt.reste - rtt.attente;
-  const autres = somme(d => d.type !== "CP" && d.type !== "RTT" && d.statut === "approuve");
-  return { cp, rtt, autres, note: c.note || "", saisi: !!c.user_id };
-}
+const libType = (t, contrat) => t === "CP" && contrat === "Stage" ? "Congés de stage" : typeDe(t).l;
 
 // ---------- Emails (Worker dsi-hotel-api-v2, route /send) ----------
 async function envoyerEmail(payload) {
   try {
+    if (!payload.to) return;
     const { data } = await sb.auth.getSession();
     await fetch(EMAIL_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + ((data.session && data.session.access_token) || "") },
       body: JSON.stringify({ fromName: "Portail RH DSI Hotel", ...payload }),
     });
-  } catch (ex) { /* l'email est un plus : la demande reste enregistrée */ }
+  } catch (ex) { /* l'email est un plus : l'action reste enregistrée */ }
 }
 function emailHtml(titre, lignes, bouton) {
   return '<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#333;font-size:14px">' +
     '<div style="background:#0F0F24;color:#C9A84C;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:bold">' + esc(titre) + '</div>' +
     '<div style="border:1px solid #E8E8F0;border-top:none;border-radius:0 0 10px 10px;padding:18px;line-height:1.6">' +
-    lignes.map(l => '<p style="margin:0 0 10px">' + l + '</p>').join("") +
+    lignes.filter(Boolean).map(l => '<p style="margin:0 0 10px">' + l + '</p>').join("") +
     (bouton ? '<p style="text-align:center;margin:18px 0 4px"><a href="' + PAGE_URL + '" style="display:inline-block;background:#C9A84C;color:#111;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:bold">' + esc(bouton) + '</a></p>' : "") +
     '</div></div>';
 }
+const emailA = (dest, subject, titre, lignes, bouton, replyTo) => {
+  const liste = (dest || []).filter(Boolean);
+  if (!liste.length) return;
+  envoyerEmail({
+    to: liste[0], cc: liste.slice(1), replyTo, subject,
+    text: lignes.filter(Boolean).map(l => l.replace(/<[^>]+>/g, "")).join("\n") + "\n\n" + PAGE_URL,
+    html: emailHtml(titre, lignes, bouton),
+  });
+};
 
 // ---------- Petits éléments d'interface ----------
 const bouton = (couleur, plein) => ({
   padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
   border: "1px solid " + (plein ? couleur : "#DDE0EA"), background: plein ? couleur : "white", color: plein ? (couleur === G ? "#111" : "white") : (couleur || "#555"),
 });
+const petit = { padding: "5px 10px", fontSize: 12 };
 const champ = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 8, fontSize: 13.5, background: "white" };
 const etiquette = { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", margin: "12px 0 5px" };
 const carte = { background: "white", border: "1px solid #E8E8F0", borderRadius: 12 };
 const pastille = (txt, c, bg) => e('span', { style: { display: "inline-block", fontSize: 11, fontWeight: 700, color: c, background: bg, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, txt);
 const pastilleStatut = (s) => { const m = STATUTS[s] || STATUTS.annule; return pastille(m.l, m.c, m.bg); };
-const pastilleType = (t) => { const m = typeDe(t); return pastille(m.l, m.c, m.bg); };
+const pastilleType = (t, contrat) => { const m = typeDe(t); return pastille(libType(t, contrat), m.c, m.bg); };
+const pastilleContrat = (c) => { const m = CONTRATS[c] || CONTRATS.CDI; return pastille(c, m.c, m.bg); };
+const point = (c, bordure) => e('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 3, background: c, border: bordure ? "1px solid #CBD0DC" : "none", marginRight: 7, flex: "0 0 auto" } });
 
 function Fenetre({ titre, onFermer, children, large }) {
   return e('div', { onClick: (ev) => { if (ev.target === ev.currentTarget) onFermer(); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 14px", zIndex: 100, overflowY: "auto" } },
-    e('div', { style: { ...carte, width: large ? 640 : 480, maxWidth: "100%", padding: 22, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
+    e('div', { style: { ...carte, width: large ? 680 : 480, maxWidth: "100%", padding: 22, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
       e('div', { style: { display: "flex", alignItems: "center", marginBottom: 6 } },
         e('div', { style: { fontSize: 16, fontWeight: 700, flex: 1 } }, titre),
         e('button', { onClick: onFermer, style: { border: "none", background: "none", fontSize: 18, cursor: "pointer", color: "#999" } }, "✕")),
       children));
 }
 
+// Anneau des congés payés (option A) : disponibles / pris / en attente / encore à acquérir.
+function Anneau({ s, taille }) {
+  const T = taille || 156, ep = T > 100 ? 15 : 8, r = T / 2 - ep / 2 - 2, C = 2 * Math.PI * r, cx = T / 2;
+  const dispo = Math.max(0, Number(s.disponible)), pris = Math.max(0, Number(s.pris)), att = Math.max(0, Number(s.attente)), aacq = Math.max(0, Number(s.a_acquerir));
+  const total = dispo + pris + att + aacq || 1;
+  let off = 0;
+  const seg = (v, c, k) => {
+    const L = v / total * C;
+    const el = L > 0.01 ? e('circle', { key: k, cx, cy: cx, r, fill: "none", stroke: c, strokeWidth: ep, strokeDasharray: L + " " + C, strokeDashoffset: -off, transform: "rotate(-90 " + cx + " " + cx + ")" }) : null;
+    off += L; return el;
+  };
+  const neg = Number(s.disponible) < 0;
+  return e('svg', { width: T, height: T, viewBox: "0 0 " + T + " " + T, role: "img", "aria-label": fmtJ(s.disponible) + " disponibles" },
+    e('circle', { cx, cy: cx, r, fill: "none", stroke: ANNEAU.vide, strokeWidth: ep }),
+    seg(dispo, ANNEAU.dispo, "d"), seg(pris, ANNEAU.pris, "p"), seg(att, ANNEAU.attente, "a"),
+    T > 100
+      ? [e('text', { key: "v", x: cx, y: cx + 4, textAnchor: "middle", style: { fontSize: 28, fontWeight: 800, fill: neg ? "#C53030" : "#1a1a3e" } }, arr1(s.disponible).toLocaleString("fr-FR")),
+         e('text', { key: "l", x: cx, y: cx + 24, textAnchor: "middle", style: { fontSize: 11.5, fill: "#888" } }, "jours disponibles")]
+      : e('text', { x: cx, y: cx + 3.5, textAnchor: "middle", style: { fontSize: 10, fontWeight: 800, fill: neg ? "#C53030" : "#1a1a3e" } }, Math.round(Number(s.disponible))));
+}
+
 // =====================================================================
 //  Écran principal RH
 // =====================================================================
 function RH({ session, role }) {
-  const moi = session.user.id;
   const monEmail = String(session.user.email || "").toLowerCase();
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const auj = aujourdhui();
   const [onglet, setOnglet] = useState("moi");
-  const [periode, setPeriode] = useState(periodeDe(aujourdhui()));
+  const [annee, setAnnee] = useState(+auj.slice(0, 4));
+  const [personnes, setPersonnes] = useState([]);
   const [demandes, setDemandes] = useState([]);
-  const [compteurs, setCompteurs] = useState([]);
-  const [equipe, setEquipe] = useState([]);
+  const [soldes, setSoldes] = useState([]);
+  const [planning, setPlanning] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [message, setMessage] = useState("");
   const [occupe, setOccupe] = useState(false);
-  const [form, setForm] = useState(null);
+  const [form, setForm] = useState(null);         // nouvelle demande / modification / saisie pour un salarié
   const [formErr, setFormErr] = useState("");
-  const [refus, setRefus] = useState(null);
-  const [editCpt, setEditCpt] = useState(null);
+  const [dejaAbsents, setDejaAbsents] = useState([]);
+  const [refus, setRefus] = useState(null);       // { d, motif, mode: "refuse" | "maintenir" | "annule" | "demande_annulation" }
+  const [fiche, setFiche] = useState(null);       // fiche salarié en édition
+  const [ficheErr, setFicheErr] = useState("");
+  const [journal, setJournal] = useState([]);
+  const [ajust, setAjust] = useState({ jours: "", motif: "" });
   const [voirInactifs, setVoirInactifs] = useState(false);
-  const [filtre, setFiltre] = useState({ user: "", statut: "" });
-  const [mois, setMois] = useState(aujourdhui().slice(0, 7));
+  const [filtre, setFiltre] = useState({ personne: "", statut: "" });
+  const [mois, setMois] = useState(auj.slice(0, 7));
+  const [moisPaie, setMoisPaie] = useState(auj.slice(0, 7));
+  const relanceFaite = useRef(false);
 
-  useEffect(() => { const f = () => setIsMobile(window.innerWidth <= 768); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+  const maFiche = personnes.find(p => p.email === monEmail) || null;
+  const ficheDe = (id) => personnes.find(p => p.id === id);
+  const nomDe = (d) => (ficheDe(d.personne_id) || {}).nom || d.demandeur_nom || "?";
+  const contratDe = (id) => (ficheDe(id) || {}).contrat;
+  const soldeDe = (id) => soldes.find(s => s.personne_id === id);
 
+  async function chargerSoldes(a) {
+    const { data, error } = await sb.rpc("rh_soldes", { p_annee: a });
+    if (error) throw error;
+    setSoldes(data || []);
+  }
   async function charger() {
     setChargement(true); setErreur("");
     try {
+      const { data: pers, error: ep } = await sb.from("rh_personnes").select("*").order("nom");
+      if (ep) throw ep;
       let dem = [];
-      for (let from = 0; from < 20000; from += 1000) {
-        let q = sb.from("rh_demandes").select("*").order("date_debut", { ascending: false }).range(from, from + 999);
-        if (!role.manager) q = q.eq("user_id", moi);
-        const { data, error } = await q;
+      for (let from = 0; from < 50000; from += 1000) {
+        const { data, error } = await sb.from("rh_demandes").select("*").order("date_debut", { ascending: false }).range(from, from + 999);
         if (error) throw error;
         dem = dem.concat(data || []);
         if (!data || data.length < 1000) break;
       }
-      let qc = sb.from("rh_compteurs").select("*");
-      if (!role.manager) qc = qc.eq("user_id", moi);
-      const { data: cpt, error: ec } = await qc;
-      if (ec) throw ec;
-      let eq = [];
-      if (role.manager) {
-        const { data, error } = await sb.rpc("rh_equipe");
-        if (error) throw error;
-        eq = data || [];
-      }
-      setDemandes(dem); setCompteurs(cpt || []); setEquipe(eq);
+      setPersonnes(pers || []); setDemandes(dem);
+      await chargerSoldes(annee);
+      if (!relanceFaite.current) { relanceFaite.current = true; relancer(); }
     } catch (ex) {
       const m = ex.message || String(ex);
-      setErreur("Chargement impossible : " + m + (/rh_/i.test(m) ? " — le script rh_conges.sql a-t-il été exécuté dans Supabase ?" : ""));
+      setErreur("Chargement impossible : " + m + (/rh_/i.test(m) ? " — le script rh_conges.sql (v2) a-t-il été exécuté dans Supabase ?" : ""));
     } finally { setChargement(false); }
   }
   useEffect(() => { charger(); }, []);
+  useEffect(() => { chargerSoldes(annee).catch(ex => setErreur(ex.message || String(ex))); }, [annee]);
 
-  const nomDe = (uid) => {
-    const p = equipe.find(x => x.user_id === uid); if (p) return p.nom;
-    const d = demandes.find(x => x.user_id === uid && x.demandeur_nom); if (d) return d.demandeur_nom;
-    return uid === moi ? monEmail : "?";
-  };
-  const enAttenteAValider = demandes.filter(d => d.statut === "en_attente" && d.user_id !== moi);
+  // Planning partagé (tout le monde) : qui est absent, sans détail.
+  const [an, mo] = mois.split("-").map(Number);
+  const debutMois = mois + "-01", finDuMois = finMois(an, mo);
+  async function chargerPlanning() {
+    const a = debutMois < auj ? debutMois : auj, b = finDuMois > auj ? finDuMois : auj;
+    const { data } = await sb.rpc("rh_planning", { p_debut: a, p_fin: b });
+    setPlanning(data || []);
+  }
+  useEffect(() => { chargerPlanning(); }, [mois, demandes]);
 
-  // ---------- Nouvelle demande ----------
-  function ouvrirForm() {
-    const j = aujourdhui();
-    setFormErr("");
-    setForm({ type: "CP", debut: j, fin: j, choix: "jour", am: false, fm: false, commentaire: "" });
+  // Relance des responsables : demandes en attente depuis plus de 48 h (un seul envoi par jour).
+  async function relancer() {
+    const { data } = await sb.rpc("rh_relances");
+    if (data && data.nb > 0) {
+      emailA(data.approbateurs, "[Congés] Rappel : " + data.nb + " demande(s) en attente depuis plus de 48 h",
+        "Demandes de congés en attente",
+        [data.nb + " demande(s) de congés (ou d'annulation) attendent une réponse depuis plus de 48 heures."],
+        "Voir les demandes");
+    }
+  }
+
+  // ---------- Formulaire de demande ----------
+  function ouvrirForm(opts) {
+    const o = opts || {};
+    setFormErr(""); setDejaAbsents([]);
+    if (o.remplace) {
+      const d = o.remplace;
+      setForm({ personne_id: d.personne_id, remplace: d, type: d.type, debut: d.date_debut, fin: d.date_fin,
+        choix: d.date_debut === d.date_fin ? (d.debut_apres_midi ? "aprem" : d.fin_matin ? "matin" : "jour") : "jour",
+        am: d.debut_apres_midi, fm: d.fin_matin, commentaire: d.commentaire || "" });
+      return;
+    }
+    setForm({ personne_id: o.pourAutre ? "" : (maFiche && maFiche.id), pourAutre: !!o.pourAutre, type: "CP", debut: auj, fin: auj, choix: "jour", am: false, fm: false, commentaire: "" });
   }
   const formFlags = (f) => f.debut === f.fin ? { am: f.choix === "aprem", fm: f.choix === "matin" } : { am: f.am, fm: f.fm };
+  useEffect(() => {
+    if (!form || !form.debut || !form.fin || form.fin < form.debut) { setDejaAbsents([]); return; }
+    let ok = true;
+    sb.rpc("rh_planning", { p_debut: form.debut, p_fin: form.fin }).then(({ data }) => {
+      if (!ok) return;
+      const autres = (data || []).filter(x => x.personne_id !== form.personne_id && x.categorie === "absence" && !(form.remplace && x.personne_id === form.remplace.personne_id));
+      setDejaAbsents(Array.from(new Set(autres.map(x => x.nom))));
+    });
+    return () => { ok = false; };
+  }, [form && form.debut, form && form.fin, form && form.personne_id]);
+
   async function soumettre() {
     const f = form; const { am, fm } = formFlags(f);
+    if (!f.personne_id) { setFormErr("Choisissez le salarié."); return; }
     if (!f.debut || !f.fin) { setFormErr("Indiquez les dates."); return; }
     if (f.fin < f.debut) { setFormErr("La date de fin est avant la date de début."); return; }
     if (nbJours(f.debut, f.fin, am, fm) <= 0) { setFormErr("Aucun jour ouvré sur ces dates (week-end ou jour férié)."); return; }
     setOccupe(true); setFormErr("");
     const { data, error } = await sb.from("rh_demandes").insert({
-      user_id: moi, type: f.type, date_debut: f.debut, date_fin: f.fin,
+      personne_id: f.personne_id, type: f.type, date_debut: f.debut, date_fin: f.fin,
       debut_apres_midi: am, fin_matin: fm, commentaire: f.commentaire.trim() || null,
+      remplace_id: f.remplace ? f.remplace.id : null,
     }).select().single();
     setOccupe(false);
     if (error) { setFormErr(error.message); return; }
-    const dest = (role.approbateurs || []).filter(a => a !== monEmail);
-    if (dest.length) {
-      const s = calculSoldes(moi, Number(data.periode), demandes.concat([data]), compteurs);
-      const solde = data.type === "CP" ? "Solde de congés payés après cette demande : " + fmtJ(s.cp.dispo) : data.type === "RTT" ? "Solde de RTT après cette demande : " + fmtJ(s.rtt.dispo) : null;
-      envoyerEmail({
-        to: dest[0], cc: dest.slice(1), replyTo: monEmail,
-        subject: "[Congés] " + data.demandeur_nom + " — " + typeDe(data.type).l + " — " + fmtJ(data.nb_jours),
-        text: data.demandeur_nom + " demande " + typeDe(data.type).l + " " + descDates(data) + " (" + fmtJ(data.nb_jours) + ")." + (data.commentaire ? "\nCommentaire : " + data.commentaire : "") + (solde ? "\n" + solde : "") + "\n\nValider ou refuser : " + PAGE_URL,
-        html: emailHtml("Nouvelle demande de congés", [
-          "<b>" + esc(data.demandeur_nom) + "</b> demande <b>" + esc(typeDe(data.type).l) + "</b> " + esc(descDates(data)) + ", soit <b>" + fmtJ(data.nb_jours) + "</b> ouvré(s).",
+    const lib = libType(data.type, contratDe(data.personne_id));
+    if (data.statut === "approuve") {
+      // Saisie par un responsable pour un salarié : on prévient le salarié.
+      emailA([data.demandeur_email], "[Congés] Absence enregistrée — " + lib + " " + fmtCourt(data.date_debut),
+        "Absence enregistrée", ["Bonjour,", "Une absence <b>" + esc(lib) + "</b> " + esc(descDates(data)) + " (" + fmtJ(data.nb_jours) + ") a été enregistrée pour vous par " + esc(monEmail) + ".",
+          data.commentaire ? "Commentaire : " + esc(data.commentaire) : ""], "Voir mes congés", monEmail);
+      setMessage("✅ Absence enregistrée et validée pour " + data.demandeur_nom + " (" + fmtJ(data.nb_jours) + ").");
+    } else {
+      const dest = (role.approbateurs || []).filter(a => a !== monEmail);
+      const s = soldeDe(data.personne_id);
+      const apres = data.type === "CP" && s && data.annee === annee ? Number(s.disponible) - data.nb_jours + (f.remplace && f.remplace.type === "CP" ? Number(f.remplace.nb_jours) : 0) : null;
+      emailA(dest, "[Congés] " + data.demandeur_nom + " — " + (f.remplace ? "Modification — " : "") + lib + " — " + fmtJ(data.nb_jours),
+        f.remplace ? "Demande de modification de congé" : "Nouvelle demande de congés",
+        ["<b>" + esc(data.demandeur_nom) + "</b> demande <b>" + esc(lib) + "</b> " + esc(descDates(data)) + ", soit <b>" + fmtJ(data.nb_jours) + "</b> ouvré(s).",
+          f.remplace ? "Cette demande remplace le congé validé " + esc(descDates(f.remplace)) + " (" + fmtJ(f.remplace.nb_jours) + ")." : "",
           data.commentaire ? "Commentaire : " + esc(data.commentaire) : "",
-          solde ? esc(solde) : "",
-        ].filter(Boolean), "Valider ou refuser"),
-      });
+          apres !== null ? "Solde de congés payés disponible après cette demande : " + fmtJ(apres) : "",
+          dejaAbsents.length ? "⚠️ Déjà absents sur une partie de ces dates : " + esc(dejaAbsents.join(", ")) : ""],
+        "Valider ou refuser", monEmail);
+      setMessage("✅ Demande envoyée (" + fmtJ(data.nb_jours) + "). " + (dest.length ? "Les responsables ont été prévenus par e-mail." : ""));
     }
     setForm(null);
-    setMessage("✅ Demande envoyée (" + fmtJ(data.nb_jours) + "). " + (dest.length ? "Les responsables ont été prévenus par email." : ""));
     charger();
   }
 
-  // ---------- Décisions ----------
+  // ---------- Décisions (ps@ / mp@) ----------
   async function decider(d, decision, motif) {
     setOccupe(true); setMessage("");
     const { data, error } = await sb.rpc("rh_decider", { p_id: d.id, p_decision: decision, p_motif: motif || null });
     setOccupe(false);
     if (error) { setMessage("❌ " + error.message); return false; }
     const r = data || d;
-    const lib = decision === "approuve" ? "validée" : decision === "refuse" ? "refusée" : "annulée";
-    if (r.demandeur_email) {
-      envoyerEmail({
-        to: r.demandeur_email, replyTo: monEmail,
-        subject: "[Congés] Votre demande est " + lib + " — " + typeDe(r.type).l + " " + (r.date_debut === r.date_fin ? fmtDate(r.date_debut) : fmtDate(r.date_debut) + " → " + fmtDate(r.date_fin)),
-        text: "Bonjour,\n\nVotre demande de " + typeDe(r.type).l + " " + descDates(r) + " (" + fmtJ(r.nb_jours) + ") a été " + lib + " par " + monEmail + "." + (motif ? "\nMotif : " + motif : "") + "\n\n" + PAGE_URL,
-        html: emailHtml("Demande de congés " + lib, [
-          "Bonjour,",
-          "Votre demande de <b>" + esc(typeDe(r.type).l) + "</b> " + esc(descDates(r)) + " (" + fmtJ(r.nb_jours) + ") a été <b>" + lib + "</b> par " + esc(monEmail) + ".",
-          motif ? "Motif : " + esc(motif) : "",
-        ].filter(Boolean), "Voir mes congés"),
-      });
+    const lib = libType(r.type, contratDe(r.personne_id));
+    const etait = d.annulation_demandee;
+    let titre, phrase;
+    if (decision === "maintenir") { titre = "Annulation refusée"; phrase = "Votre demande d'annulation du congé <b>" + esc(lib) + "</b> " + esc(descDates(r)) + " a été refusée : le congé est maintenu."; }
+    else if (decision === "annule" && etait) { titre = "Congé annulé"; phrase = "Votre demande d'annulation est acceptée : le congé <b>" + esc(lib) + "</b> " + esc(descDates(r)) + " (" + fmtJ(r.nb_jours) + ") est annulé."; }
+    else {
+      const l = decision === "approuve" ? "validée" : decision === "refuse" ? "refusée" : "annulée";
+      titre = "Demande " + l;
+      phrase = "Votre demande " + (r.remplace_id ? "de modification " : "") + "de <b>" + esc(lib) + "</b> " + esc(descDates(r)) + " (" + fmtJ(r.nb_jours) + ") a été <b>" + l + "</b> par " + esc(monEmail) + "." +
+        (decision === "approuve" && r.remplace_id ? " L'ancien congé est annulé." : "");
     }
-    setMessage("✅ Demande de " + (r.demandeur_nom || nomDe(r.user_id)) + " " + lib + ".");
+    emailA([r.demandeur_email], "[Congés] " + titre + " — " + lib + " " + fmtCourt(r.date_debut), titre,
+      ["Bonjour,", phrase, motif ? "Motif : " + esc(motif) : ""], "Voir mes congés", monEmail);
+    setMessage("✅ " + titre + " — " + (r.demandeur_nom || nomDe(r)) + ".");
     charger();
     return true;
   }
+  // ---------- Actions du salarié ----------
   async function annulerMienne(d) {
-    if (!confirm("Annuler votre demande " + descDates(d) + " ?")) return;
+    if (!confirm("Retirer votre demande " + descDates(d) + " ?")) return;
     setOccupe(true);
     const { error } = await sb.rpc("rh_annuler", { p_id: d.id });
     setOccupe(false);
     if (error) { setMessage("❌ " + error.message); return; }
-    setMessage("Demande annulée."); charger();
+    emailA((role.approbateurs || []).filter(a => a !== monEmail), "[Congés] " + d.demandeur_nom + " a retiré sa demande — " + libType(d.type, contratDe(d.personne_id)),
+      "Demande retirée", ["<b>" + esc(d.demandeur_nom) + "</b> a retiré sa demande de " + esc(libType(d.type, contratDe(d.personne_id))) + " " + esc(descDates(d)) + " (" + fmtJ(d.nb_jours) + ")."], null, monEmail);
+    setMessage("Demande retirée."); charger();
+  }
+  async function demanderAnnulation(d, motif) {
+    setOccupe(true);
+    const { error } = await sb.rpc("rh_demander_annulation", { p_id: d.id, p_motif: motif || null });
+    setOccupe(false);
+    if (error) { setMessage("❌ " + error.message); return false; }
+    emailA((role.approbateurs || []).filter(a => a !== monEmail), "[Congés] " + d.demandeur_nom + " demande l'annulation d'un congé validé",
+      "Demande d'annulation", ["<b>" + esc(d.demandeur_nom) + "</b> demande l'annulation de son congé <b>" + esc(libType(d.type, contratDe(d.personne_id))) + "</b> " + esc(descDates(d)) + " (" + fmtJ(d.nb_jours) + ").",
+        motif ? "Motif : " + esc(motif) : ""], "Accepter ou refuser", monEmail);
+    setMessage("✅ Demande d'annulation envoyée aux responsables."); charger();
+    return true;
   }
 
-  // ---------- Compteurs ----------
-  function ouvrirCompteur(u) {
-    const s = calculSoldes(u.user_id, periode, demandes, compteurs);
-    setEditCpt({ user_id: u.user_id, nom: u.nom, cp_droits: String(s.cp.droits), cp_report: String(s.cp.report), rtt_droits: String(s.rtt.droits), note: s.note });
+  // ---------- Fiches salariés (ps@ / mp@ / jb@) ----------
+  async function ouvrirFiche(p) {
+    setFicheErr(""); setAjust({ jours: "", motif: "" }); setJournal([]);
+    if (!p) {
+      setFiche({ nouveau: true, nom: "", email: "", contrat: "CDI", date_entree: auj, date_fin: "", jours_stage: "0", annee_initiale: "", solde_initial: "0", actif: true, note: "" });
+      return;
+    }
+    setFiche({ ...p, date_fin: p.date_fin || "", jours_stage: String(p.jours_stage || 0), annee_initiale: String(p.annee_initiale || ""), solde_initial: String(p.solde_initial || 0), note: p.note || "" });
+    const { data } = await sb.from("rh_journal").select("*").eq("personne_id", p.id).order("le", { ascending: false }).limit(200);
+    setJournal(data || []);
   }
-  async function enregistrerCompteur() {
-    const n = (v) => { const x = Number(String(v).replace(",", ".")); return isNaN(x) ? 0 : x; };
-    setOccupe(true);
-    const { error } = await sb.from("rh_compteurs").upsert({
-      user_id: editCpt.user_id, periode, cp_droits: n(editCpt.cp_droits), cp_report: n(editCpt.cp_report),
-      rtt_droits: n(editCpt.rtt_droits), note: editCpt.note.trim() || null, maj_par: monEmail, maj_le: new Date().toISOString(),
-    }, { onConflict: "user_id,periode" });
+  async function enregistrerFiche() {
+    const f = fiche;
+    if (!f.nom.trim()) { setFicheErr("Indiquez le nom."); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) { setFicheErr("Adresse e-mail invalide."); return; }
+    if (!f.date_entree) { setFicheErr("Indiquez la date d'arrivée."); return; }
+    if (f.contrat !== "CDI" && !f.date_fin) { setFicheErr("Indiquez la date de fin (CDD, alternance, stage)."); return; }
+    const si = num(f.solde_initial), js = num(f.jours_stage), ai = f.annee_initiale ? parseInt(f.annee_initiale, 10) : null;
+    if (si === null || js === null) { setFicheErr("Les nombres de jours doivent être des nombres (ex. 2,5)."); return; }
+    const ligne = { nom: f.nom.trim(), email: f.email.trim().toLowerCase(), contrat: f.contrat, date_entree: f.date_entree,
+      date_fin: f.date_fin || null, jours_stage: f.contrat === "Stage" ? js : 0, solde_initial: si,
+      annee_initiale: ai, actif: !!f.actif, note: f.note.trim() || null };
+    setOccupe(true); setFicheErr("");
+    const { error } = f.nouveau
+      ? await sb.from("rh_personnes").insert(ligne)
+      : await sb.from("rh_personnes").update(ligne).eq("id", f.id);
     setOccupe(false);
-    if (error) { alert("Enregistrement impossible : " + error.message); return; }
-    setEditCpt(null); charger();
+    if (error) { setFicheErr(/duplicate|unique/i.test(error.message) ? "Une fiche existe déjà avec cette adresse e-mail." : error.message); return; }
+    setFiche(null); setMessage("✅ Fiche " + (f.nouveau ? "créée" : "enregistrée") + " : " + ligne.nom + "."); charger();
   }
-  async function basculerActif(u) {
-    if (u.actif && !confirm("Masquer « " + u.nom + " » de la liste de l'équipe ? (compte qui n'est pas un salarié, départ…)")) return;
-    const { error } = await sb.from("rh_salaries").upsert({ user_id: u.user_id, actif: !u.actif }, { onConflict: "user_id" });
-    if (error) { alert("Erreur : " + error.message); return; }
-    charger();
+  async function ajouterAjustement() {
+    const j = num(ajust.jours);
+    if (!j) { setFicheErr("Indiquez un nombre de jours (ex. 2 ou -1,5)."); return; }
+    if (!ajust.motif.trim()) { setFicheErr("Indiquez le motif de l'ajustement."); return; }
+    setOccupe(true); setFicheErr("");
+    const { error } = await sb.from("rh_ajustements").insert({ personne_id: fiche.id, annee, jours: j, motif: ajust.motif.trim() });
+    setOccupe(false);
+    if (error) { setFicheErr(error.message); return; }
+    setAjust({ jours: "", motif: "" });
+    const { data } = await sb.from("rh_journal").select("*").eq("personne_id", fiche.id).order("le", { ascending: false }).limit(200);
+    setJournal(data || []);
+    chargerSoldes(annee);
   }
-  function exporterCsv() {
-    const sep = ";", q = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
-    const num = (v) => String(Math.round(v * 10) / 10).replace(".", ",");
-    const lignes = [["Salarié", "Email", "CP acquis", "CP report", "CP pris", "CP en attente", "CP restant", "RTT acquis", "RTT pris", "RTT en attente", "RTT restant", "Autres absences"].map(q).join(sep)];
-    equipe.filter(u => u.actif).forEach(u => {
-      const s = calculSoldes(u.user_id, periode, demandes, compteurs);
-      lignes.push([q(u.nom), q(u.email), num(s.cp.droits), num(s.cp.report), num(s.cp.pris), num(s.cp.attente), num(s.cp.reste), num(s.rtt.droits), num(s.rtt.pris), num(s.rtt.attente), num(s.rtt.reste), num(s.autres)].join(sep));
-    });
-    const blob = new Blob(["\ufeff" + lignes.join("\r\n")], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    a.download = "Conges_equipe_" + periode + ".csv";
+
+  // ---------- Exports ----------
+  function telecharger(nom, lignes) {
+    const blob = new Blob(["﻿" + lignes.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nom;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
+  const q = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  const n1 = (v) => String(arr1(v)).replace(".", ",");
+  function exporterSoldes() {
+    const l = [["Salarié", "E-mail", "Contrat", "Arrivée", "Fin", "Report " + (annee - 1), "Acquis à ce jour", "Droits " + annee, "Ajustements", "Pris", "En attente", "Disponible", "Solde prévu au 31/12", "Absences exceptionnelles", "Télétravail"].map(q).join(";")];
+    soldes.filter(s => voirInactifs || s.actif).forEach(s => l.push([q(s.nom), q(s.email), q(s.contrat), q(fmtCourt(s.date_entree)), q(fmtCourt(s.date_fin)),
+      n1(s.report), n1(s.acquis), n1(s.droits), n1(s.ajust), n1(s.pris), n1(s.attente), n1(s.disponible), n1(s.fin_annee), n1(s.exceptionnelles), n1(s.teletravail)].join(";")));
+    telecharger("Conges_soldes_" + annee + ".csv", l);
+  }
+  function exporterPaie() {
+    const [a, m] = moisPaie.split("-").map(Number);
+    const deb = moisPaie + "-01", fin = finMois(a, m);
+    const types = TYPES.map(t => t.v);
+    const l = [["Salarié", "E-mail", "Contrat"].concat(TYPES.map(t => t.l + " (j)")).concat(["Total absences hors télétravail (j)", "Détail"]).map(q).join(";")];
+    personnes.filter(p => p.actif || demandes.some(d => d.personne_id === p.id && d.statut === "approuve" && d.date_debut <= fin && d.date_fin >= deb)).forEach(p => {
+      const ds = demandes.filter(d => d.personne_id === p.id && d.statut === "approuve" && d.date_debut <= fin && d.date_fin >= deb);
+      const parType = types.map(t => ds.filter(d => d.type === t).reduce((n, d) => n + joursEntre(d, deb, fin), 0));
+      const total = parType.reduce((n, v, i) => n + (types[i] === "Télétravail" ? 0 : v), 0);
+      const detail = ds.map(d => typeDe(d.type).court + " " + fmtCourt(d.date_debut) + (d.date_fin !== d.date_debut ? "→" + fmtCourt(d.date_fin) : "")).join(" ; ");
+      l.push([q(p.nom), q(p.email), q(p.contrat)].concat(parType.map(n1)).concat([n1(total), q(detail)]).join(";"));
+    });
+    telecharger("Absences_paie_" + moisPaie + ".csv", l);
+  }
 
-  // ---------- Rendus ----------
-  const selPeriode = e('div', { style: { display: "inline-flex", alignItems: "center", gap: 6, background: "white", border: "1px solid #E8E8F0", borderRadius: 20, padding: "3px 6px" } },
-    e('button', { onClick: () => setPeriode(periode - 1), style: { border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "2px 6px" } }, "◀"),
-    e('span', { style: { fontSize: 12.5, fontWeight: 600 } }, "Période : " + libPeriode(periode)),
-    e('button', { onClick: () => setPeriode(periode + 1), style: { border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "2px 6px" } }, "▶"));
-
-  const tuileSolde = (titre, s, couleur, avecReport) => e('div', { style: { ...carte, flex: "1 1 240px", padding: "16px 18px", borderLeft: "5px solid " + couleur } },
-    e('div', { style: { fontSize: 12, color: "#888", fontWeight: 600 } }, titre + " — restant"),
-    e('div', { style: { fontSize: 30, fontWeight: 800, color: s.dispo < 0 ? "#C53030" : couleur, margin: "4px 0" } }, fmtJ(s.dispo)),
-    e('div', { style: { fontSize: 12, color: "#666", lineHeight: 1.6 } },
-      "Acquis " + fmtJ(s.droits) + (avecReport && s.report ? " + report " + fmtJ(s.report) : "") + " − pris " + fmtJ(s.pris),
-      s.attente > 0 && e('div', { style: { color: "#B7791F" } }, fmtJ(s.attente) + " en attente de validation (déjà déduit)")));
+  // =================================================================
+  //  Rendus
+  // =================================================================
+  const selAnnee = e('div', { style: { display: "inline-flex", alignItems: "center", gap: 6, background: "white", border: "1px solid #E8E8F0", borderRadius: 20, padding: "3px 6px" } },
+    e('button', { onClick: () => setAnnee(annee - 1), style: { border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "2px 6px" } }, "◀"),
+    e('span', { style: { fontSize: 12.5, fontWeight: 600 } }, "Année : 1er janvier → 31 décembre " + annee),
+    e('button', { onClick: () => setAnnee(annee + 1), style: { border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "2px 6px" } }, "▶"));
 
   const ligneDemande = (d, opts) => {
-    const t = typeDe(d.type);
-    const avenir = d.date_fin >= aujourdhui();
+    const t = typeDe(d.type), c = contratDe(d.personne_id);
+    const remplacee = d.remplace_id && demandes.find(x => x.id === d.remplace_id);
     return e('div', { key: d.id, style: { ...carte, padding: "11px 14px", borderLeft: "4px solid " + t.c, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", opacity: (d.statut === "annule" || d.statut === "refuse") ? 0.7 : 1 } },
-      e('div', { style: { flex: "1 1 260px", minWidth: 0 } },
+      e('div', { style: { flex: "1 1 280px", minWidth: 0 } },
         e('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 3 } },
-          opts && opts.nom && e('b', { style: { fontSize: 13.5 } }, nomDe(d.user_id)),
-          pastilleType(d.type), pastilleStatut(d.statut),
+          opts && opts.nom && e('b', { style: { fontSize: 13.5 } }, nomDe(d)),
+          pastilleType(d.type, c), pastilleStatut(d.statut),
+          d.annulation_demandee && pastille("Annulation demandée", "#C53030", "#FDECEC"),
+          d.remplace_id && d.statut === "en_attente" && pastille("Modification", "#2B6CB0", "#EBF4FF"),
           e('span', { style: { fontSize: 13, fontWeight: 700 } }, fmtJ(d.nb_jours))),
-        e('div', { style: { fontSize: 13, color: "#333" } }, descDates(d).replace(/^./, c => c.toUpperCase())),
+        e('div', { style: { fontSize: 13, color: "#333" } }, descDates(d).replace(/^./, x => x.toUpperCase())),
+        remplacee && d.statut === "en_attente" && e('div', { style: { fontSize: 12, color: "#2B6CB0", marginTop: 2 } }, "Remplace le congé validé " + descDates(remplacee) + " (" + fmtJ(remplacee.nb_jours) + ")"),
         d.commentaire && e('div', { style: { fontSize: 12, color: "#777", marginTop: 2 } }, "💬 " + d.commentaire),
+        d.annulation_motif && e('div', { style: { fontSize: 12, color: "#C53030", marginTop: 2 } }, "Annulation : " + d.annulation_motif),
         d.statut !== "en_attente" && d.decide_par && e('div', { style: { fontSize: 11.5, color: "#999", marginTop: 2 } },
-          (STATUTS[d.statut] || {}).l + " par " + d.decide_par + (d.decide_le ? " le " + new Date(d.decide_le).toLocaleDateString("fr-FR") : "") + (d.motif_refus ? " — " + d.motif_refus : ""))),
-      opts && opts.actions && e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, opts.actions(d, avenir)));
+          (STATUTS[d.statut] || {}).l + " par " + d.decide_par + (d.decide_le ? " le " + new Date(d.decide_le).toLocaleDateString("fr-FR") : "") + (d.motif_refus ? " — " + d.motif_refus : "")),
+        opts && opts.extra && opts.extra(d)),
+      opts && opts.actions && e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } }, opts.actions(d)));
+  };
+
+  // --- Bloc compteur (option A : anneau)
+  const blocCompteur = (p, s) => {
+    const stage = p.contrat === "Stage";
+    const finContrat = p.date_fin && +p.date_fin.slice(0, 4) === annee;
+    return e('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 } },
+      e('div', { style: { ...carte, flex: "3 1 440px", padding: "18px 20px", display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" } },
+        e(Anneau, { s }),
+        e('div', { style: { flex: "1 1 220px", minWidth: 0 } },
+          e('div', { style: { fontSize: 12.5, color: "#888", fontWeight: 600 } }, (stage ? "Congés de stage " : "Congés payés ") + annee),
+          e('div', { style: { fontSize: 26, fontWeight: 800, color: Number(s.disponible) < 0 ? "#C53030" : "#1a1a3e", margin: "2px 0 10px" } },
+            fmtJ(s.disponible), e('span', { style: { fontSize: 14, fontWeight: 500, color: "#888" } }, " à poser")),
+          e('div', { style: { display: "flex", flexDirection: "column", gap: 5, fontSize: 13, color: "#555" } },
+            e('div', { style: { display: "flex", alignItems: "center" } }, point(ANNEAU.dispo), "Disponibles ", e('b', { style: { marginLeft: "auto", paddingLeft: 12 } }, fmtJ(s.disponible))),
+            e('div', { style: { display: "flex", alignItems: "center" } }, point(ANNEAU.pris), "Pris ", e('b', { style: { marginLeft: "auto", paddingLeft: 12 } }, fmtJ(s.pris))),
+            e('div', { style: { display: "flex", alignItems: "center" } }, point(ANNEAU.attente), "En attente de validation ", e('b', { style: { marginLeft: "auto", paddingLeft: 12 } }, fmtJ(s.attente))),
+            !stage && e('div', { style: { display: "flex", alignItems: "center" } }, point(ANNEAU.vide, true), "Encore à acquérir d'ici " + (finContrat ? "la fin du contrat" : "décembre"), e('b', { style: { marginLeft: "auto", paddingLeft: 12 } }, fmtJ(s.a_acquerir)))),
+          e('div', { style: { fontSize: 11.5, color: "#999", marginTop: 10, lineHeight: 1.5 } },
+            (Number(s.report) ? "Report " + (annee - 1) + " : " + fmtJ(s.report) + " · " : "") +
+            (stage ? "Prévus par la convention : " + fmtJ(s.droits) : "Acquis à ce jour : " + fmtJ(s.acquis) + " sur " + fmtJ(s.droits) + " (2,08 j par mois)") +
+            (Number(s.ajust) ? " · Ajustements : " + (s.ajust > 0 ? "+" : "") + fmtJ(s.ajust) : "")))),
+      e('div', { style: { flex: "1 1 220px", display: "flex", flexDirection: "column", gap: 12 } },
+        e('div', { style: { background: "#F7F7FB", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8F0" } },
+          e('div', { style: { fontSize: 12.5, color: "#888", fontWeight: 600 } }, "Absences exceptionnelles"),
+          e('div', { style: { fontSize: 24, fontWeight: 800, color: "#4A5568" } }, fmtJ(s.exceptionnelles)),
+          e('div', { style: { fontSize: 11.5, color: "#999" } }, "Sans solde, maladie, événement familial…")),
+        p.contrat === "Alternance" && e('div', { style: { background: "#EEF0FD", borderRadius: 12, padding: "12px 16px" } },
+          e('div', { style: { fontSize: 12.5, color: "#5A67D8", fontWeight: 600 } }, "Révision d'examen"),
+          e('div', { style: { fontSize: 20, fontWeight: 800, color: "#434190" } }, fmtJ(s.revision) + " / 5 j")),
+        p.date_fin && e('div', { style: { background: "#FFF6E5", borderRadius: 12, padding: "12px 16px", fontSize: 12.5, color: "#8A5A00", lineHeight: 1.5 } },
+          (stage ? "Fin de stage le " : "Fin de contrat le ") + fmtCourt(p.date_fin) +
+          (finContrat && !stage ? ". Solde prévu à cette date : " + fmtJ(s.fin_annee) + " (payé en indemnité s'il n'est pas pris)." : "."))));
   };
 
   // --- Onglet « Mes congés »
-  const mesDemandes = demandes.filter(d => d.user_id === moi);
-  const mesSoldes = calculSoldes(moi, periode, demandes, compteurs);
-  const vueMoi = e('div', null,
-    e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
-      selPeriode,
-      e('button', { onClick: ouvrirForm, style: { ...bouton(G, true), marginLeft: "auto" } }, "＋ Nouvelle demande")),
-    e('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 } },
-      tuileSolde("Congés payés", mesSoldes.cp, "#2F855A", true),
-      tuileSolde("RTT", mesSoldes.rtt, "#2B6CB0", false),
-      e('div', { style: { ...carte, flex: "1 1 180px", padding: "16px 18px", borderLeft: "5px solid #718096" } },
-        e('div', { style: { fontSize: 12, color: "#888", fontWeight: 600 } }, "Autres absences validées"),
-        e('div', { style: { fontSize: 30, fontWeight: 800, color: "#4A5568", margin: "4px 0" } }, fmtJ(mesSoldes.autres)),
-        e('div', { style: { fontSize: 12, color: "#666" } }, "Sans solde, maladie, événement familial…"))),
-    !mesSoldes.saisi && e('div', { style: { fontSize: 11.5, color: "#999", marginBottom: 14 } }, "Compteur pas encore saisi par les responsables pour cette période : valeurs par défaut (" + DEFAUT.cp_droits + " j de congés payés)."),
-    mesSoldes.note && e('div', { style: { fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "7px 10px", marginBottom: 14 } }, "📝 " + mesSoldes.note),
-    e('div', { style: { fontSize: 13, fontWeight: 700, margin: "18px 0 8px" } }, "Mes demandes"),
-    mesDemandes.length === 0
-      ? e('div', { style: { ...carte, padding: 24, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune demande pour le moment.")
-      : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
-          mesDemandes.map(d => ligneDemande(d, { actions: (x) => x.statut === "en_attente" ? [e('button', { key: "a", onClick: () => annulerMienne(x), disabled: occupe, style: bouton("#C53030") }, "Annuler ma demande")] : [] }))));
+  const mesDemandes = maFiche ? demandes.filter(d => d.personne_id === maFiche.id) : [];
+  const monSolde = maFiche && soldeDe(maFiche.id);
+  const actionsMiennes = (d) => {
+    const r = [];
+    if (d.statut === "en_attente") r.push(e('button', { key: "a", onClick: () => annulerMienne(d), disabled: occupe, style: bouton("#C53030") }, "Retirer ma demande"));
+    if (d.statut === "approuve" && d.date_fin >= auj && !d.annulation_demandee && !demandes.some(x => x.remplace_id === d.id && x.statut === "en_attente")) {
+      if (d.date_debut > auj) r.push(e('button', { key: "m", onClick: () => ouvrirForm({ remplace: d }), disabled: occupe, style: bouton() }, "✏️ Modifier"));
+      r.push(e('button', { key: "c", onClick: () => setRefus({ d, motif: "", mode: "demande_annulation" }), disabled: occupe, style: bouton("#C53030") }, "Demander l'annulation"));
+    }
+    return r;
+  };
+  const vueMoi = !maFiche
+    ? e('div', { style: { ...carte, padding: 26, fontSize: 13.5, color: "#555", lineHeight: 1.6 } },
+        e('b', null, "Votre fiche RH n'a pas encore été créée."), e('br'),
+        "Demandez à ps@dsihotel.fr ou mp@dsihotel.fr de la créer avec l'adresse " + monEmail + " : votre compteur s'affichera ici.")
+    : e('div', null,
+        e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
+          selAnnee, pastilleContrat(maFiche.contrat),
+          e('span', { style: { fontSize: 12, color: "#888" } }, "Arrivée le " + fmtCourt(maFiche.date_entree)),
+          e('button', { onClick: () => ouvrirForm(), style: { ...bouton(G, true), marginLeft: "auto" } }, "＋ Nouvelle demande")),
+        monSolde ? blocCompteur(maFiche, monSolde) : e('div', { style: { color: "#999", fontSize: 13 } }, "Calcul du compteur…"),
+        maFiche.note && e('div', { style: { fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "7px 10px", marginBottom: 14 } }, "📝 " + maFiche.note),
+        e('div', { style: { fontSize: 13, fontWeight: 700, margin: "18px 0 8px" } }, "Mes demandes"),
+        mesDemandes.length === 0
+          ? e('div', { style: { ...carte, padding: 24, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune demande pour le moment.")
+          : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } }, mesDemandes.map(d => ligneDemande(d, { actions: actionsMiennes }))));
 
-  // --- Onglet « À valider »
+  // --- Onglet « À valider » (ps@ / mp@)
+  const aValider = demandes.filter(d => d.demandeur_email !== monEmail && (d.statut === "en_attente" || (d.statut === "approuve" && d.annulation_demandee)));
+  const absentsEnMemeTemps = (d) => {
+    const noms = demandes.filter(x => x.personne_id !== d.personne_id && (x.statut === "approuve" || x.statut === "en_attente") && x.type !== "Télétravail"
+      && x.date_debut <= d.date_fin && x.date_fin >= d.date_debut).map(x => nomDe(x) + (x.statut === "en_attente" ? " (en attente)" : "") + " " + fmtCourt(x.date_debut) + (x.date_fin !== x.date_debut ? "→" + fmtCourt(x.date_fin) : ""));
+    return Array.from(new Set(noms));
+  };
   const vueValider = e('div', null,
-    e('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 12 } }, "Demandes en attente. Vous ne pouvez pas traiter vos propres demandes : l'autre responsable s'en charge."),
-    enAttenteAValider.length === 0
-      ? e('div', { style: { ...carte, padding: 26, textAlign: "center", color: "#2F855A", fontSize: 14, fontWeight: 600, background: "#E9F6EE", border: "1px solid #B7E0C6" } }, "✅ Aucune demande en attente.")
+    e('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 12 } }, "Demandes et annulations à traiter. Vous ne pouvez pas traiter vos propres demandes : l'autre responsable s'en charge."),
+    aValider.length === 0
+      ? e('div', { style: { ...carte, padding: 26, textAlign: "center", color: "#2F855A", fontSize: 14, fontWeight: 600, background: "#E9F6EE", border: "1px solid #B7E0C6" } }, "✅ Rien à valider.")
       : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
-          enAttenteAValider.slice().sort((a, b) => a.date_debut.localeCompare(b.date_debut)).map(d => {
-            const s = calculSoldes(d.user_id, Number(d.periode), demandes, compteurs);
-            const cpt = d.type === "CP" ? s.cp : d.type === "RTT" ? s.rtt : null;
-            const apres = cpt ? cpt.reste - d.nb_jours : null;
-            return e('div', { key: d.id },
-              ligneDemande(d, {
-                nom: true, actions: () => [
-                  cpt && e('span', { key: "s", style: { fontSize: 12, fontWeight: 600, color: apres < 0 ? "#C53030" : "#555", alignSelf: "center" } }, "Restera " + fmtJ(apres) + (apres < 0 ? " ⚠️" : "")),
-                  e('button', { key: "ok", onClick: () => decider(d, "approuve"), disabled: occupe, style: bouton("#2F855A", true) }, "✓ Valider"),
-                  e('button', { key: "ko", onClick: () => setRefus({ d, motif: "" }), disabled: occupe, style: bouton("#C53030") }, "✕ Refuser"),
-                ]
-              }));
+          aValider.slice().sort((a, b) => a.date_debut.localeCompare(b.date_debut)).map(d => {
+            const s = soldeDe(d.personne_id);
+            const anc = d.remplace_id && demandes.find(x => x.id === d.remplace_id);
+            const apres = d.type === "CP" && d.statut === "en_attente" && s && d.annee === annee
+              ? Number(s.disponible) + Number(s.attente) - d.nb_jours + (anc && anc.type === "CP" && anc.annee === d.annee ? Number(anc.nb_jours) : 0)
+              : null;
+            const chev = absentsEnMemeTemps(d);
+            return ligneDemande(d, {
+              nom: true,
+              extra: () => chev.length > 0 && e('div', { style: { fontSize: 12, color: "#B7791F", background: "#FFF6E5", borderRadius: 6, padding: "4px 8px", marginTop: 6 } }, "⚠️ Également absents : " + chev.join(", ")),
+              actions: () => d.annulation_demandee
+                ? [e('button', { key: "ok", onClick: () => decider(d, "annule"), disabled: occupe, style: bouton("#C53030", true) }, "Accepter l'annulation"),
+                   e('button', { key: "ko", onClick: () => setRefus({ d, motif: "", mode: "maintenir" }), disabled: occupe, style: bouton() }, "Maintenir le congé")]
+                : [apres !== null && e('span', { key: "s", style: { fontSize: 12, fontWeight: 600, color: apres < 0 ? "#C53030" : "#555" } }, "Restera " + fmtJ(apres) + (apres < 0 ? " ⚠️" : "")),
+                   e('button', { key: "ok", onClick: () => decider(d, "approuve"), disabled: occupe, style: bouton("#2F855A", true) }, "✓ Valider"),
+                   e('button', { key: "ko", onClick: () => setRefus({ d, motif: "", mode: "refuse" }), disabled: occupe, style: bouton("#C53030") }, "✕ Refuser")],
+            });
           })));
 
-  // --- Onglet « Équipe »
-  const equipeAffichee = equipe.filter(u => voirInactifs || u.actif);
+  // --- Onglet « Équipe » (ps@ / mp@ / jb@)
+  const soldesAffiches = soldes.filter(s => voirInactifs || s.actif);
   const th = (t, droite) => e('th', { style: { padding: "9px 10px", fontSize: 11, fontWeight: 700, color: "white", background: SB, textAlign: droite ? "right" : "left", whiteSpace: "nowrap" } }, t);
-  const td = (c, x) => e('td', { style: { padding: "9px 10px", fontSize: 13, borderTop: "1px solid #F0F0F5", whiteSpace: "nowrap", ...(x || {}) } }, c);
-  let toutes = demandes.slice();
-  if (filtre.user) toutes = toutes.filter(d => d.user_id === filtre.user);
+  const td = (c, x) => e('td', { style: { padding: "8px 10px", fontSize: 13, borderTop: "1px solid #F0F0F5", whiteSpace: "nowrap", ...(x || {}) } }, c);
+  let toutes = demandes.filter(d => Number(d.annee) === annee);
+  if (filtre.personne) toutes = toutes.filter(d => d.personne_id === filtre.personne);
   if (filtre.statut) toutes = toutes.filter(d => d.statut === filtre.statut);
-  toutes = toutes.filter(d => Number(d.periode) === periode);
   const vueEquipe = e('div', null,
     e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 } },
-      selPeriode,
+      selAnnee,
       e('label', { style: { fontSize: 12.5, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
-        e('input', { type: "checkbox", checked: voirInactifs, onChange: (ev) => setVoirInactifs(ev.target.checked) }), "Afficher les comptes masqués"),
-      e('button', { onClick: exporterCsv, style: { ...bouton(), marginLeft: "auto" } }, "⬇ Export Excel (CSV)")),
-    e('div', { className: "rh-scroll", style: { ...carte, marginBottom: 20 } },
-      e('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 820 } },
-        e('thead', null, e('tr', null,
-          th("Salarié"), th("CP acquis", 1), th("Report", 1), th("Pris", 1), th("En attente", 1), th("CP restant", 1),
-          th("RTT acquis", 1), th("RTT pris", 1), th("RTT restant", 1), th("Autres", 1), th(""))),
-        e('tbody', null, equipeAffichee.map(u => {
-          const s = calculSoldes(u.user_id, periode, demandes, compteurs);
-          const couleurReste = (v) => ({ fontWeight: 800, color: v < 0 ? "#C53030" : v <= 2 ? "#B7791F" : "#2F855A", textAlign: "right" });
-          return e('tr', { key: u.user_id, style: { opacity: u.actif ? 1 : 0.5 } },
-            td(e('div', null, e('div', { style: { fontWeight: 700 } }, u.nom), e('div', { style: { fontSize: 11.5, color: "#999" } }, u.email + (s.saisi ? "" : " · compteur par défaut")))),
-            td(fmtJ(s.cp.droits), { textAlign: "right" }), td(fmtJ(s.cp.report), { textAlign: "right", color: "#777" }),
-            td(fmtJ(s.cp.pris), { textAlign: "right" }), td(s.cp.attente ? fmtJ(s.cp.attente) : "—", { textAlign: "right", color: "#B7791F" }),
-            td(fmtJ(s.cp.reste), couleurReste(s.cp.reste)),
-            td(fmtJ(s.rtt.droits), { textAlign: "right" }), td(fmtJ(s.rtt.pris), { textAlign: "right" }),
-            td(fmtJ(s.rtt.reste), couleurReste(s.rtt.reste)), td(fmtJ(s.autres), { textAlign: "right", color: "#777" }),
-            td(e('div', { style: { display: "flex", gap: 6, justifyContent: "flex-end" } },
-              e('button', { onClick: () => ouvrirCompteur(u), style: { ...bouton(), padding: "5px 10px", fontSize: 12 } }, "✏️ Compteur"),
-              e('button', { onClick: () => basculerActif(u), title: u.actif ? "Masquer de la liste" : "Réafficher", style: { ...bouton(), padding: "5px 10px", fontSize: 12 } }, u.actif ? "🙈" : "👁"))));
-        })))),
+        e('input', { type: "checkbox", checked: voirInactifs, onChange: (ev) => setVoirInactifs(ev.target.checked) }), "Afficher les fiches désactivées"),
+      e('div', { style: { display: "flex", gap: 8, marginLeft: "auto", flexWrap: "wrap" } },
+        role.approbateur && e('button', { onClick: () => ouvrirForm({ pourAutre: true }), style: bouton() }, "＋ Saisir une absence"),
+        e('button', { onClick: () => ouvrirFiche(null), style: bouton(G, true) }, "＋ Nouvelle personne"))),
+    e('div', { className: "rh-scroll", style: { ...carte, marginBottom: 12 } },
+      e('table', { className: "rh-table", style: { width: "100%", borderCollapse: "collapse", minWidth: 900 } },
+        e('thead', null, e('tr', null, th(""), th("Personne"), th("Contrat"), th("Report", 1), th("Acquis à ce jour", 1), th("Pris", 1), th("En attente", 1), th("Disponible", 1), th("Prévu au 31/12", 1), th("Except.", 1), th(""))),
+        e('tbody', null,
+          soldesAffiches.length === 0 && e('tr', null, td(e('span', { style: { color: "#999" } }, "Aucune fiche. Cliquez sur « Nouvelle personne » pour créer la première."), { colSpan: 11, padding: 18 })),
+          soldesAffiches.map(s => {
+            const p = ficheDe(s.personne_id) || s;
+            const v = Number(s.disponible);
+            return e('tr', { key: s.personne_id, style: { opacity: s.actif ? 1 : 0.5 } },
+              td(e(Anneau, { s, taille: 44 }), { width: 56, padding: "4px 6px 4px 10px" }),
+              td(e('div', null, e('div', { style: { fontWeight: 700 } }, s.nom), e('div', { style: { fontSize: 11.5, color: "#999" } }, s.email))),
+              td(e('div', null, pastilleContrat(s.contrat), e('div', { style: { fontSize: 11, color: "#999", marginTop: 3 } }, fmtCourt(s.date_entree) + (s.date_fin ? " → " + fmtCourt(s.date_fin) : "")))),
+              td(fmtJ(s.report), { textAlign: "right", color: "#777" }),
+              td(e('span', null, fmtJ(s.acquis), e('span', { style: { color: "#AAA", fontSize: 11.5 } }, " / " + fmtJ(s.droits))), { textAlign: "right" }),
+              td(fmtJ(s.pris), { textAlign: "right" }),
+              td(Number(s.attente) ? fmtJ(s.attente) : "—", { textAlign: "right", color: "#B7791F" }),
+              td(fmtJ(v), { textAlign: "right", fontWeight: 800, color: v < 0 ? "#C53030" : v <= 2 ? "#B7791F" : "#2F855A" }),
+              td(fmtJ(s.fin_annee), { textAlign: "right", color: "#555" }),
+              td(fmtJ(s.exceptionnelles), { textAlign: "right", color: "#777" }),
+              td(e('button', { onClick: () => ouvrirFiche(p), style: { ...bouton(), ...petit } }, "Fiche"), { textAlign: "right" }));
+          })))),
+    e('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 22, fontSize: 12.5, color: "#555" } },
+      e('button', { onClick: exporterSoldes, style: bouton() }, "⬇ Soldes " + annee + " (CSV)"),
+      e('span', { style: { marginLeft: 10 } }, "Export paie du mois :"),
+      e('input', { type: "month", value: moisPaie, onChange: (ev) => setMoisPaie(ev.target.value), style: { ...champ, width: "auto", padding: "6px 9px" } }),
+      e('button', { onClick: exporterPaie, disabled: !moisPaie, style: bouton() }, "⬇ Absences du mois (CSV)")),
     e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
-      e('div', { style: { fontSize: 13, fontWeight: 700, flex: "1 1 auto" } }, "Demandes de la période (" + toutes.length + ")"),
-      e('select', { value: filtre.user, onChange: (ev) => setFiltre({ ...filtre, user: ev.target.value }), style: { ...champ, width: "auto" } },
-        e('option', { value: "" }, "Tous les salariés"),
-        equipe.map(u => e('option', { key: u.user_id, value: u.user_id }, u.nom))),
+      e('div', { style: { fontSize: 13, fontWeight: 700, flex: "1 1 auto" } }, "Demandes " + annee + " (" + toutes.length + ")"),
+      e('select', { value: filtre.personne, onChange: (ev) => setFiltre({ ...filtre, personne: ev.target.value }), style: { ...champ, width: "auto" } },
+        e('option', { value: "" }, "Toutes les personnes"), personnes.map(p => e('option', { key: p.id, value: p.id }, p.nom))),
       e('select', { value: filtre.statut, onChange: (ev) => setFiltre({ ...filtre, statut: ev.target.value }), style: { ...champ, width: "auto" } },
-        e('option', { value: "" }, "Tous les statuts"),
-        Object.keys(STATUTS).map(k => e('option', { key: k, value: k }, STATUTS[k].l)))),
+        e('option', { value: "" }, "Tous les statuts"), Object.keys(STATUTS).map(k => e('option', { key: k, value: k }, STATUTS[k].l)))),
     toutes.length === 0
       ? e('div', { style: { ...carte, padding: 22, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune demande.")
       : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
           toutes.map(d => ligneDemande(d, {
             nom: true, actions: (x) => {
-              if (!role.approbateur || x.user_id === moi) return [];
-              if (x.statut === "en_attente") return [
-                e('button', { key: "ok", onClick: () => decider(x, "approuve"), disabled: occupe, style: bouton("#2F855A", true) }, "✓ Valider"),
-                e('button', { key: "ko", onClick: () => setRefus({ d: x, motif: "" }), disabled: occupe, style: bouton("#C53030") }, "✕ Refuser")];
-              if (x.statut === "approuve") return [
-                e('button', { key: "an", onClick: () => { const m = prompt("Annuler ce congé déjà validé ? Motif (facultatif, envoyé au salarié) :", ""); if (m !== null) decider(x, "annule", m); }, disabled: occupe, style: bouton("#C53030") }, "Annuler")];
+              if (!role.approbateur || x.demandeur_email === monEmail) return [];
+              if (x.statut === "en_attente" || x.annulation_demandee) return [e('button', { key: "v", onClick: () => setOnglet("valider"), style: { ...bouton(), ...petit } }, "À valider →")];
+              if (x.statut === "approuve") return [e('button', { key: "an", onClick: () => setRefus({ d: x, motif: "", mode: "annule" }), disabled: occupe, style: { ...bouton("#C53030"), ...petit } }, "Annuler")];
               return [];
             }
           }))));
 
-  // --- Onglet « Calendrier »
-  const [an, mo] = mois.split("-").map(Number);
-  const nbJ = new Date(Date.UTC(an, mo, 0)).getUTCDate();
+  // --- Onglet « Planning » (tout le monde ; détail des types pour les responsables)
+  const nbJ = +finDuMois.slice(8);
   const jours = Array.from({ length: nbJ }, (_, i) => mois + "-" + String(i + 1).padStart(2, "0"));
-  const actifs = equipe.filter(u => u.actif);
-  const absenceDe = (uid, s) => demandes.find(d => d.user_id === uid && (d.statut === "approuve" || d.statut === "en_attente") && d.date_debut <= s && d.date_fin >= s);
+  const lignesPlanning = role.manager
+    ? personnes.filter(p => p.actif)
+    : Array.from(new Map(planning.map(x => [x.personne_id, { id: x.personne_id, nom: x.nom }])).values()).sort((a, b) => a.nom.localeCompare(b.nom));
+  const caseDe = (pid, s) => {
+    if (role.manager) {
+      const d = demandes.find(x => x.personne_id === pid && (x.statut === "approuve" || x.statut === "en_attente") && x.date_debut <= s && x.date_fin >= s);
+      return d && { ...d, en_attente: d.statut === "en_attente", t: typeDe(d.type) };
+    }
+    const x = planning.find(y => y.personne_id === pid && y.date_debut <= s && y.date_fin >= s);
+    return x && { ...x, t: x.categorie === "teletravail" ? typeDe("Télétravail") : { l: "Absent", c: "#718096", bg: "#F0F0F4", court: "" } };
+  };
+  const absentsAuj = Array.from(new Set(planning.filter(x => x.categorie === "absence" && !x.en_attente && x.date_debut <= auj && x.date_fin >= auj).map(x => x.nom)));
+  const teletravailAuj = Array.from(new Set(planning.filter(x => x.categorie === "teletravail" && !x.en_attente && x.date_debut <= auj && x.date_fin >= auj).map(x => x.nom)));
   const decalerMois = (n) => { const d = new Date(Date.UTC(an, mo - 1 + n, 1)); setMois(d2s(d).slice(0, 7)); };
-  const absentsJour = (s) => actifs.filter(u => { const d = absenceDe(u.user_id, s); return d && d.statut === "approuve" && estOuvre(s); });
-  const auj = aujourdhui();
-  const vueCalendrier = e('div', null,
-    e('div', { style: { ...carte, padding: "10px 14px", marginBottom: 12, fontSize: 13 } },
-      e('b', null, "Absents aujourd'hui : "),
-      absentsJour(auj).length ? absentsJour(auj).map(u => u.nom).join(", ") : (estOuvre(auj) ? "personne" : "jour non ouvré")),
+  const legende = role.manager ? TYPES : [{ v: "abs", l: "Absent", c: "#718096" }, typeDe("Télétravail")];
+  const vuePlanning = e('div', null,
+    e('div', { style: { ...carte, padding: "10px 14px", marginBottom: 12, fontSize: 13, lineHeight: 1.7 } },
+      e('div', null, e('b', null, "Absents aujourd'hui : "), absentsAuj.length ? absentsAuj.join(", ") : (estOuvre(auj) ? "personne" : "jour non ouvré")),
+      teletravailAuj.length > 0 && e('div', null, e('b', null, "En télétravail : "), teletravailAuj.join(", "))),
     e('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
       e('button', { onClick: () => decalerMois(-1), style: bouton() }, "◀"),
       e('div', { style: { fontSize: 15, fontWeight: 700, minWidth: 150, textAlign: "center", textTransform: "capitalize" } }, MOIS_FR[mo - 1] + " " + an),
       e('button', { onClick: () => decalerMois(1), style: bouton() }, "▶"),
       e('button', { onClick: () => setMois(auj.slice(0, 7)), style: bouton() }, "Aujourd'hui"),
       e('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto", fontSize: 11.5, color: "#555" } },
-        TYPES.map(t => e('span', { key: t.v, style: { display: "inline-flex", alignItems: "center", gap: 4 } }, e('span', { style: { width: 11, height: 11, borderRadius: 3, background: t.c, display: "inline-block" } }), t.l)),
+        legende.map(t => e('span', { key: t.v, style: { display: "inline-flex", alignItems: "center", gap: 4 } }, e('span', { style: { width: 11, height: 11, borderRadius: 3, background: t.c, display: "inline-block" } }), t.l)),
         e('span', { style: { display: "inline-flex", alignItems: "center", gap: 4 } }, e('span', { style: { width: 11, height: 11, borderRadius: 3, border: "2px dashed #B7791F", display: "inline-block" } }), "En attente"))),
     e('div', { className: "rh-scroll", style: carte },
       e('table', { className: "rh-cal", style: { borderCollapse: "collapse", minWidth: 170 + nbJ * 28 } },
         e('thead', null, e('tr', null,
-          e('th', { style: { position: "sticky", left: 0, background: SB, color: "white", fontSize: 11, padding: "7px 10px", textAlign: "left", minWidth: 160, zIndex: 1 } }, "Salarié"),
+          e('th', { style: { position: "sticky", left: 0, background: SB, color: "white", fontSize: 11, padding: "7px 10px", textAlign: "left", minWidth: 160, zIndex: 1 } }, role.manager ? "Personne" : "Absences du mois"),
           jours.map(s => {
             const off = !estOuvre(s);
             return e('th', { key: s, title: estFerie(s) ? "Jour férié" : "", style: { width: 28, minWidth: 28, padding: "4px 0", fontSize: 10, fontWeight: 600, textAlign: "center", background: s === auj ? G : off ? "#2A2A44" : SB, color: s === auj ? "#111" : off ? "#888" : "white" } },
               e('div', null, ["D", "L", "M", "M", "J", "V", "S"][s2d(s).getUTCDay()]), e('div', null, +s.slice(8)));
           }))),
-        e('tbody', null, actifs.map(u => e('tr', { key: u.user_id },
+        e('tbody', null, lignesPlanning.map(u => e('tr', { key: u.id },
           e('td', { style: { position: "sticky", left: 0, background: "white", fontSize: 12.5, fontWeight: 600, padding: "6px 10px", borderTop: "1px solid #F0F0F5", whiteSpace: "nowrap", zIndex: 1 } }, u.nom),
           jours.map(s => {
             const off = !estOuvre(s);
-            const d = !off && absenceDe(u.user_id, s);
-            const t = d && typeDe(d.type);
-            const demi = d && ((s === d.date_debut && d.debut_apres_midi) || (s === d.date_fin && d.fin_matin));
+            const d = !off && caseDe(u.id, s);
             const st = { height: 30, borderTop: "1px solid #F0F0F5", textAlign: "center", fontSize: 9.5, fontWeight: 700, padding: 0, background: off ? "#F1F1F5" : "white" };
             if (!d) return e('td', { key: s, style: st });
-            const enAttente = d.statut === "en_attente";
-            return e('td', { key: s, style: st, title: nomDe(u.user_id) + " — " + t.l + (enAttente ? " (en attente)" : "") + " " + descDates(d) },
+            const t = d.t, demi = (s === d.date_debut && d.debut_apres_midi) || (s === d.date_fin && d.fin_matin);
+            return e('td', { key: s, style: st, title: u.nom + " — " + t.l + (d.en_attente ? " (en attente)" : "") + " " + descDates(d) },
               e('div', { style: {
                 margin: 2, height: 24, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center",
-                background: enAttente ? t.bg : demi ? "linear-gradient(135deg," + t.c + " 50%," + t.bg + " 50%)" : t.c,
-                color: enAttente ? t.c : "white", border: enAttente ? "2px dashed " + t.c : "none",
+                background: d.en_attente ? (t.bg || "#F0F0F4") : demi ? "linear-gradient(135deg," + t.c + " 50%," + (t.bg || "#F0F0F4") + " 50%)" : t.c,
+                color: d.en_attente ? t.c : "white", border: d.en_attente ? "2px dashed " + t.c : "none",
               } }, demi ? "½" : t.court));
           }))))),
-      actifs.length === 0 && e('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Aucun salarié.")));
+      lignesPlanning.length === 0 && e('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, role.manager ? "Aucune fiche." : "Aucune absence ce mois-ci.")));
 
   // ---------- Assemblage ----------
   const onglets = [["moi", "🏖️ Mes congés"]];
-  if (role.approbateur) onglets.push(["valider", "✅ À valider" + (enAttenteAValider.length ? " (" + enAttenteAValider.length + ")" : "")]);
-  if (role.manager) { onglets.push(["equipe", "👥 Équipe"]); onglets.push(["calendrier", "📅 Calendrier"]); }
+  if (role.approbateur) onglets.push(["valider", "✅ À valider" + (aValider.length ? " (" + aValider.length + ")" : "")]);
+  if (role.manager) onglets.push(["equipe", "👥 Équipe"]);
+  onglets.push(["planning", "📅 Planning"]);
   let vue = vueMoi;
   if (onglet === "valider" && role.approbateur) vue = vueValider;
   if (onglet === "equipe" && role.manager) vue = vueEquipe;
-  if (onglet === "calendrier" && role.manager) vue = vueCalendrier;
+  if (onglet === "planning") vue = vuePlanning;
 
+  // Aperçu du formulaire
   const f = form;
+  const fPers = f && ficheDe(f.personne_id);
   const apercu = f ? nbJours(f.debut, f.fin, formFlags(f).am, formFlags(f).fm) : 0;
-  const soldeForm = f ? calculSoldes(moi, periodeDe(f.debut || aujourdhui()), demandes, compteurs) : null;
-  const cptForm = f && soldeForm ? (f.type === "CP" ? soldeForm.cp : f.type === "RTT" ? soldeForm.rtt : null) : null;
+  const fSolde = f && fPers && f.type === "CP" && f.debut && +f.debut.slice(0, 4) === annee ? soldeDe(fPers.id) : null;
+  const rendu = f && f.remplace && f.remplace.type === "CP" ? Number(f.remplace.nb_jours) : 0;
+  const apresForm = fSolde ? Number(fSolde.disponible) - apercu + rendu : null;
+  const typesPossibles = TYPES.filter(t => !t.alternance || (fPers && fPers.contrat === "Alternance"));
+
+  // Aperçu de la fiche
+  const fi = fiche;
+  const fiAnnee = annee;
+  const fiDroits = fi ? acquisJS(fi.date_entree, fi.date_fin || null, fi.contrat, num(fi.jours_stage) || 0, fiAnnee, fiAnnee + "-12-31") : 0;
+  const fiAcquis = fi ? acquisJS(fi.date_entree, fi.date_fin || null, fi.contrat, num(fi.jours_stage) || 0, fiAnnee, auj < fiAnnee + "-12-31" ? auj : fiAnnee + "-12-31") : 0;
+  const fiAnneeInit = fi ? (fi.annee_initiale || String(Math.max(+String(fi.date_entree || auj).slice(0, 4), +auj.slice(0, 4)))) : "";
+  const fiSolde = fi && !fi.nouveau ? soldeDe(fi.id) : null;
+
+  const modeRefus = refus && {
+    refuse: { titre: "Refuser la demande", lib: "Motif (envoyé au salarié)", btn: "Refuser", go: () => decider(refus.d, "refuse", refus.motif) },
+    maintenir: { titre: "Refuser l'annulation (maintenir le congé)", lib: "Motif (envoyé au salarié)", btn: "Maintenir le congé", go: () => decider(refus.d, "maintenir", refus.motif) },
+    annule: { titre: "Annuler ce congé validé", lib: "Motif (envoyé au salarié, facultatif)", btn: "Annuler le congé", go: () => decider(refus.d, "annule", refus.motif) },
+    demande_annulation: { titre: "Demander l'annulation de ce congé", lib: "Motif (facultatif, envoyé aux responsables)", btn: "Envoyer la demande", go: () => demanderAnnulation(refus.d, refus.motif) },
+  }[refus.mode];
 
   return e('div', null,
     e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 } },
@@ -523,12 +757,20 @@ function RH({ session, role }) {
     erreur && e('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 13, marginBottom: 12 } }, erreur),
     message && e('div', { style: { background: message.startsWith("❌") ? "#FDECEC" : "#E9F6EE", border: "1px solid " + (message.startsWith("❌") ? "#F5B5B5" : "#B7E0C6"), color: message.startsWith("❌") ? "#C53030" : "#2F855A", borderRadius: 8, padding: "10px 12px", fontSize: 13, marginBottom: 12, display: "flex", gap: 10 } },
       e('span', { style: { flex: 1 } }, message), e('button', { onClick: () => setMessage(""), style: { border: "none", background: "none", cursor: "pointer", color: "inherit" } }, "✕")),
-    chargement && !demandes.length ? e('div', { style: { padding: 30, color: "#999", fontSize: 13 } }, "Chargement…") : vue,
+    chargement && !personnes.length && !erreur ? e('div', { style: { padding: 30, color: "#999", fontSize: 13 } }, "Chargement…") : vue,
 
-    // Fenêtre : nouvelle demande
-    f && e(Fenetre, { titre: "Nouvelle demande", onFermer: () => !occupe && setForm(null) },
+    // Fenêtre : demande (nouvelle, modification, saisie pour un salarié)
+    f && e(Fenetre, { titre: f.remplace ? "Modifier mon congé" : f.pourAutre ? "Saisir une absence pour un salarié" : "Nouvelle demande", onFermer: () => !occupe && setForm(null) },
+      f.remplace && e('div', { style: { fontSize: 12.5, color: "#2B6CB0", background: "#EBF4FF", borderRadius: 8, padding: "8px 10px", marginTop: 6 } },
+        "Congé actuel : " + descDates(f.remplace) + " (" + fmtJ(f.remplace.nb_jours) + "). Il reste valable tant que la modification n'est pas validée."),
+      f.pourAutre && e('div', null,
+        e('label', { style: etiquette }, "Salarié"),
+        e('select', { value: f.personne_id, onChange: (ev) => setForm({ ...f, personne_id: ev.target.value }), style: champ },
+          e('option', { value: "" }, "— Choisir —"),
+          personnes.filter(p => p.actif && p.email !== monEmail).map(p => e('option', { key: p.id, value: p.id }, p.nom + " (" + p.contrat + ")"))),
+        e('div', { style: { fontSize: 11.5, color: "#888", marginTop: 4 } }, "L'absence est validée directement et le salarié est prévenu par e-mail.")),
       e('label', { style: etiquette }, "Type d'absence"),
-      e('select', { value: f.type, onChange: (ev) => setForm({ ...f, type: ev.target.value }), style: champ }, TYPES.map(t => e('option', { key: t.v, value: t.v }, t.l))),
+      e('select', { value: f.type, onChange: (ev) => setForm({ ...f, type: ev.target.value }), style: champ }, typesPossibles.map(t => e('option', { key: t.v, value: t.v }, libType(t.v, fPers && fPers.contrat)))),
       e('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
         e('div', null, e('label', { style: etiquette }, "Du"), e('input', { type: "date", value: f.debut, onChange: (ev) => { const v = ev.target.value; setForm({ ...f, debut: v, fin: (!f.fin || f.fin < v) ? v : f.fin }); }, style: champ })),
         e('div', null, e('label', { style: etiquette }, "Au (inclus)"), e('input', { type: "date", value: f.fin, min: f.debut, onChange: (ev) => setForm({ ...f, fin: ev.target.value }), style: champ }))),
@@ -540,36 +782,69 @@ function RH({ session, role }) {
             e('label', { style: { display: "flex", gap: 6, alignItems: "center", cursor: "pointer" } }, e('input', { type: "checkbox", checked: f.fm, onChange: (ev) => setForm({ ...f, fm: ev.target.checked }) }), "Le dernier jour, seulement le matin")),
       e('label', { style: etiquette }, "Commentaire (facultatif)"),
       e('textarea', { value: f.commentaire, onChange: (ev) => setForm({ ...f, commentaire: ev.target.value }), rows: 2, style: { ...champ, resize: "vertical" } }),
-      e('div', { style: { marginTop: 14, background: "#F7F7FB", border: "1px solid #E8E8F0", borderRadius: 8, padding: "10px 12px", fontSize: 13 } },
+      e('div', { style: { marginTop: 14, background: "#F7F7FB", border: "1px solid #E8E8F0", borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.6 } },
         e('b', null, fmtJ(apercu) + " ouvré(s)"), " décompté(s) — week-ends et jours fériés exclus.",
-        cptForm && e('div', { style: { marginTop: 4, color: cptForm.dispo - apercu < 0 ? "#C53030" : "#555" } },
-          "Solde " + (f.type === "CP" ? "de congés payés" : "de RTT") + " après cette demande : " + fmtJ(cptForm.dispo - apercu) + (cptForm.dispo - apercu < 0 ? " ⚠️ solde insuffisant (la demande reste possible, à voir avec les responsables)" : ""))),
+        apresForm !== null && e('div', { style: { color: apresForm < 0 ? "#C53030" : "#555" } },
+          "Congés disponibles après cette demande : " + fmtJ(apresForm) + (apresForm < 0 ? " ⚠️ solde insuffisant (la demande reste possible, à voir avec les responsables)" : "")),
+        f.type === "Révision examen" && fPers && soldeDe(fPers.id) && e('div', { style: { color: "#5A67D8" } }, "Révision d'examen déjà posée cette année : " + fmtJ(soldeDe(fPers.id).revision) + " sur 5 j."),
+        dejaAbsents.length > 0 && e('div', { style: { color: "#B7791F" } }, "⚠️ Déjà absents sur une partie de ces dates : " + dejaAbsents.join(", "))),
       formErr && e('div', { style: { color: "#C53030", fontSize: 13, marginTop: 10 } }, formErr),
       e('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 } },
         e('button', { onClick: () => setForm(null), disabled: occupe, style: bouton() }, "Annuler"),
-        e('button', { onClick: soumettre, disabled: occupe || apercu <= 0, style: { ...bouton(G, true), opacity: (occupe || apercu <= 0) ? 0.6 : 1 } }, occupe ? "Envoi…" : "Envoyer la demande"))),
+        e('button', { onClick: soumettre, disabled: occupe || apercu <= 0, style: { ...bouton(G, true), opacity: (occupe || apercu <= 0) ? 0.6 : 1 } },
+          occupe ? "Envoi…" : f.pourAutre ? "Enregistrer l'absence" : f.remplace ? "Envoyer la modification" : "Envoyer la demande"))),
 
-    // Fenêtre : refus
-    refus && e(Fenetre, { titre: "Refuser la demande", onFermer: () => !occupe && setRefus(null) },
-      e('div', { style: { fontSize: 13, color: "#555", marginTop: 4 } }, nomDe(refus.d.user_id) + " — " + typeDe(refus.d.type).l + " " + descDates(refus.d)),
-      e('label', { style: etiquette }, "Motif (envoyé au salarié)"),
+    // Fenêtre : motif (refus, maintien, annulation, demande d'annulation)
+    refus && e(Fenetre, { titre: modeRefus.titre, onFermer: () => !occupe && setRefus(null) },
+      e('div', { style: { fontSize: 13, color: "#555", marginTop: 4 } }, nomDe(refus.d) + " — " + libType(refus.d.type, contratDe(refus.d.personne_id)) + " " + descDates(refus.d)),
+      e('label', { style: etiquette }, modeRefus.lib),
       e('textarea', { value: refus.motif, onChange: (ev) => setRefus({ ...refus, motif: ev.target.value }), rows: 3, autoFocus: true, style: { ...champ, resize: "vertical" } }),
       e('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 } },
-        e('button', { onClick: () => setRefus(null), disabled: occupe, style: bouton() }, "Annuler"),
-        e('button', { onClick: async () => { if (await decider(refus.d, "refuse", refus.motif)) setRefus(null); }, disabled: occupe, style: bouton("#C53030", true) }, "Refuser"))),
+        e('button', { onClick: () => setRefus(null), disabled: occupe, style: bouton() }, "Fermer"),
+        e('button', { onClick: async () => { if (await modeRefus.go()) setRefus(null); }, disabled: occupe, style: bouton("#C53030", true) }, modeRefus.btn))),
 
-    // Fenêtre : compteur
-    editCpt && e(Fenetre, { titre: "Compteur — " + editCpt.nom, onFermer: () => !occupe && setEditCpt(null) },
-      e('div', { style: { fontSize: 12.5, color: "#888" } }, "Période " + libPeriode(periode) + ". Valeurs en jours ouvrés."),
-      e('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } },
-        e('div', null, e('label', { style: etiquette }, "CP acquis"), e('input', { value: editCpt.cp_droits, inputMode: "decimal", onChange: (ev) => setEditCpt({ ...editCpt, cp_droits: ev.target.value }), style: champ })),
-        e('div', null, e('label', { style: etiquette }, "Report N-1"), e('input', { value: editCpt.cp_report, inputMode: "decimal", onChange: (ev) => setEditCpt({ ...editCpt, cp_report: ev.target.value }), style: champ })),
-        e('div', null, e('label', { style: etiquette }, "RTT acquis"), e('input', { value: editCpt.rtt_droits, inputMode: "decimal", onChange: (ev) => setEditCpt({ ...editCpt, rtt_droits: ev.target.value }), style: champ }))),
-      e('label', { style: etiquette }, "Note (visible par le salarié)"),
-      e('input', { value: editCpt.note, onChange: (ev) => setEditCpt({ ...editCpt, note: ev.target.value }), placeholder: "ex. arrivé en septembre : droits au prorata", style: champ }),
+    // Fenêtre : fiche personne
+    fi && e(Fenetre, { large: true, titre: fi.nouveau ? "Nouvelle personne" : "Fiche — " + fi.nom, onFermer: () => !occupe && setFiche(null) },
+      e('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "0 12px" } },
+        e('div', null, e('label', { style: etiquette }, "Nom et prénom"), e('input', { value: fi.nom, onChange: (ev) => setFiche({ ...fi, nom: ev.target.value }), placeholder: "Prénom Nom", style: champ })),
+        e('div', null, e('label', { style: etiquette }, "E-mail de connexion au portail"), e('input', { value: fi.email, onChange: (ev) => setFiche({ ...fi, email: ev.target.value }), placeholder: "prenom@dsihotel.fr", style: champ })),
+        e('div', null, e('label', { style: etiquette }, "Contrat"),
+          e('select', { value: fi.contrat, onChange: (ev) => setFiche({ ...fi, contrat: ev.target.value }), style: champ }, Object.keys(CONTRATS).map(c => e('option', { key: c, value: c }, c)))),
+        e('div', null, e('label', { style: etiquette }, "Date d'arrivée"), e('input', { type: "date", value: fi.date_entree, onChange: (ev) => setFiche({ ...fi, date_entree: ev.target.value }), style: champ })),
+        e('div', null, e('label', { style: etiquette }, fi.contrat === "CDI" ? "Date de départ (si connue)" : "Date de fin du contrat"), e('input', { type: "date", value: fi.date_fin, min: fi.date_entree, onChange: (ev) => setFiche({ ...fi, date_fin: ev.target.value }), style: champ })),
+        fi.contrat === "Stage" && e('div', null, e('label', { style: etiquette }, "Jours de congé prévus (convention)"), e('input', { value: fi.jours_stage, inputMode: "decimal", onChange: (ev) => setFiche({ ...fi, jours_stage: ev.target.value }), style: champ }))),
+      e('div', { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "0 12px" } },
+        e('div', null, e('label', { style: etiquette }, "Suivi dans l'outil à partir de"), e('input', { value: fiAnneeInit, inputMode: "numeric", onChange: (ev) => setFiche({ ...fi, annee_initiale: ev.target.value.replace(/\D/g, "").slice(0, 4) }), style: champ })),
+        e('div', null, e('label', { style: etiquette }, "Jours restants au 1er janvier " + fiAnneeInit), e('input', { value: fi.solde_initial, inputMode: "decimal", onChange: (ev) => setFiche({ ...fi, solde_initial: ev.target.value }), style: champ }))),
+      e('div', { style: { fontSize: 11.5, color: "#888", marginTop: 5 } }, "Pour une personne déjà présente avant l'outil : indiquez ses jours non pris des années précédentes. Pour une nouvelle arrivée : laissez 0."),
+      e('label', { style: etiquette }, "Note (visible par la personne)"),
+      e('input', { value: fi.note, onChange: (ev) => setFiche({ ...fi, note: ev.target.value }), style: champ }),
+      !fi.nouveau && e('label', { style: { display: "flex", gap: 6, alignItems: "center", fontSize: 13, marginTop: 12, cursor: "pointer" } },
+        e('input', { type: "checkbox", checked: fi.actif, onChange: (ev) => setFiche({ ...fi, actif: ev.target.checked }) }), "Fiche active (décochez au départ de la personne)"),
+      e('div', { style: { marginTop: 14, background: "#F7F7FB", border: "1px solid #E8E8F0", borderRadius: 8, padding: "10px 12px", fontSize: 13, lineHeight: 1.6 } },
+        fi.contrat === "Stage"
+          ? (+String(fi.date_entree).slice(0, 4) === fiAnnee ? "Congés de stage crédités dès l'arrivée : " + fmtJ(fiDroits) + "." : "Les jours de stage sont crédités sur l'année d'arrivée.")
+          : e('span', null, "Droits " + fiAnnee + " calculés : ", e('b', null, fmtJ(fiDroits)), " (2,08 j par mois de présence)" + (fiAcquis !== fiDroits ? ", dont " + fmtJ(fiAcquis) + " acquis à ce jour." : ".")),
+        fi.contrat === "Alternance" && e('div', { style: { color: "#5A67D8" } }, "+ 5 j de révision d'examen par an (type d'absence à part)."),
+        fiSolde && e('div', null, "Disponible aujourd'hui : ", e('b', null, fmtJ(fiSolde.disponible)), " · prévu au 31/12 : " + fmtJ(fiSolde.fin_annee))),
+      ficheErr && e('div', { style: { color: "#C53030", fontSize: 13, marginTop: 10 } }, ficheErr),
       e('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 } },
-        e('button', { onClick: () => setEditCpt(null), disabled: occupe, style: bouton() }, "Annuler"),
-        e('button', { onClick: enregistrerCompteur, disabled: occupe, style: bouton(G, true) }, "Enregistrer")))
+        e('button', { onClick: () => setFiche(null), disabled: occupe, style: bouton() }, "Fermer"),
+        e('button', { onClick: enregistrerFiche, disabled: occupe, style: bouton(G, true) }, fi.nouveau ? "Créer la fiche" : "Enregistrer")),
+      !fi.nouveau && e('div', { style: { borderTop: "1px solid #EEE", marginTop: 18, paddingTop: 6 } },
+        e('div', { style: { fontSize: 13.5, fontWeight: 700, margin: "8px 0 4px" } }, "Ajuster le compteur " + annee),
+        e('div', { style: { fontSize: 11.5, color: "#888" } }, "Ex. : −3 pour des jours pris avant l'outil, +1 pour un jour offert. Chaque ajustement est conservé dans l'historique."),
+        e('div', { style: { display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" } },
+          e('input', { value: ajust.jours, inputMode: "decimal", placeholder: "± jours", onChange: (ev) => setAjust({ ...ajust, jours: ev.target.value }), style: { ...champ, width: 100 } }),
+          e('input', { value: ajust.motif, placeholder: "Motif", onChange: (ev) => setAjust({ ...ajust, motif: ev.target.value }), style: { ...champ, flex: "1 1 200px", width: "auto" } }),
+          e('button', { onClick: ajouterAjustement, disabled: occupe, style: bouton() }, "Ajouter")),
+        e('div', { style: { fontSize: 13.5, fontWeight: 700, margin: "18px 0 6px" } }, "Historique"),
+        journal.length === 0
+          ? e('div', { style: { fontSize: 12.5, color: "#999" } }, "Aucun événement.")
+          : e('div', { style: { maxHeight: 260, overflowY: "auto", border: "1px solid #F0F0F5", borderRadius: 8 } },
+              journal.map(j => e('div', { key: j.id, style: { padding: "7px 10px", borderBottom: "1px solid #F5F5F9", fontSize: 12.5 } },
+                e('div', null, e('b', null, j.action), e('span', { style: { color: "#999" } }, " — " + new Date(j.le).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) + (j.par ? " — " + j.par : ""))),
+                j.detail && e('div', { style: { color: "#555" } }, j.detail))))))
   );
 }
 
