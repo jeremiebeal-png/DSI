@@ -3438,7 +3438,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         '<div style="font-size:13px;margin-top:3px;">Par <b>' + esc(qui) + '</b> le ' + esc(quand) + '</div>' +
       '</div>' +
       (commentaire.trim() ? '<div style="margin-top:8px;padding:8px 12px;background:#EBF8FF;border-left:3px solid #2B6CB0;font-size:13px;">' + esc(commentaire.trim()) + '</div>' : '') +
-      '<div style="font-size:12px;color:#666;margin-top:6px;">En attente de la prochaine remontée CheckCentral : un message « Sauvegarde rétablie » s\'ajoutera automatiquement si elle repasse OK.</div>' +
+      '<div style="font-size:12px;color:#666;margin-top:6px;">En attente de la prochaine remontée de la sauvegarde : un message « Sauvegarde rétablie » s\'ajoutera automatiquement si elle repasse OK.</div>' +
     '</div>';
     setRelanceBusy(t.id);
     try {
@@ -4491,10 +4491,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkVeeamHist, setBkVeeamHist] = useState({}); // { job_id: "loading" | { erreur } | [runs] } — Veeam direct
   const [bkVeeamRuns, setBkVeeamRuns] = useState({}); // { job_id: [{ id, t, s }] } — 10 dernières exécutions (frise)
   const [bkRapport, setBkRapport] = useState(null);
-  const [bkVue, setBkVue] = useState(() => { try { return localStorage.getItem("bkVue") || "tout"; } catch (e) { return "tout"; } }); // tout | checkcentral | veeam | comparaison
+  // CheckCentral retiré (oct. 2026) : seules les sauvegardes Veeam reçues par mail (backup@dsihotel.com) sont suivies
+  const bkVue = "veeam";
   const [bkCmpOpen, setBkCmpOpen] = useState({});
   const [bkFiltreSt, setBkFiltreSt] = useState([]); // rangs de statut affichés (vide = tous) : 3 OK, 1 avertissement, 0 échec, 2 pause/attente
-  const choisirBkVue = (v) => { setBkVue(v); try { localStorage.setItem("bkVue", v); } catch (e) {} };   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
+  useEffect(() => { try { localStorage.removeItem("bkVue"); } catch (e) {} }, []);   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
   // ============================================================
   //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
   //  (un compte par hôtel). Données alimentées par le Worker dsi-hotel-sophos.
@@ -5670,7 +5671,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const cand = checks.filter(c => c.name && texte.includes(norm(c.name))).sort((a, b) => String(b.name).length - String(a.name).length);
         check = cand[0];
       }
-      if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans CheckCentral. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
+      if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans les sauvegardes. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
       const finD = new Date(); finD.setDate(finD.getDate() + BK_SILENCE_JOURS);
       const finIso = finD.toISOString().slice(0, 10);
       const finFr = finD.toLocaleDateString("fr-FR");
@@ -5789,7 +5790,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setFreqBusy(t.id);
     try {
       const check = await trouverCheckTicket(t);
-      if (!check) { alert("Impossible de retrouver cette sauvegarde dans CheckCentral. Réglez sa fréquence depuis Pilotage → Sauvegardes."); return; }
+      if (!check) { alert("Impossible de retrouver cette sauvegarde. Réglez sa fréquence depuis Pilotage → Sauvegardes."); return; }
       const msg = await definirFrequenceBackup(check, heures, t);
       if (msg && msg.startsWith("⚠️")) alert(msg);
     } catch (e) {
@@ -5937,7 +5938,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const res = await fetch(CHECKCENTRAL_API_URL, { method: "GET", headers: { Authorization: "Bearer " + (sessBk.session?.access_token || "") } });
       if (!res.ok) {
         const t = await res.text().catch(() => "");
-        setBkNote("Erreur Worker CheckCentral (" + res.status + ")" + (t ? " — " + t.slice(0, 200) : "") + ".");
+        setBkNote("Erreur Worker sauvegardes (" + res.status + ")" + (t ? " — " + t.slice(0, 200) : "") + ".");
         setBkChecks([]);
         return;
       }
@@ -5954,9 +5955,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           setBkVeeamRuns(m);
         });
       }
-      if ((data.checks || []).length === 0) setBkNote("Aucun check retourné par CheckCentral.");
+      if ((data.checks || []).length === 0) setBkNote("Aucune sauvegarde Veeam reçue pour l'instant.");
     } catch (e) {
-      setBkNote("Erreur : " + (e.message || e) + " (le Worker CheckCentral est-il déployé et l'URL correcte ?)");
+      setBkNote("Erreur : " + (e.message || e) + " (le Worker dsi-hotel-checkcentral est-il déployé et l'URL correcte ?)");
       setBkChecks([]);
     } finally {
       setBkLoading(false);
@@ -6116,9 +6117,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const fmtDateHeureFr2 = (iso) => { try { return iso ? new Date(iso).toLocaleString("fr-FR") : "—"; } catch (e) { return "—"; } };
 
   // Sous-onglet de la page Sauvegardes : ne filtre que sur cette page (le tableau de bord garde le total)
-  const bkChecksVue = (page === "backups" && (bkVue === "checkcentral" || bkVue === "veeam"))
-    ? (bkChecks || []).filter(c => bkVue === "veeam" ? c.origine === "veeam" : c.origine !== "veeam")
-    : (bkChecks || []);
+  const bkChecksVue = (bkChecks || []).filter(c => c.origine === "veeam");
 
   // Regroupe les checks par groupe et calcule le pire statut du groupe.
   const bkGroupes = (() => {
@@ -11108,7 +11107,7 @@ const nav = isAdmin
     const nomGroupe = (g) => {
       const hid = g.hotel_id || (g.group_id && bkGroupMap[g.group_id]);
       const hotel = hid && hotels.find(h => String(h.id) === String(hid));
-      if (g.origine === "veeam") return hotel ? hotel.name + " · Veeam direct" : g.group;
+      if (g.origine === "veeam") return hotel ? hotel.name : String(g.group || "").replace(/ \(Veeam direct\)$/, "");
       return hotel ? hotel.name : g.group;
     };
     const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !(prev[key] !== undefined ? prev[key] : bkFiltreSt.length > 0) }));
@@ -11175,7 +11174,7 @@ const nav = isAdmin
     };
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Sources : API CheckCentral et mails Veeam reçus directement sur backup@dsihotel.com (« Veeam direct »). Cliquez sur une pastille ou sur 📄 pour ouvrir le rapport Veeam (impression PDF possible)."
+        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Source : mails de notification Veeam reçus sur backup@dsihotel.com et planification lue chaque nuit dans Veeam (inventaire NinjaOne). Cliquez sur une pastille ou sur 📄 pour ouvrir le rapport Veeam (impression PDF possible)."
       ),
       bkRapport && bkRenderRapport(),
       // Alerte : backups sans exécution depuis plus de 7 jours.
@@ -11252,10 +11251,7 @@ const nav = isAdmin
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
         React.createElement('button', { onClick: loadBackups, disabled: bkLoading, style: { padding: "8px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: bkLoading ? 0.6 : 1 } }, bkLoading ? "Actualisation..." : "🔄 Actualiser"),
         React.createElement('button', { onClick: () => lancerAlertesBackup("run", 24), title: "Crée directement un ticket pour chaque sauvegarde en défaut depuis plus de 24 h (sans doublon)", style: { padding: "8px 15px", background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🚨 Alertes + de 24 h"),
-        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt)),
-        React.createElement('div', { style: { display: "flex", gap: 0, border: "1px solid #DDE3EE", borderRadius: 8, overflow: "hidden", marginLeft: isMobile ? 0 : "auto" } },
-          [["tout", "Tout"], ["checkcentral", "CheckCentral"], ["veeam", "Veeam direct"], ["comparaison", "⇄ Comparaison"]].map(([v, l]) =>
-            React.createElement('button', { key: v, onClick: () => choisirBkVue(v), style: { padding: "7px 13px", fontSize: 12, fontWeight: 600, border: "none", borderRight: v !== "comparaison" ? "1px solid #DDE3EE" : "none", cursor: "pointer", background: bkVue === v ? "#0F0F24" : "white", color: bkVue === v ? "white" : "#445" } }, l)))
+        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt))
       ),
       // Fenêtre de test / lancement des alertes sauvegardes
       bkAlerte && React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !bkAlerte.loading) setBkAlerte(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", zIndex: 90, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? 12 : "40px 20px", overflowY: "auto" } },
@@ -11364,7 +11360,7 @@ const nav = isAdmin
                         c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description),
                         fq && fq.frequence_heures > 24 && React.createElement('div', { style: { fontSize: 11, color: "#2B6CB0", marginTop: 2 } },
                           "📅 Sauvegarde " + bkLibFreq(fq.frequence_heures).toLowerCase() +
-                          (cm.masquee ? " — défaut CheckCentral ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
+                          (cm.masquee ? " — défaut ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
                           (fq.derniere_reussite ? " · dernière réussite le " + new Date(fq.derniere_reussite).toLocaleDateString("fr-FR") : "")),
                         c.origine === "veeam" && c.message && cm.rank <= 1 && React.createElement('div', { style: { fontSize: 11, color: "#C53030", marginTop: 2, fontFamily: "Consolas, monospace", wordBreak: "break-word" } }, c.message),
                         c.origine === "veeam" && c.message && cm.rank === 2 && React.createElement('div', { style: { fontSize: 11, color: "#718096", marginTop: 2 } }, "⏸ " + c.message),
