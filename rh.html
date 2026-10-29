@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>DSI Hotel — Congés &amp; absences</title>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #F0F2F8; color: #1a1a3e; }
+  input, select, textarea, button { font-family: inherit; }
+  @media (max-width: 768px) { input, select, textarea { font-size: 16px !important; } }
+  .rh-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .rh-cal td, .rh-cal th { border-right: 1px solid #F0F0F5; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// =====================================================================
+//  DSI Hotel — Congés & absences (rh.html)
+//  Page séparée du portail, même compte, même double authentification.
+//  Les droits d'accès sont appliqués par Supabase (script rh_conges.sql).
+// =====================================================================
+const { useState, useEffect } = React;
+const e = React.createElement;
+
+const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
+const SUPABASE_URL = "https://vkamubvlbezhpbunvdai.supabase.co";
+const SUPABASE_KEY = "sb_publishable_0bUT3AjMaWBI9qQa9ZKmrA_3BRqNvbL";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const EMAIL_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev/send";
+const PAGE_URL = "https://portail.dsihotel.com/rh.html";
+
+// Période de référence : du 1er juin au 31 mai (doit correspondre à rh_periode() en SQL).
+const MOIS_DEBUT_PERIODE = 6;
+// Valeurs utilisées tant qu'aucun compteur n'a été saisi pour un salarié.
+const DEFAUT = { cp_droits: 25, cp_report: 0, rtt_droits: 0 };
+
+const TYPES = [
+  { v: "CP", l: "Congés payés", c: "#2F855A", bg: "#E6F6EA", court: "CP" },
+  { v: "RTT", l: "RTT", c: "#2B6CB0", bg: "#EBF4FF", court: "RTT" },
+  { v: "Sans solde", l: "Congé sans solde", c: "#6B46C1", bg: "#F3EEFC", court: "SS" },
+  { v: "Événement familial", l: "Événement familial", c: "#B7791F", bg: "#FFF6E5", court: "EF" },
+  { v: "Maladie", l: "Arrêt maladie", c: "#C53030", bg: "#FDECEC", court: "M" },
+  { v: "Autre", l: "Autre absence", c: "#718096", bg: "#F0F0F4", court: "A" },
+];
+const typeDe = (v) => TYPES.find(t => t.v === v) || TYPES[TYPES.length - 1];
+const STATUTS = {
+  en_attente: { l: "En attente", c: "#B7791F", bg: "#FFF6E5" },
+  approuve: { l: "Validée", c: "#2F855A", bg: "#E6F6EA" },
+  refuse: { l: "Refusée", c: "#C53030", bg: "#FDECEC" },
+  annule: { l: "Annulée", c: "#718096", bg: "#F0F0F4" },
+};
+const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+// ---------- Dates (chaînes AAAA-MM-JJ, calcul en UTC pour éviter les décalages d'heure) ----------
+const s2d = (s) => new Date(s + "T00:00:00Z");
+const d2s = (d) => d.toISOString().slice(0, 10);
+const ajout = (s, n) => { const d = s2d(s); d.setUTCDate(d.getUTCDate() + n); return d2s(d); };
+const aujourdhui = () => { const n = new Date(); return n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0"); };
+function paques(a) {
+  const b = Math.floor(a / 100), c = a % 100, d = Math.floor(b / 4), ee = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * (a % 19) + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * ee + 2 * i - h - k) % 7, m = Math.floor(((a % 19) + 11 * h + 22 * l) / 451);
+  return new Date(Date.UTC(a, Math.floor((h + l - 7 * m + 114) / 31) - 1, ((h + l - 7 * m + 114) % 31) + 1));
+}
+const _feries = {};
+function feriesAnnee(a) {
+  if (_feries[a]) return _feries[a];
+  const p = d2s(paques(a));
+  const set = new Set(["01-01", "05-01", "05-08", "07-14", "08-15", "11-01", "11-11", "12-25"].map(x => a + "-" + x));
+  [1, 39, 50].forEach(n => set.add(ajout(p, n)));
+  return (_feries[a] = set);
+}
+const estFerie = (s) => feriesAnnee(+s.slice(0, 4)).has(s);
+const estWeekend = (s) => { const j = s2d(s).getUTCDay(); return j === 0 || j === 6; };
+const estOuvre = (s) => !estWeekend(s) && !estFerie(s);
+function nbJours(debut, fin, am, fm) {
+  if (!debut || !fin || fin < debut) return 0;
+  let n = 0;
+  for (let s = debut; s <= fin; s = ajout(s, 1)) if (estOuvre(s)) n++;
+  if (am && estOuvre(debut)) n -= 0.5;
+  if (fm && estOuvre(fin)) n -= 0.5;
+  return Math.max(n, 0);
+}
+const periodeDe = (s) => { const a = +s.slice(0, 4), m = +s.slice(5, 7); return m >= MOIS_DEBUT_PERIODE ? a : a - 1; };
+const libPeriode = (p) => "1er " + MOIS_FR[MOIS_DEBUT_PERIODE - 1] + " " + p + " → " + "31 " + MOIS_FR[(MOIS_DEBUT_PERIODE + 10) % 12] + " " + (p + 1);
+const fmtDate = (s, long) => s ? s2d(s).toLocaleDateString("fr-FR", { timeZone: "UTC", weekday: "short", day: "numeric", month: long ? "long" : "short", year: long ? "numeric" : undefined }) : "—";
+const fmtJ = (n) => { const v = Math.round(Number(n || 0) * 10) / 10; return v.toLocaleString("fr-FR") + " j"; };
+const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function descDates(d) {
+  if (d.date_debut === d.date_fin) {
+    return "le " + fmtDate(d.date_debut, true) + (d.debut_apres_midi ? " (après-midi)" : d.fin_matin ? " (matin)" : "");
+  }
+  return "du " + fmtDate(d.date_debut, true) + (d.debut_apres_midi ? " (après-midi)" : "") +
+    " au " + fmtDate(d.date_fin, true) + (d.fin_matin ? " (matin)" : "");
+}
+
+// ---------- Compteurs ----------
+function calculSoldes(userId, periode, demandes, compteurs) {
+  const c = compteurs.find(x => x.user_id === userId && Number(x.periode) === periode) || {};
+  const val = (k) => (c[k] === undefined || c[k] === null) ? DEFAUT[k] : Number(c[k]);
+  const mes = demandes.filter(d => d.user_id === userId && Number(d.periode) === periode);
+  const somme = (filtre) => mes.filter(filtre).reduce((n, d) => n + Number(d.nb_jours || 0), 0);
+  const cp = { droits: val("cp_droits"), report: val("cp_report"), pris: somme(d => d.type === "CP" && d.statut === "approuve"), attente: somme(d => d.type === "CP" && d.statut === "en_attente") };
+  cp.reste = cp.droits + cp.report - cp.pris; cp.dispo = cp.reste - cp.attente;
+  const rtt = { droits: val("rtt_droits"), report: 0, pris: somme(d => d.type === "RTT" && d.statut === "approuve"), attente: somme(d => d.type === "RTT" && d.statut === "en_attente") };
+  rtt.reste = rtt.droits - rtt.pris; rtt.dispo = rtt.reste - rtt.attente;
+  const autres = somme(d => d.type !== "CP" && d.type !== "RTT" && d.statut === "approuve");
+  return { cp, rtt, autres, note: c.note || "", saisi: !!c.user_id };
+}
+
+// ---------- Emails (Worker dsi-hotel-api-v2, route /send) ----------
+async function envoyerEmail(payload) {
+  try {
+    const { data } = await sb.auth.getSession();
+    await fetch(EMAIL_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + ((data.session && data.session.access_token) || "") },
+      body: JSON.stringify({ fromName: "Portail RH DSI Hotel", ...payload }),
+    });
+  } catch (ex) { /* l'email est un plus : la demande reste enregistrée */ }
+}
+function emailHtml(titre, lignes, bouton) {
+  return '<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:auto;color:#333;font-size:14px">' +
+    '<div style="background:#0F0F24;color:#C9A84C;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:bold">' + esc(titre) + '</div>' +
+    '<div style="border:1px solid #E8E8F0;border-top:none;border-radius:0 0 10px 10px;padding:18px;line-height:1.6">' +
+    lignes.map(l => '<p style="margin:0 0 10px">' + l + '</p>').join("") +
+    (bouton ? '<p style="text-align:center;margin:18px 0 4px"><a href="' + PAGE_URL + '" style="display:inline-block;background:#C9A84C;color:#111;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:bold">' + esc(bouton) + '</a></p>' : "") +
+    '</div></div>';
+}
+
+// ---------- Petits éléments d'interface ----------
+const bouton = (couleur, plein) => ({
+  padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+  border: "1px solid " + (plein ? couleur : "#DDE0EA"), background: plein ? couleur : "white", color: plein ? (couleur === G ? "#111" : "white") : (couleur || "#555"),
+});
+const champ = { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 8, fontSize: 13.5, background: "white" };
+const etiquette = { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", margin: "12px 0 5px" };
+const carte = { background: "white", border: "1px solid #E8E8F0", borderRadius: 12 };
+const pastille = (txt, c, bg) => e('span', { style: { display: "inline-block", fontSize: 11, fontWeight: 700, color: c, background: bg, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap" } }, txt);
+const pastilleStatut = (s) => { const m = STATUTS[s] || STATUTS.annule; return pastille(m.l, m.c, m.bg); };
+const pastilleType = (t) => { const m = typeDe(t); return pastille(m.l, m.c, m.bg); };
+
+function Fenetre({ titre, onFermer, children, large }) {
+  return e('div', { onClick: (ev) => { if (ev.target === ev.currentTarget) onFermer(); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "40px 14px", zIndex: 100, overflowY: "auto" } },
+    e('div', { style: { ...carte, width: large ? 640 : 480, maxWidth: "100%", padding: 22, boxShadow: "0 12px 40px rgba(0,0,0,.25)" } },
+      e('div', { style: { display: "flex", alignItems: "center", marginBottom: 6 } },
+        e('div', { style: { fontSize: 16, fontWeight: 700, flex: 1 } }, titre),
+        e('button', { onClick: onFermer, style: { border: "none", background: "none", fontSize: 18, cursor: "pointer", color: "#999" } }, "✕")),
+      children));
+}
+
+// =====================================================================
+//  Écran principal RH
+// =====================================================================
+function RH({ session, role }) {
+  const moi = session.user.id;
+  const monEmail = String(session.user.email || "").toLowerCase();
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [onglet, setOnglet] = useState("moi");
+  const [periode, setPeriode] = useState(periodeDe(aujourdhui()));
+  const [demandes, setDemandes] = useState([]);
+  const [compteurs, setCompteurs] = useState([]);
+  const [equipe, setEquipe] = useState([]);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState("");
+  const [message, setMessage] = useState("");
+  const [occupe, setOccupe] = useState(false);
+  const [form, setForm] = useState(null);
+  const [formErr, setFormErr] = useState("");
+  const [refus, setRefus] = useState(null);
+  const [editCpt, setEditCpt] = useState(null);
+  const [voirInactifs, setVoirInactifs] = useState(false);
+  const [filtre, setFiltre] = useState({ user: "", statut: "" });
+  const [mois, setMois] = useState(aujourdhui().slice(0, 7));
+
+  useEffect(() => { const f = () => setIsMobile(window.innerWidth <= 768); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+
+  async function charger() {
+    setChargement(true); setErreur("");
+    try {
+      let dem = [];
+      for (let from = 0; from < 20000; from += 1000) {
+        let q = sb.from("rh_demandes").select("*").order("date_debut", { ascending: false }).range(from, from + 999);
+        if (!role.manager) q = q.eq("user_id", moi);
+        const { data, error } = await q;
+        if (error) throw error;
+        dem = dem.concat(data || []);
+        if (!data || data.length < 1000) break;
+      }
+      let qc = sb.from("rh_compteurs").select("*");
+      if (!role.manager) qc = qc.eq("user_id", moi);
+      const { data: cpt, error: ec } = await qc;
+      if (ec) throw ec;
+      let eq = [];
+      if (role.manager) {
+        const { data, error } = await sb.rpc("rh_equipe");
+        if (error) throw error;
+        eq = data || [];
+      }
+      setDemandes(dem); setCompteurs(cpt || []); setEquipe(eq);
+    } catch (ex) {
+      const m = ex.message || String(ex);
+      setErreur("Chargement impossible : " + m + (/rh_/i.test(m) ? " — le script rh_conges.sql a-t-il été exécuté dans Supabase ?" : ""));
+    } finally { setChargement(false); }
+  }
+  useEffect(() => { charger(); }, []);
+
+  const nomDe = (uid) => {
+    const p = equipe.find(x => x.user_id === uid); if (p) return p.nom;
+    const d = demandes.find(x => x.user_id === uid && x.demandeur_nom); if (d) return d.demandeur_nom;
+    return uid === moi ? monEmail : "?";
+  };
+  const enAttenteAValider = demandes.filter(d => d.statut === "en_attente" && d.user_id !== moi);
+
+  // ---------- Nouvelle demande ----------
+  function ouvrirForm() {
+    const j = aujourdhui();
+    setFormErr("");
+    setForm({ type: "CP", debut: j, fin: j, choix: "jour", am: false, fm: false, commentaire: "" });
+  }
+  const formFlags = (f) => f.debut === f.fin ? { am: f.choix === "aprem", fm: f.choix === "matin" } : { am: f.am, fm: f.fm };
+  async function soumettre() {
+    const f = form; const { am, fm } = formFlags(f);
+    if (!f.debut || !f.fin) { setFormErr("Indiquez les dates."); return; }
+    if (f.fin < f.debut) { setFormErr("La date de fin est avant la date de début."); return; }
+    if (nbJours(f.debut, f.fin, am, fm) <= 0) { setFormErr("Aucun jour ouvré sur ces dates (week-end ou jour férié)."); return; }
+    setOccupe(true); setFormErr("");
+    const { data, error } = await sb.from("rh_demandes").insert({
+      user_id: moi, type: f.type, date_debut: f.debut, date_fin: f.fin,
+      debut_apres_midi: am, fin_matin: fm, commentaire: f.commentaire.trim() || null,
+    }).select().single();
+    setOccupe(false);
+    if (error) { setFormErr(error.message); return; }
+    const dest = (role.approbateurs || []).filter(a => a !== monEmail);
+    if (dest.length) {
+      const s = calculSoldes(moi, Number(data.periode), demandes.concat([data]), compteurs);
+      const solde = data.type === "CP" ? "Solde de congés payés après cette demande : " + fmtJ(s.cp.dispo) : data.type === "RTT" ? "Solde de RTT après cette demande : " + fmtJ(s.rtt.dispo) : null;
+      envoyerEmail({
+        to: dest[0], cc: dest.slice(1), replyTo: monEmail,
+        subject: "[Congés] " + data.demandeur_nom + " — " + typeDe(data.type).l + " — " + fmtJ(data.nb_jours),
+        text: data.demandeur_nom + " demande " + typeDe(data.type).l + " " + descDates(data) + " (" + fmtJ(data.nb_jours) + ")." + (data.commentaire ? "\nCommentaire : " + data.commentaire : "") + (solde ? "\n" + solde : "") + "\n\nValider ou refuser : " + PAGE_URL,
+        html: emailHtml("Nouvelle demande de congés", [
+          "<b>" + esc(data.demandeur_nom) + "</b> demande <b>" + esc(typeDe(data.type).l) + "</b> " + esc(descDates(data)) + ", soit <b>" + fmtJ(data.nb_jours) + "</b> ouvré(s).",
+          data.commentaire ? "Commentaire : " + esc(data.commentaire) : "",
+          solde ? esc(solde) : "",
+        ].filter(Boolean), "Valider ou refuser"),
+      });
+    }
+    setForm(null);
+    setMessage("✅ Demande envoyée (" + fmtJ(data.nb_jours) + "). " + (dest.length ? "Les responsables ont été prévenus par email." : ""));
+    charger();
+  }
+
+  // ---------- Décisions ----------
+  async function decider(d, decision, motif) {
+    setOccupe(true); setMessage("");
+    const { data, error } = await sb.rpc("rh_decider", { p_id: d.id, p_decision: decision, p_motif: motif || null });
+    setOccupe(false);
+    if (error) { setMessage("❌ " + error.message); return false; }
+    const r = data || d;
+    const lib = decision === "approuve" ? "validée" : decision === "refuse" ? "refusée" : "annulée";
+    if (r.demandeur_email) {
+      envoyerEmail({
+        to: r.demandeur_email, replyTo: monEmail,
+        subject: "[Congés] Votre demande est " + lib + " — " + typeDe(r.type).l + " " + (r.date_debut === r.date_fin ? fmtDate(r.date_debut) : fmtDate(r.date_debut) + " → " + fmtDate(r.date_fin)),
+        text: "Bonjour,\n\nVotre demande de " + typeDe(r.type).l + " " + descDates(r) + " (" + fmtJ(r.nb_jours) + ") a été " + lib + " par " + monEmail + "." + (motif ? "\nMotif : " + motif : "") + "\n\n" + PAGE_URL,
+        html: emailHtml("Demande de congés " + lib, [
+          "Bonjour,",
+          "Votre demande de <b>" + esc(typeDe(r.type).l) + "</b> " + esc(descDates(r)) + " (" + fmtJ(r.nb_jours) + ") a été <b>" + lib + "</b> par " + esc(monEmail) + ".",
+          motif ? "Motif : " + esc(motif) : "",
+        ].filter(Boolean), "Voir mes congés"),
+      });
+    }
+    setMessage("✅ Demande de " + (r.demandeur_nom || nomDe(r.user_id)) + " " + lib + ".");
+    charger();
+    return true;
+  }
+  async function annulerMienne(d) {
+    if (!confirm("Annuler votre demande " + descDates(d) + " ?")) return;
+    setOccupe(true);
+    const { error } = await sb.rpc("rh_annuler", { p_id: d.id });
+    setOccupe(false);
+    if (error) { setMessage("❌ " + error.message); return; }
+    setMessage("Demande annulée."); charger();
+  }
+
+  // ---------- Compteurs ----------
+  function ouvrirCompteur(u) {
+    const s = calculSoldes(u.user_id, periode, demandes, compteurs);
+    setEditCpt({ user_id: u.user_id, nom: u.nom, cp_droits: String(s.cp.droits), cp_report: String(s.cp.report), rtt_droits: String(s.rtt.droits), note: s.note });
+  }
+  async function enregistrerCompteur() {
+    const n = (v) => { const x = Number(String(v).replace(",", ".")); return isNaN(x) ? 0 : x; };
+    setOccupe(true);
+    const { error } = await sb.from("rh_compteurs").upsert({
+      user_id: editCpt.user_id, periode, cp_droits: n(editCpt.cp_droits), cp_report: n(editCpt.cp_report),
+      rtt_droits: n(editCpt.rtt_droits), note: editCpt.note.trim() || null, maj_par: monEmail, maj_le: new Date().toISOString(),
+    }, { onConflict: "user_id,periode" });
+    setOccupe(false);
+    if (error) { alert("Enregistrement impossible : " + error.message); return; }
+    setEditCpt(null); charger();
+  }
+  async function basculerActif(u) {
+    if (u.actif && !confirm("Masquer « " + u.nom + " » de la liste de l'équipe ? (compte qui n'est pas un salarié, départ…)")) return;
+    const { error } = await sb.from("rh_salaries").upsert({ user_id: u.user_id, actif: !u.actif }, { onConflict: "user_id" });
+    if (error) { alert("Erreur : " + error.message); return; }
+    charger();
+  }
+  function exporterCsv() {
+    const sep = ";", q = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+    const num = (v) => String(Math.round(v * 10) / 10).replace(".", ",");
+    const lignes = [["Salarié", "Email", "CP acquis", "CP report", "CP pris", "CP en attente", "CP restant", "RTT acquis", "RTT pris", "RTT en attente", "RTT restant", "Autres absences"].map(q).join(sep)];
+    equipe.filter(u => u.actif).forEach(u => {
+      const s = calculSoldes(u.user_id, periode, demandes, compteurs);
+      lignes.push([q(u.nom), q(u.email), num(s.cp.droits), num(s.cp.report), num(s.cp.pris), num(s.cp.attente), num(s.cp.reste), num(s.rtt.droits), num(s.rtt.pris), num(s.rtt.attente), num(s.rtt.reste), num(s.autres)].join(sep));
+    });
+    const blob = new Blob(["\ufeff" + lignes.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = "Conges_equipe_" + periode + "-" + (periode + 1) + ".csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  // ---------- Rendus ----------
+  const selPeriode = e('div', { style: { display: "inline-flex", alignItems: "center", gap: 6, background: "white", border: "1px solid #E8E8F0", borderRadius: 20, padding: "3px 6px" } },
+    e('button', { onClick: () => setPeriode(periode - 1), style: { border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "2px 6px" } }, "◀"),
+    e('span', { style: { fontSize: 12.5, fontWeight: 600 } }, "Période : " + libPeriode(periode)),
+    e('button', { onClick: () => setPeriode(periode + 1), style: { border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "2px 6px" } }, "▶"));
+
+  const tuileSolde = (titre, s, couleur, avecReport) => e('div', { style: { ...carte, flex: "1 1 240px", padding: "16px 18px", borderLeft: "5px solid " + couleur } },
+    e('div', { style: { fontSize: 12, color: "#888", fontWeight: 600 } }, titre + " — restant"),
+    e('div', { style: { fontSize: 30, fontWeight: 800, color: s.dispo < 0 ? "#C53030" : couleur, margin: "4px 0" } }, fmtJ(s.dispo)),
+    e('div', { style: { fontSize: 12, color: "#666", lineHeight: 1.6 } },
+      "Acquis " + fmtJ(s.droits) + (avecReport && s.report ? " + report " + fmtJ(s.report) : "") + " − pris " + fmtJ(s.pris),
+      s.attente > 0 && e('div', { style: { color: "#B7791F" } }, fmtJ(s.attente) + " en attente de validation (déjà déduit)")));
+
+  const ligneDemande = (d, opts) => {
+    const t = typeDe(d.type);
+    const avenir = d.date_fin >= aujourdhui();
+    return e('div', { key: d.id, style: { ...carte, padding: "11px 14px", borderLeft: "4px solid " + t.c, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", opacity: (d.statut === "annule" || d.statut === "refuse") ? 0.7 : 1 } },
+      e('div', { style: { flex: "1 1 260px", minWidth: 0 } },
+        e('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 3 } },
+          opts && opts.nom && e('b', { style: { fontSize: 13.5 } }, nomDe(d.user_id)),
+          pastilleType(d.type), pastilleStatut(d.statut),
+          e('span', { style: { fontSize: 13, fontWeight: 700 } }, fmtJ(d.nb_jours))),
+        e('div', { style: { fontSize: 13, color: "#333" } }, descDates(d).replace(/^./, c => c.toUpperCase())),
+        d.commentaire && e('div', { style: { fontSize: 12, color: "#777", marginTop: 2 } }, "💬 " + d.commentaire),
+        d.statut !== "en_attente" && d.decide_par && e('div', { style: { fontSize: 11.5, color: "#999", marginTop: 2 } },
+          (STATUTS[d.statut] || {}).l + " par " + d.decide_par + (d.decide_le ? " le " + new Date(d.decide_le).toLocaleDateString("fr-FR") : "") + (d.motif_refus ? " — " + d.motif_refus : ""))),
+      opts && opts.actions && e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, opts.actions(d, avenir)));
+  };
+
+  // --- Onglet « Mes congés »
+  const mesDemandes = demandes.filter(d => d.user_id === moi);
+  const mesSoldes = calculSoldes(moi, periode, demandes, compteurs);
+  const vueMoi = e('div', null,
+    e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
+      selPeriode,
+      e('button', { onClick: ouvrirForm, style: { ...bouton(G, true), marginLeft: "auto" } }, "＋ Nouvelle demande")),
+    e('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 8 } },
+      tuileSolde("Congés payés", mesSoldes.cp, "#2F855A", true),
+      tuileSolde("RTT", mesSoldes.rtt, "#2B6CB0", false),
+      e('div', { style: { ...carte, flex: "1 1 180px", padding: "16px 18px", borderLeft: "5px solid #718096" } },
+        e('div', { style: { fontSize: 12, color: "#888", fontWeight: 600 } }, "Autres absences validées"),
+        e('div', { style: { fontSize: 30, fontWeight: 800, color: "#4A5568", margin: "4px 0" } }, fmtJ(mesSoldes.autres)),
+        e('div', { style: { fontSize: 12, color: "#666" } }, "Sans solde, maladie, événement familial…"))),
+    !mesSoldes.saisi && e('div', { style: { fontSize: 11.5, color: "#999", marginBottom: 14 } }, "Compteur pas encore saisi par les responsables pour cette période : valeurs par défaut (" + DEFAUT.cp_droits + " j de congés payés)."),
+    mesSoldes.note && e('div', { style: { fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "7px 10px", marginBottom: 14 } }, "📝 " + mesSoldes.note),
+    e('div', { style: { fontSize: 13, fontWeight: 700, margin: "18px 0 8px" } }, "Mes demandes"),
+    mesDemandes.length === 0
+      ? e('div', { style: { ...carte, padding: 24, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune demande pour le moment.")
+      : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          mesDemandes.map(d => ligneDemande(d, { actions: (x) => x.statut === "en_attente" ? [e('button', { key: "a", onClick: () => annulerMienne(x), disabled: occupe, style: bouton("#C53030") }, "Annuler ma demande")] : [] }))));
+
+  // --- Onglet « À valider »
+  const vueValider = e('div', null,
+    e('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 12 } }, "Demandes en attente. Vous ne pouvez pas traiter vos propres demandes : l'autre responsable s'en charge."),
+    enAttenteAValider.length === 0
+      ? e('div', { style: { ...carte, padding: 26, textAlign: "center", color: "#2F855A", fontSize: 14, fontWeight: 600, background: "#E9F6EE", border: "1px solid #B7E0C6" } }, "✅ Aucune demande en attente.")
+      : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          enAttenteAValider.slice().sort((a, b) => a.date_debut.localeCompare(b.date_debut)).map(d => {
+            const s = calculSoldes(d.user_id, Number(d.periode), demandes, compteurs);
+            const cpt = d.type === "CP" ? s.cp : d.type === "RTT" ? s.rtt : null;
+            const apres = cpt ? cpt.reste - d.nb_jours : null;
+            return e('div', { key: d.id },
+              ligneDemande(d, {
+                nom: true, actions: () => [
+                  cpt && e('span', { key: "s", style: { fontSize: 12, fontWeight: 600, color: apres < 0 ? "#C53030" : "#555", alignSelf: "center" } }, "Restera " + fmtJ(apres) + (apres < 0 ? " ⚠️" : "")),
+                  e('button', { key: "ok", onClick: () => decider(d, "approuve"), disabled: occupe, style: bouton("#2F855A", true) }, "✓ Valider"),
+                  e('button', { key: "ko", onClick: () => setRefus({ d, motif: "" }), disabled: occupe, style: bouton("#C53030") }, "✕ Refuser"),
+                ]
+              }));
+          })));
+
+  // --- Onglet « Équipe »
+  const equipeAffichee = equipe.filter(u => voirInactifs || u.actif);
+  const th = (t, droite) => e('th', { style: { padding: "9px 10px", fontSize: 11, fontWeight: 700, color: "white", background: SB, textAlign: droite ? "right" : "left", whiteSpace: "nowrap" } }, t);
+  const td = (c, x) => e('td', { style: { padding: "9px 10px", fontSize: 13, borderTop: "1px solid #F0F0F5", whiteSpace: "nowrap", ...(x || {}) } }, c);
+  let toutes = demandes.slice();
+  if (filtre.user) toutes = toutes.filter(d => d.user_id === filtre.user);
+  if (filtre.statut) toutes = toutes.filter(d => d.statut === filtre.statut);
+  toutes = toutes.filter(d => Number(d.periode) === periode);
+  const vueEquipe = e('div', null,
+    e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 } },
+      selPeriode,
+      e('label', { style: { fontSize: 12.5, color: "#555", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
+        e('input', { type: "checkbox", checked: voirInactifs, onChange: (ev) => setVoirInactifs(ev.target.checked) }), "Afficher les comptes masqués"),
+      e('button', { onClick: exporterCsv, style: { ...bouton(), marginLeft: "auto" } }, "⬇ Export Excel (CSV)")),
+    e('div', { className: "rh-scroll", style: { ...carte, marginBottom: 20 } },
+      e('table', { style: { width: "100%", borderCollapse: "collapse", minWidth: 820 } },
+        e('thead', null, e('tr', null,
+          th("Salarié"), th("CP acquis", 1), th("Report", 1), th("Pris", 1), th("En attente", 1), th("CP restant", 1),
+          th("RTT acquis", 1), th("RTT pris", 1), th("RTT restant", 1), th("Autres", 1), th(""))),
+        e('tbody', null, equipeAffichee.map(u => {
+          const s = calculSoldes(u.user_id, periode, demandes, compteurs);
+          const couleurReste = (v) => ({ fontWeight: 800, color: v < 0 ? "#C53030" : v <= 2 ? "#B7791F" : "#2F855A", textAlign: "right" });
+          return e('tr', { key: u.user_id, style: { opacity: u.actif ? 1 : 0.5 } },
+            td(e('div', null, e('div', { style: { fontWeight: 700 } }, u.nom), e('div', { style: { fontSize: 11.5, color: "#999" } }, u.email + (s.saisi ? "" : " · compteur par défaut")))),
+            td(fmtJ(s.cp.droits), { textAlign: "right" }), td(fmtJ(s.cp.report), { textAlign: "right", color: "#777" }),
+            td(fmtJ(s.cp.pris), { textAlign: "right" }), td(s.cp.attente ? fmtJ(s.cp.attente) : "—", { textAlign: "right", color: "#B7791F" }),
+            td(fmtJ(s.cp.reste), couleurReste(s.cp.reste)),
+            td(fmtJ(s.rtt.droits), { textAlign: "right" }), td(fmtJ(s.rtt.pris), { textAlign: "right" }),
+            td(fmtJ(s.rtt.reste), couleurReste(s.rtt.reste)), td(fmtJ(s.autres), { textAlign: "right", color: "#777" }),
+            td(e('div', { style: { display: "flex", gap: 6, justifyContent: "flex-end" } },
+              e('button', { onClick: () => ouvrirCompteur(u), style: { ...bouton(), padding: "5px 10px", fontSize: 12 } }, "✏️ Compteur"),
+              e('button', { onClick: () => basculerActif(u), title: u.actif ? "Masquer de la liste" : "Réafficher", style: { ...bouton(), padding: "5px 10px", fontSize: 12 } }, u.actif ? "🙈" : "👁"))));
+        })))),
+    e('div', { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+      e('div', { style: { fontSize: 13, fontWeight: 700, flex: "1 1 auto" } }, "Demandes de la période (" + toutes.length + ")"),
+      e('select', { value: filtre.user, onChange: (ev) => setFiltre({ ...filtre, user: ev.target.value }), style: { ...champ, width: "auto" } },
+        e('option', { value: "" }, "Tous les salariés"),
+        equipe.map(u => e('option', { key: u.user_id, value: u.user_id }, u.nom))),
+      e('select', { value: filtre.statut, onChange: (ev) => setFiltre({ ...filtre, statut: ev.target.value }), style: { ...champ, width: "auto" } },
+        e('option', { value: "" }, "Tous les statuts"),
+        Object.keys(STATUTS).map(k => e('option', { key: k, value: k }, STATUTS[k].l)))),
+    toutes.length === 0
+      ? e('div', { style: { ...carte, padding: 22, textAlign: "center", color: "#999", fontSize: 13 } }, "Aucune demande.")
+      : e('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          toutes.map(d => ligneDemande(d, {
+            nom: true, actions: (x) => {
+              if (!role.approbateur || x.user_id === moi) return [];
+              if (x.statut === "en_attente") return [
+                e('button', { key: "ok", onClick: () => decider(x, "approuve"), disabled: occupe, style: bouton("#2F855A", true) }, "✓ Valider"),
+                e('button', { key: "ko", onClick: () => setRefus({ d: x, motif: "" }), disabled: occupe, style: bouton("#C53030") }, "✕ Refuser")];
+              if (x.statut === "approuve") return [
+                e('button', { key: "an", onClick: () => { const m = prompt("Annuler ce congé déjà validé ? Motif (facultatif, envoyé au salarié) :", ""); if (m !== null) decider(x, "annule", m); }, disabled: occupe, style: bouton("#C53030") }, "Annuler")];
+              return [];
+            }
+          }))));
+
+  // --- Onglet « Calendrier »
+  const [an, mo] = mois.split("-").map(Number);
+  const nbJ = new Date(Date.UTC(an, mo, 0)).getUTCDate();
+  const jours = Array.from({ length: nbJ }, (_, i) => mois + "-" + String(i + 1).padStart(2, "0"));
+  const actifs = equipe.filter(u => u.actif);
+  const absenceDe = (uid, s) => demandes.find(d => d.user_id === uid && (d.statut === "approuve" || d.statut === "en_attente") && d.date_debut <= s && d.date_fin >= s);
+  const decalerMois = (n) => { const d = new Date(Date.UTC(an, mo - 1 + n, 1)); setMois(d2s(d).slice(0, 7)); };
+  const absentsJour = (s) => actifs.filter(u => { const d = absenceDe(u.user_id, s); return d && d.statut === "approuve" && estOuvre(s); });
+  const auj = aujourdhui();
+  const vueCalendrier = e('div', null,
+    e('div', { style: { ...carte, padding: "10px 14px", marginBottom: 12, fontSize: 13 } },
+      e('b', null, "Absents aujourd'hui : "),
+      absentsJour(auj).length ? absentsJour(auj).map(u => u.nom).join(", ") : (estOuvre(auj) ? "personne" : "jour non ouvré")),
+    e('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+      e('button', { onClick: () => decalerMois(-1), style: bouton() }, "◀"),
+      e('div', { style: { fontSize: 15, fontWeight: 700, minWidth: 150, textAlign: "center", textTransform: "capitalize" } }, MOIS_FR[mo - 1] + " " + an),
+      e('button', { onClick: () => decalerMois(1), style: bouton() }, "▶"),
+      e('button', { onClick: () => setMois(auj.slice(0, 7)), style: bouton() }, "Aujourd'hui"),
+      e('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto", fontSize: 11.5, color: "#555" } },
+        TYPES.map(t => e('span', { key: t.v, style: { display: "inline-flex", alignItems: "center", gap: 4 } }, e('span', { style: { width: 11, height: 11, borderRadius: 3, background: t.c, display: "inline-block" } }), t.l)),
+        e('span', { style: { display: "inline-flex", alignItems: "center", gap: 4 } }, e('span', { style: { width: 11, height: 11, borderRadius: 3, border: "2px dashed #B7791F", display: "inline-block" } }), "En attente"))),
+    e('div', { className: "rh-scroll", style: carte },
+      e('table', { className: "rh-cal", style: { borderCollapse: "collapse", minWidth: 170 + nbJ * 28 } },
+        e('thead', null, e('tr', null,
+          e('th', { style: { position: "sticky", left: 0, background: SB, color: "white", fontSize: 11, padding: "7px 10px", textAlign: "left", minWidth: 160, zIndex: 1 } }, "Salarié"),
+          jours.map(s => {
+            const off = !estOuvre(s);
+            return e('th', { key: s, title: estFerie(s) ? "Jour férié" : "", style: { width: 28, minWidth: 28, padding: "4px 0", fontSize: 10, fontWeight: 600, textAlign: "center", background: s === auj ? G : off ? "#2A2A44" : SB, color: s === auj ? "#111" : off ? "#888" : "white" } },
+              e('div', null, ["D", "L", "M", "M", "J", "V", "S"][s2d(s).getUTCDay()]), e('div', null, +s.slice(8)));
+          }))),
+        e('tbody', null, actifs.map(u => e('tr', { key: u.user_id },
+          e('td', { style: { position: "sticky", left: 0, background: "white", fontSize: 12.5, fontWeight: 600, padding: "6px 10px", borderTop: "1px solid #F0F0F5", whiteSpace: "nowrap", zIndex: 1 } }, u.nom),
+          jours.map(s => {
+            const off = !estOuvre(s);
+            const d = !off && absenceDe(u.user_id, s);
+            const t = d && typeDe(d.type);
+            const demi = d && ((s === d.date_debut && d.debut_apres_midi) || (s === d.date_fin && d.fin_matin));
+            const st = { height: 30, borderTop: "1px solid #F0F0F5", textAlign: "center", fontSize: 9.5, fontWeight: 700, padding: 0, background: off ? "#F1F1F5" : "white" };
+            if (!d) return e('td', { key: s, style: st });
+            const enAttente = d.statut === "en_attente";
+            return e('td', { key: s, style: st, title: nomDe(u.user_id) + " — " + t.l + (enAttente ? " (en attente)" : "") + " " + descDates(d) },
+              e('div', { style: {
+                margin: 2, height: 24, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center",
+                background: enAttente ? t.bg : demi ? "linear-gradient(135deg," + t.c + " 50%," + t.bg + " 50%)" : t.c,
+                color: enAttente ? t.c : "white", border: enAttente ? "2px dashed " + t.c : "none",
+              } }, demi ? "½" : t.court));
+          }))))),
+      actifs.length === 0 && e('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Aucun salarié.")));
+
+  // ---------- Assemblage ----------
+  const onglets = [["moi", "🏖️ Mes congés"]];
+  if (role.approbateur) onglets.push(["valider", "✅ À valider" + (enAttenteAValider.length ? " (" + enAttenteAValider.length + ")" : "")]);
+  if (role.manager) { onglets.push(["equipe", "👥 Équipe"]); onglets.push(["calendrier", "📅 Calendrier"]); }
+  let vue = vueMoi;
+  if (onglet === "valider" && role.approbateur) vue = vueValider;
+  if (onglet === "equipe" && role.manager) vue = vueEquipe;
+  if (onglet === "calendrier" && role.manager) vue = vueCalendrier;
+
+  const f = form;
+  const apercu = f ? nbJours(f.debut, f.fin, formFlags(f).am, formFlags(f).fm) : 0;
+  const soldeForm = f ? calculSoldes(moi, periodeDe(f.debut || aujourdhui()), demandes, compteurs) : null;
+  const cptForm = f && soldeForm ? (f.type === "CP" ? soldeForm.cp : f.type === "RTT" ? soldeForm.rtt : null) : null;
+
+  return e('div', null,
+    e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 } },
+      onglets.map(([k, l]) => e('button', { key: k, onClick: () => { setOnglet(k); setMessage(""); }, style: { padding: "8px 16px", borderRadius: 20, fontSize: 13, cursor: "pointer", fontWeight: onglet === k ? 700 : 500, border: "1px solid " + (onglet === k ? G : "#DDD"), background: onglet === k ? G + "22" : "white", color: onglet === k ? G2 : "#555" } }, l)),
+      e('button', { onClick: charger, disabled: chargement, style: { ...bouton(), marginLeft: "auto", padding: "7px 12px" } }, chargement ? "…" : "🔄")),
+    erreur && e('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 13, marginBottom: 12 } }, erreur),
+    message && e('div', { style: { background: message.startsWith("❌") ? "#FDECEC" : "#E9F6EE", border: "1px solid " + (message.startsWith("❌") ? "#F5B5B5" : "#B7E0C6"), color: message.startsWith("❌") ? "#C53030" : "#2F855A", borderRadius: 8, padding: "10px 12px", fontSize: 13, marginBottom: 12, display: "flex", gap: 10 } },
+      e('span', { style: { flex: 1 } }, message), e('button', { onClick: () => setMessage(""), style: { border: "none", background: "none", cursor: "pointer", color: "inherit" } }, "✕")),
+    chargement && !demandes.length ? e('div', { style: { padding: 30, color: "#999", fontSize: 13 } }, "Chargement…") : vue,
+
+    // Fenêtre : nouvelle demande
+    f && e(Fenetre, { titre: "Nouvelle demande", onFermer: () => !occupe && setForm(null) },
+      e('label', { style: etiquette }, "Type d'absence"),
+      e('select', { value: f.type, onChange: (ev) => setForm({ ...f, type: ev.target.value }), style: champ }, TYPES.map(t => e('option', { key: t.v, value: t.v }, t.l))),
+      e('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+        e('div', null, e('label', { style: etiquette }, "Du"), e('input', { type: "date", value: f.debut, onChange: (ev) => { const v = ev.target.value; setForm({ ...f, debut: v, fin: (!f.fin || f.fin < v) ? v : f.fin }); }, style: champ })),
+        e('div', null, e('label', { style: etiquette }, "Au (inclus)"), e('input', { type: "date", value: f.fin, min: f.debut, onChange: (ev) => setForm({ ...f, fin: ev.target.value }), style: champ }))),
+      f.debut && f.debut === f.fin
+        ? e('div', { style: { display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" } },
+            [["jour", "Journée entière"], ["matin", "Matin"], ["aprem", "Après-midi"]].map(([v, l]) => e('button', { key: v, type: "button", onClick: () => setForm({ ...f, choix: v }), style: { ...bouton(), border: "1px solid " + (f.choix === v ? G : "#DDE0EA"), background: f.choix === v ? G + "22" : "white", color: f.choix === v ? G2 : "#555" } }, l)))
+        : e('div', { style: { display: "flex", gap: 16, marginTop: 10, flexWrap: "wrap", fontSize: 13 } },
+            e('label', { style: { display: "flex", gap: 6, alignItems: "center", cursor: "pointer" } }, e('input', { type: "checkbox", checked: f.am, onChange: (ev) => setForm({ ...f, am: ev.target.checked }) }), "Le 1er jour, seulement l'après-midi"),
+            e('label', { style: { display: "flex", gap: 6, alignItems: "center", cursor: "pointer" } }, e('input', { type: "checkbox", checked: f.fm, onChange: (ev) => setForm({ ...f, fm: ev.target.checked }) }), "Le dernier jour, seulement le matin")),
+      e('label', { style: etiquette }, "Commentaire (facultatif)"),
+      e('textarea', { value: f.commentaire, onChange: (ev) => setForm({ ...f, commentaire: ev.target.value }), rows: 2, style: { ...champ, resize: "vertical" } }),
+      e('div', { style: { marginTop: 14, background: "#F7F7FB", border: "1px solid #E8E8F0", borderRadius: 8, padding: "10px 12px", fontSize: 13 } },
+        e('b', null, fmtJ(apercu) + " ouvré(s)"), " décompté(s) — week-ends et jours fériés exclus.",
+        cptForm && e('div', { style: { marginTop: 4, color: cptForm.dispo - apercu < 0 ? "#C53030" : "#555" } },
+          "Solde " + (f.type === "CP" ? "de congés payés" : "de RTT") + " après cette demande : " + fmtJ(cptForm.dispo - apercu) + (cptForm.dispo - apercu < 0 ? " ⚠️ solde insuffisant (la demande reste possible, à voir avec les responsables)" : ""))),
+      formErr && e('div', { style: { color: "#C53030", fontSize: 13, marginTop: 10 } }, formErr),
+      e('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 } },
+        e('button', { onClick: () => setForm(null), disabled: occupe, style: bouton() }, "Annuler"),
+        e('button', { onClick: soumettre, disabled: occupe || apercu <= 0, style: { ...bouton(G, true), opacity: (occupe || apercu <= 0) ? 0.6 : 1 } }, occupe ? "Envoi…" : "Envoyer la demande"))),
+
+    // Fenêtre : refus
+    refus && e(Fenetre, { titre: "Refuser la demande", onFermer: () => !occupe && setRefus(null) },
+      e('div', { style: { fontSize: 13, color: "#555", marginTop: 4 } }, nomDe(refus.d.user_id) + " — " + typeDe(refus.d.type).l + " " + descDates(refus.d)),
+      e('label', { style: etiquette }, "Motif (envoyé au salarié)"),
+      e('textarea', { value: refus.motif, onChange: (ev) => setRefus({ ...refus, motif: ev.target.value }), rows: 3, autoFocus: true, style: { ...champ, resize: "vertical" } }),
+      e('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 } },
+        e('button', { onClick: () => setRefus(null), disabled: occupe, style: bouton() }, "Annuler"),
+        e('button', { onClick: async () => { if (await decider(refus.d, "refuse", refus.motif)) setRefus(null); }, disabled: occupe, style: bouton("#C53030", true) }, "Refuser"))),
+
+    // Fenêtre : compteur
+    editCpt && e(Fenetre, { titre: "Compteur — " + editCpt.nom, onFermer: () => !occupe && setEditCpt(null) },
+      e('div', { style: { fontSize: 12.5, color: "#888" } }, "Période " + libPeriode(periode) + ". Valeurs en jours ouvrés."),
+      e('div', { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } },
+        e('div', null, e('label', { style: etiquette }, "CP acquis"), e('input', { value: editCpt.cp_droits, inputMode: "decimal", onChange: (ev) => setEditCpt({ ...editCpt, cp_droits: ev.target.value }), style: champ })),
+        e('div', null, e('label', { style: etiquette }, "Report N-1"), e('input', { value: editCpt.cp_report, inputMode: "decimal", onChange: (ev) => setEditCpt({ ...editCpt, cp_report: ev.target.value }), style: champ })),
+        e('div', null, e('label', { style: etiquette }, "RTT acquis"), e('input', { value: editCpt.rtt_droits, inputMode: "decimal", onChange: (ev) => setEditCpt({ ...editCpt, rtt_droits: ev.target.value }), style: champ }))),
+      e('label', { style: etiquette }, "Note (visible par le salarié)"),
+      e('input', { value: editCpt.note, onChange: (ev) => setEditCpt({ ...editCpt, note: ev.target.value }), placeholder: "ex. arrivé en septembre : droits au prorata", style: champ }),
+      e('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 } },
+        e('button', { onClick: () => setEditCpt(null), disabled: occupe, style: bouton() }, "Annuler"),
+        e('button', { onClick: enregistrerCompteur, disabled: occupe, style: bouton(G, true) }, "Enregistrer")))
+  );
+}
+
+// =====================================================================
+//  Connexion + double authentification + contrôle d'accès
+// =====================================================================
+function App() {
+  const [session, setSession] = useState(null);
+  const [pret, setPret] = useState(false);
+  const [mfa, setMfa] = useState("checking");
+  const [factorId, setFactorId] = useState(null);
+  const [code, setCode] = useState("");
+  const [errAuth, setErrAuth] = useState("");
+  const [occupe, setOccupe] = useState(false);
+  const [role, setRole] = useState(null);
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+
+  useEffect(() => {
+    sb.auth.getSession().then(({ data }) => { setSession(data.session); setPret(true); });
+    const { data: l } = sb.auth.onAuthStateChange((_ev, s) => setSession(s));
+    return () => l.subscription.unsubscribe();
+  }, []);
+
+  const jeton = session && session.access_token;
+  useEffect(() => {
+    if (!session) { setMfa("checking"); setRole(null); return; }
+    (async () => {
+      const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aal && aal.currentLevel === "aal2") { setMfa("ok"); return; }
+      const { data: fs } = await sb.auth.mfa.listFactors();
+      const v = ((fs && fs.totp) || []).filter(x => x.status === "verified");
+      if (v.length) { setFactorId(v[0].id); setMfa("challenge"); } else setMfa("noenroll");
+    })();
+  }, [jeton]);
+
+  useEffect(() => {
+    if (mfa !== "ok") return;
+    sb.rpc("rh_role").then(({ data, error }) => setRole(error ? { erreur: error.message } : (data || {})));
+  }, [mfa, jeton]);
+
+  async function connexion() {
+    setOccupe(true); setErrAuth("");
+    const { error } = await sb.auth.signInWithPassword({ email: email.trim(), password: pw });
+    setOccupe(false);
+    if (error) setErrAuth("Email ou mot de passe incorrect.");
+  }
+  async function verifier() {
+    const c = code.replace(/\s/g, "");
+    if (c.length !== 6) { setErrAuth("Entrez le code à 6 chiffres."); return; }
+    setOccupe(true); setErrAuth("");
+    try {
+      const { data: ch, error: e1 } = await sb.auth.mfa.challenge({ factorId });
+      if (e1) throw e1;
+      const { error: e2 } = await sb.auth.mfa.verify({ factorId, challengeId: ch.id, code: c });
+      if (e2) throw e2;
+      setCode(""); setMfa("ok");
+    } catch (ex) { setErrAuth("Code incorrect ou expiré."); }
+    finally { setOccupe(false); }
+  }
+  const deconnexion = async () => { try { await sb.auth.signOut({ scope: "local" }); } catch (ex) {} setRole(null); };
+
+  const ecranCentre = (contenu) => e('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 } },
+    e('div', { style: { width: 400, maxWidth: "100%" } },
+      e('div', { style: { textAlign: "center", marginBottom: 22 } },
+        e('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 54 } }),
+        e('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 13, marginTop: 8 } }, "Congés & absences — équipe DSI Hotel")),
+      e('div', { style: { background: "rgba(255,255,255,.05)", border: "1px solid " + G + "30", borderRadius: 14, padding: 24 } }, contenu)));
+  const champSombre = { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: "1px solid " + G + "35", borderRadius: 8, color: "white", fontSize: 14, outline: "none", marginBottom: 12 };
+  const btnOr = { width: "100%", padding: 11, background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" };
+  const lienPortail = e('a', { href: "/", style: { display: "block", textAlign: "center", marginTop: 14, color: "rgba(255,255,255,.5)", fontSize: 12.5 } }, "← Retour au portail");
+
+  if (!pret) return ecranCentre(e('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 13, textAlign: "center" } }, "Chargement…"));
+  if (!session) return ecranCentre(e('div', null,
+    e('input', { value: email, onChange: (ev) => setEmail(ev.target.value), placeholder: "prenom@dsihotel.fr", autoComplete: "username", style: champSombre }),
+    e('input', { type: "password", value: pw, onChange: (ev) => setPw(ev.target.value), onKeyDown: (ev) => ev.key === "Enter" && connexion(), placeholder: "Mot de passe", autoComplete: "current-password", style: champSombre }),
+    errAuth && e('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 10 } }, errAuth),
+    e('button', { onClick: connexion, disabled: occupe, style: { ...btnOr, opacity: occupe ? 0.6 : 1 } }, occupe ? "Connexion…" : "Se connecter"),
+    lienPortail));
+  if (mfa === "checking") return ecranCentre(e('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 13, textAlign: "center" } }, "Vérification de la sécurité…"));
+  if (mfa === "noenroll") return ecranCentre(e('div', { style: { color: "rgba(255,255,255,.75)", fontSize: 13.5, lineHeight: 1.6 } },
+    "La double authentification n'est pas encore activée sur votre compte. Connectez-vous d'abord au portail pour l'activer, puis revenez sur cette page.",
+    e('a', { href: "/", style: { ...btnOr, display: "block", textAlign: "center", textDecoration: "none", marginTop: 16 } }, "Ouvrir le portail")));
+  if (mfa === "challenge") return ecranCentre(e('div', null,
+    e('div', { style: { color: G, fontWeight: 600, marginBottom: 6 } }, "🔐 Code de vérification"),
+    e('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 12.5, marginBottom: 14 } }, "Saisissez le code à 6 chiffres de votre application d'authentification."),
+    e('input', { value: code, onChange: (ev) => { setCode(ev.target.value.replace(/\D/g, "").slice(0, 6)); setErrAuth(""); }, onKeyDown: (ev) => ev.key === "Enter" && verifier(), inputMode: "numeric", autoFocus: true, placeholder: "000000", style: { ...champSombre, fontSize: 22, letterSpacing: 6, textAlign: "center", fontFamily: "monospace" } }),
+    errAuth && e('div', { style: { color: "#FC8181", fontSize: 13, marginBottom: 10 } }, errAuth),
+    e('button', { onClick: verifier, disabled: occupe || code.length !== 6, style: { ...btnOr, opacity: (occupe || code.length !== 6) ? 0.5 : 1 } }, occupe ? "Vérification…" : "Vérifier"),
+    e('button', { onClick: deconnexion, style: { ...btnOr, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.55)", marginTop: 10, fontWeight: 400 } }, "Se déconnecter")));
+  if (!role) return ecranCentre(e('div', { style: { color: "rgba(255,255,255,.6)", fontSize: 13, textAlign: "center" } }, "Chargement…"));
+  if (role.erreur || !role.staff) return ecranCentre(e('div', { style: { color: "rgba(255,255,255,.8)", fontSize: 13.5, lineHeight: 1.6 } },
+    role.erreur ? "Erreur : " + role.erreur + (/rh_role/i.test(role.erreur) ? " — le script rh_conges.sql n'a pas encore été exécuté dans Supabase." : "")
+                : "Cette page est réservée aux membres de l'équipe DSI Hotel.",
+    e('button', { onClick: deconnexion, style: { ...btnOr, marginTop: 16 } }, "Se déconnecter"), lienPortail));
+
+  return e('div', { style: { minHeight: "100vh" } },
+    e('div', { style: { background: SB, color: "white", padding: "12px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 50 } },
+      e('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 34 } }),
+      e('div', { style: { fontSize: 15, fontWeight: 700, color: G } }, "Congés & absences"),
+      role.manager && pastille(role.approbateur ? "Responsable — validation" : "Vue équipe", "#111", G),
+      e('div', { style: { marginLeft: "auto", fontSize: 12.5, color: "rgba(255,255,255,.7)" } }, session.user.email),
+      e('a', { href: "/", style: { color: "rgba(255,255,255,.75)", fontSize: 12.5, textDecoration: "none", border: "1px solid rgba(255,255,255,.2)", borderRadius: 7, padding: "5px 10px" } }, "← Portail"),
+      e('button', { onClick: deconnexion, style: { color: "rgba(255,255,255,.75)", fontSize: 12.5, background: "none", border: "1px solid rgba(255,255,255,.2)", borderRadius: 7, padding: "5px 10px", cursor: "pointer" } }, "Déconnexion")),
+    e('div', { style: { maxWidth: 1200, margin: "0 auto", padding: "20px 16px 40px" } },
+      e(RH, { session, role })));
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+</script>
+</body>
+</html>
