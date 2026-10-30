@@ -56,6 +56,27 @@
 const { useState, useEffect, useRef } = React;
 
 const G = "#C9A84C", G2 = "#A8872E", SB = "#0F0F24";
+// ====== ANTIVIRUS (inventaire serveurs) : liste fermée + logo ======
+// logo : URL d'un fichier officiel de l'éditeur (PNG/SVG, fond transparent), à héberger dans Supabase Storage.
+// Laisser "" tant qu'aucun fichier n'est fourni : une pastille neutre avec les initiales s'affiche à la place.
+const AV_LISTE = [
+  { k: "sophos", l: "Sophos", logo: "", re: /sophos|intercept/i },
+  { k: "crowdstrike", l: "CrowdStrike", logo: "", re: /crowd|falcon/i },
+  { k: "defender", l: "Microsoft Defender", logo: "", re: /defender|windows\s*def|\bmde\b/i },
+  { k: "sentinelone", l: "SentinelOne", logo: "", re: /sentinel/i },
+  { k: "eset", l: "ESET", logo: "", re: /\beset\b|nod32/i },
+  { k: "bitdefender", l: "Bitdefender", logo: "", re: /bitdef|gravityzone/i },
+  { k: "withsecure", l: "WithSecure", logo: "", re: /withsecure|f-?secure/i },
+];
+const avReconnaitre = (nom) => { const n = String(nom || "").trim(); return n ? (AV_LISTE.find(x => x.re.test(n)) || null) : null; };
+// Logo (ou pastille d'initiales) d'un antivirus, à partir du nom enregistré
+const avLogo = (nom, taille) => {
+  const n = String(nom || "").trim(); if (!n) return null;
+  const av = avReconnaitre(n), t = taille || 20, lib = av ? av.l : n;
+  if (av && av.logo) return React.createElement('img', { src: av.logo, alt: lib, title: lib, style: { width: t, height: t, objectFit: "contain", flexShrink: 0 } });
+  const ini = lib.replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase() || "?";
+  return React.createElement('span', { title: lib, style: { width: t, height: t, borderRadius: 5, background: "#EEF0F4", color: "#4A5568", fontSize: Math.round(t * 0.42), fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, letterSpacing: "-.02em" } }, ini);
+};
 const PRESTATAIRES = ["Axians","Bartech","CK Print","Colt","Dormakaba","FreedomPay","Hoist","Hospitality","ITM","Medialog","Micros","Novicom","Oracle","Shiji","Support Hilton","Support IHG","Techotels","Wifirst"];
 const PRESTA_COLOR = { "Oracle":"#185FA5","Micros":"#0F6E56","Support Hilton":"#BA7517","Dormakaba":"#534AB7","Support IHG":"#3B6D11","Hospitality":"#993C1D","FreedomPay":"#993556","Shiji":"#0C447C","Bartech":"#5F5E5A","Axians":"#A32D2D" };
 const prestaColor = (p) => "#534AB7"; // couleur unique pour tous les prestataires
@@ -3438,7 +3459,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         '<div style="font-size:13px;margin-top:3px;">Par <b>' + esc(qui) + '</b> le ' + esc(quand) + '</div>' +
       '</div>' +
       (commentaire.trim() ? '<div style="margin-top:8px;padding:8px 12px;background:#EBF8FF;border-left:3px solid #2B6CB0;font-size:13px;">' + esc(commentaire.trim()) + '</div>' : '') +
-      '<div style="font-size:12px;color:#666;margin-top:6px;">En attente de la prochaine remontée de la sauvegarde : un message « Sauvegarde rétablie » s\'ajoutera automatiquement si elle repasse OK.</div>' +
+      '<div style="font-size:12px;color:#666;margin-top:6px;">En attente de la prochaine remontée CheckCentral : un message « Sauvegarde rétablie » s\'ajoutera automatiquement si elle repasse OK.</div>' +
     '</div>';
     setRelanceBusy(t.id);
     try {
@@ -4491,11 +4512,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [bkVeeamHist, setBkVeeamHist] = useState({}); // { job_id: "loading" | { erreur } | [runs] } — Veeam direct
   const [bkVeeamRuns, setBkVeeamRuns] = useState({}); // { job_id: [{ id, t, s }] } — 10 dernières exécutions (frise)
   const [bkRapport, setBkRapport] = useState(null);
-  // CheckCentral retiré (oct. 2026) : seules les sauvegardes Veeam reçues par mail (backup@dsihotel.com) sont suivies
-  const bkVue = "veeam";
+  const [bkVue, setBkVue] = useState(() => { try { return localStorage.getItem("bkVue") || "tout"; } catch (e) { return "tout"; } }); // tout | checkcentral | veeam | comparaison
   const [bkCmpOpen, setBkCmpOpen] = useState({});
   const [bkFiltreSt, setBkFiltreSt] = useState([]); // rangs de statut affichés (vide = tous) : 3 OK, 1 avertissement, 0 échec, 2 pause/attente
-  useEffect(() => { try { localStorage.removeItem("bkVue"); } catch (e) {} }, []);   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
+  const choisirBkVue = (v) => { setBkVue(v); try { localStorage.setItem("bkVue", v); } catch (e) {} };   // rapport Veeam ouvert : { titre, chargement, html, texte, erreur, run }
   // ============================================================
   //  SÉCURITÉ SOPHOS — supervision de tous les comptes Sophos Central
   //  (un compte par hôtel). Données alimentées par le Worker dsi-hotel-sophos.
@@ -5671,7 +5691,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         const cand = checks.filter(c => c.name && texte.includes(norm(c.name))).sort((a, b) => String(b.name).length - String(a.name).length);
         check = cand[0];
       }
-      if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans les sauvegardes. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
+      if (!check || !check.id) { alert("Impossible de retrouver la sauvegarde « " + (nom || "?") + " » dans CheckCentral. Vous pouvez la mettre en silence depuis Pilotage → Sauvegardes (bouton « Ajouter une note »)."); return; }
       const finD = new Date(); finD.setDate(finD.getDate() + BK_SILENCE_JOURS);
       const finIso = finD.toISOString().slice(0, 10);
       const finFr = finD.toLocaleDateString("fr-FR");
@@ -5790,7 +5810,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setFreqBusy(t.id);
     try {
       const check = await trouverCheckTicket(t);
-      if (!check) { alert("Impossible de retrouver cette sauvegarde. Réglez sa fréquence depuis Pilotage → Sauvegardes."); return; }
+      if (!check) { alert("Impossible de retrouver cette sauvegarde dans CheckCentral. Réglez sa fréquence depuis Pilotage → Sauvegardes."); return; }
       const msg = await definirFrequenceBackup(check, heures, t);
       if (msg && msg.startsWith("⚠️")) alert(msg);
     } catch (e) {
@@ -5938,7 +5958,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const res = await fetch(CHECKCENTRAL_API_URL, { method: "GET", headers: { Authorization: "Bearer " + (sessBk.session?.access_token || "") } });
       if (!res.ok) {
         const t = await res.text().catch(() => "");
-        setBkNote("Erreur Worker sauvegardes (" + res.status + ")" + (t ? " — " + t.slice(0, 200) : "") + ".");
+        setBkNote("Erreur Worker CheckCentral (" + res.status + ")" + (t ? " — " + t.slice(0, 200) : "") + ".");
         setBkChecks([]);
         return;
       }
@@ -5955,9 +5975,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           setBkVeeamRuns(m);
         });
       }
-      if ((data.checks || []).length === 0) setBkNote("Aucune sauvegarde Veeam reçue pour l'instant.");
+      if ((data.checks || []).length === 0) setBkNote("Aucun check retourné par CheckCentral.");
     } catch (e) {
-      setBkNote("Erreur : " + (e.message || e) + " (le Worker dsi-hotel-checkcentral est-il déployé et l'URL correcte ?)");
+      setBkNote("Erreur : " + (e.message || e) + " (le Worker CheckCentral est-il déployé et l'URL correcte ?)");
       setBkChecks([]);
     } finally {
       setBkLoading(false);
@@ -6117,7 +6137,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const fmtDateHeureFr2 = (iso) => { try { return iso ? new Date(iso).toLocaleString("fr-FR") : "—"; } catch (e) { return "—"; } };
 
   // Sous-onglet de la page Sauvegardes : ne filtre que sur cette page (le tableau de bord garde le total)
-  const bkChecksVue = (bkChecks || []).filter(c => c.origine === "veeam");
+  const bkChecksVue = (page === "backups" && (bkVue === "checkcentral" || bkVue === "veeam"))
+    ? (bkChecks || []).filter(c => bkVue === "veeam" ? c.origine === "veeam" : c.origine !== "veeam")
+    : (bkChecks || []);
 
   // Regroupe les checks par groupe et calcule le pire statut du groupe.
   const bkGroupes = (() => {
@@ -11107,7 +11129,7 @@ const nav = isAdmin
     const nomGroupe = (g) => {
       const hid = g.hotel_id || (g.group_id && bkGroupMap[g.group_id]);
       const hotel = hid && hotels.find(h => String(h.id) === String(hid));
-      if (g.origine === "veeam") return hotel ? hotel.name : String(g.group || "").replace(/ \(Veeam direct\)$/, "");
+      if (g.origine === "veeam") return hotel ? hotel.name + " · Veeam direct" : g.group;
       return hotel ? hotel.name : g.group;
     };
     const toggleGroupe = (key) => setBkOpenGroups(prev => ({ ...prev, [key]: !(prev[key] !== undefined ? prev[key] : bkFiltreSt.length > 0) }));
@@ -11174,7 +11196,7 @@ const nav = isAdmin
     };
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Source : mails de notification Veeam reçus sur backup@dsihotel.com et planification lue chaque nuit dans Veeam (inventaire NinjaOne). Cliquez sur une pastille ou sur 📄 pour ouvrir le rapport Veeam (impression PDF possible)."
+        "Statut des sauvegardes, regroupées par site. Les groupes présentant un échec apparaissent en premier. Sources : API CheckCentral et mails Veeam reçus directement sur backup@dsihotel.com (« Veeam direct »). Cliquez sur une pastille ou sur 📄 pour ouvrir le rapport Veeam (impression PDF possible)."
       ),
       bkRapport && bkRenderRapport(),
       // Alerte : backups sans exécution depuis plus de 7 jours.
@@ -11251,7 +11273,10 @@ const nav = isAdmin
       React.createElement('div', { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" } },
         React.createElement('button', { onClick: loadBackups, disabled: bkLoading, style: { padding: "8px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: bkLoading ? 0.6 : 1 } }, bkLoading ? "Actualisation..." : "🔄 Actualiser"),
         React.createElement('button', { onClick: () => lancerAlertesBackup("run", 24), title: "Crée directement un ticket pour chaque sauvegarde en défaut depuis plus de 24 h (sans doublon)", style: { padding: "8px 15px", background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🚨 Alertes + de 24 h"),
-        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt))
+        bkFetchedAt && React.createElement('span', { style: { fontSize: 11, color: "#999" } }, "Dernière lecture : " + fmtDateHeureFr2(bkFetchedAt)),
+        React.createElement('div', { style: { display: "flex", gap: 0, border: "1px solid #DDE3EE", borderRadius: 8, overflow: "hidden", marginLeft: isMobile ? 0 : "auto" } },
+          [["tout", "Tout"], ["checkcentral", "CheckCentral"], ["veeam", "Veeam direct"], ["comparaison", "⇄ Comparaison"]].map(([v, l]) =>
+            React.createElement('button', { key: v, onClick: () => choisirBkVue(v), style: { padding: "7px 13px", fontSize: 12, fontWeight: 600, border: "none", borderRight: v !== "comparaison" ? "1px solid #DDE3EE" : "none", cursor: "pointer", background: bkVue === v ? "#0F0F24" : "white", color: bkVue === v ? "white" : "#445" } }, l)))
       ),
       // Fenêtre de test / lancement des alertes sauvegardes
       bkAlerte && React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !bkAlerte.loading) setBkAlerte(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", zIndex: 90, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? 12 : "40px 20px", overflowY: "auto" } },
@@ -11360,7 +11385,7 @@ const nav = isAdmin
                         c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description),
                         fq && fq.frequence_heures > 24 && React.createElement('div', { style: { fontSize: 11, color: "#2B6CB0", marginTop: 2 } },
                           "📅 Sauvegarde " + bkLibFreq(fq.frequence_heures).toLowerCase() +
-                          (cm.masquee ? " — défaut ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
+                          (cm.masquee ? " — défaut CheckCentral ignoré, prochaine exécution attendue avant le " + new Date(cm.masquee).toLocaleDateString("fr-FR") : "") +
                           (fq.derniere_reussite ? " · dernière réussite le " + new Date(fq.derniere_reussite).toLocaleDateString("fr-FR") : "")),
                         c.origine === "veeam" && c.message && cm.rank <= 1 && React.createElement('div', { style: { fontSize: 11, color: "#C53030", marginTop: 2, fontFamily: "Consolas, monospace", wordBreak: "break-word" } }, c.message),
                         c.origine === "veeam" && c.message && cm.rank === 2 && React.createElement('div', { style: { fontSize: 11, color: "#718096", marginTop: 2 } }, "⏸ " + c.message),
@@ -11506,7 +11531,7 @@ const nav = isAdmin
               return React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6, fontSize: 12, color: "#555" } },
                 React.createElement('span', { title: "Informations de l'onglet Inventaire serveurs" }, "🗄️ " + (bout.join(" · ") || "Inventaire")),
                 iv.a_jour && pastille(iv.a_jour === "Oui" ? "À jour" : "Pas à jour", iv.a_jour === "Oui"),
-                iv.antivirus && pastille(iv.antivirus === "Oui" ? "AV " + (iv.antivirus_nom || "OK") : "Sans antivirus", iv.antivirus === "Oui"));
+                iv.antivirus && React.createElement('span', { style: { display: "inline-flex", alignItems: "center", gap: 5 } }, iv.antivirus === "Oui" && avLogo(iv.antivirus_nom, 16), pastille(iv.antivirus === "Oui" ? "AV " + ((avReconnaitre(iv.antivirus_nom) || {}).l || iv.antivirus_nom || "OK") : "Sans antivirus", iv.antivirus === "Oui")));
             })()),
           React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
             tuile("OK", nOk, "#2F855A", "#E6F6EA"), tuile("KO", nKo, "#C53030", "#FDE2E2"), tuile("En cours", nEc, "#8A6D1F", "#FFF3C4"), tuile("À faire", nVide, "#555", "#F1F1F6"))
@@ -11777,7 +11802,21 @@ const nav = isAdmin
                     td(sel(r, "care_pack", ["Oui", "Non", "N/A"])), td(txt(r, "care_pack_ref", "N° série / réf.", 120)), td(React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 3 } }, date(r, "care_pack_fin"), invAlerteCarePack(r))),
                     td(React.createElement('span', { style: { fontWeight: 700, color: cp.c } }, cp.j === null ? "" : String(cp.j)), { textAlign: "right", background: "#F4F4F8" }),
                     td(cp.l ? React.createElement('span', { style: { fontSize: 11, fontWeight: 700, color: cp.c, background: cp.bg, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" } }, cp.l) : null, { background: "#F4F4F8" }),
-                    td(sel(r, "antivirus", ["Oui", "Non"])), td(txt(r, "antivirus_nom", "Nom", 90, { list: "inv-av" })), td(sel(r, "av_a_jour", ["Oui", "Non"])),
+                    td(sel(r, "antivirus", ["Oui", "Non"])), td((() => {
+                      const av = avReconnaitre(r.antivirus_nom);
+                      const autre = !!(r.antivirus_nom && !av);
+                      const choisir = (v) => {
+                        if (v === "__autre") { const n = (window.prompt("Nom de l'antivirus :", autre ? r.antivirus_nom : "") || "").trim(); if (n) invMaj(r, { antivirus_nom: n, ...(r.antivirus ? {} : { antivirus: "Oui" }) }); return; }
+                        const it = AV_LISTE.find(x => x.k === v);
+                        invMaj(r, it ? { antivirus_nom: it.l, ...(r.antivirus === "Oui" ? {} : { antivirus: "Oui" }) } : { antivirus_nom: null });
+                      };
+                      return React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 175 } },
+                        avLogo(r.antivirus_nom, 22),
+                        React.createElement('select', { value: av ? av.k : (autre ? "__autre" : ""), onChange: e => choisir(e.target.value), title: r.antivirus_nom || "", style: { ...inS, minWidth: 140, fontWeight: r.antivirus_nom ? 600 : 400 } },
+                          React.createElement('option', { value: "" }, "—"),
+                          AV_LISTE.map(x => React.createElement('option', { key: x.k, value: x.k }, x.l)),
+                          React.createElement('option', { value: "__autre" }, autre ? "Autre : " + r.antivirus_nom : "Autre…")));
+                    })()), td(sel(r, "av_a_jour", ["Oui", "Non"])),
                     td(date(r, "date_controle")), td(txt(r, "technicien", "Technicien", 90, { list: "inv-techs" })), td(txt(r, "commentaire", "Commentaire", 200)),
                     td(React.createElement('button', { onClick: () => invSupprimer(r), title: "Supprimer cette ligne", style: { padding: "3px 7px", background: "none", border: "1px solid #F5C6C6", color: "#C53030", borderRadius: 6, fontSize: 11, cursor: "pointer" } }, "🗑"))
                   ), invEstVeeam(r) && invLigneLicence(r, fond));
@@ -11791,8 +11830,7 @@ const nav = isAdmin
               placeholder: "Ex. : NAS à inventorier, mettre à jour ESXi / Unifi / Veeam…", rows: 4, style: { ...inS, fontSize: 13, resize: "vertical", lineHeight: 1.5 } }),
             invNotes && invNotes.maj_par && React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 4 } }, "Modifié par " + invNotes.maj_par + (invNotes.maj_le ? " le " + new Date(invNotes.maj_le).toLocaleDateString("fr-FR") : ""))),
           React.createElement('datalist', { id: "inv-os" }, OS_LISTE.map(n => React.createElement('option', { key: n, value: n }))),
-          React.createElement('datalist', { id: "inv-av" }, ["SOPHOS", "Windows Defender", "Aucun"].map(n => React.createElement('option', { key: n, value: n }))),
-          React.createElement('datalist', { id: "inv-techs" }, nomsTech.map(n => React.createElement('option', { key: n, value: n })))
+                    React.createElement('datalist', { id: "inv-techs" }, nomsTech.map(n => React.createElement('option', { key: n, value: n })))
         );
       })(),
 
