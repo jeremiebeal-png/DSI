@@ -5479,7 +5479,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   }, [page, isAdmin]);
 
   // Export PDF du rapport de licences
-  const exporterLicencesPdf = (rap, nomHotel) => {
+  const exporterLicencesPdf = async (rap, nomHotel, logoUrl) => {
+    const logo = logoUrl ? await chargerImageBase64(logoUrl) : null;
     const d = (rap && rap.donnees) || {};
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
@@ -5499,6 +5500,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     let y = 0;
     const saut = (h) => { if (y + h > pageH - 14) { doc.addPage(); entete(); y = 34; return true; } return false; };
     entete(); y = 36;
+    // Logo de l'hôtel, à droite sous le bandeau (fond blanc : lisible quel que soit le logo)
+    if (logo) {
+      try {
+        const hMax = 16, wLogo = Math.min(hMax * (logo.w / logo.h), 45), hLogo = Math.min(hMax, 45 * (logo.h / logo.w));
+        doc.addImage(logo.data, "PNG", pageW - mR - wLogo, 30, wLogo, hLogo);
+        y = 38;
+      } catch (e) {}
+    }
     doc.setTextColor(20, 20, 40); doc.setFont("helvetica", "bold"); doc.setFontSize(12);
     doc.text(propre("Établissement : " + (nomHotel || "—")), mL, y); y += 6;
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(110, 110, 120);
@@ -12892,12 +12901,13 @@ const nav = isAdmin
         isAdmin && React.createElement('select', { value: lmHotel, onChange: e => { setLmHotel(e.target.value); setLmRapport(null); setLmErr(null); }, style: { padding: "7px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12.5, minWidth: 240, maxWidth: "100%" } },
           React.createElement('option', { value: "" }, "— Choisir un établissement —"),
           hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "fr")).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name + (tenantsParHotel[h.id] ? "" : " (pas de tenant M365)")))),
-        !isAdmin && nomHotelLm && React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e" } }, "🏨 " + nomHotelLm),
+        hotelLm && hotelLm.logo_url && React.createElement('img', { src: hotelLm.logo_url, alt: nomHotelLm, style: { height: 36, maxWidth: 120, objectFit: "contain", background: "white", border: "1px solid #E8E8F0", borderRadius: 7, padding: 3 } }),
+        !isAdmin && nomHotelLm && React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: "#1a1a3e" } }, (hotelLm && hotelLm.logo_url ? "" : "🏨 ") + nomHotelLm),
         lmRapport && lmRapport.genere_le && React.createElement('span', { style: { fontSize: 11.5, color: "#999" } }, "Données du " + new Date(lmRapport.genere_le).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })),
         React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" } },
           btnLm(lmLoading ? "⏳ Lecture Microsoft 365…" : "🔄 Actualiser", () => loadLicencesM365(true), false, lmLoading || !hidLm),
           btnLm("📊 Export Excel", () => exporterLicencesCsv(lmRapport, nomHotelLm), false, !dLm),
-          btnLm("📄 Télécharger le PDF", () => exporterLicencesPdf(lmRapport, nomHotelLm), true, !dLm))
+          btnLm("📄 Télécharger le PDF", () => exporterLicencesPdf(lmRapport, nomHotelLm, hotelLm && hotelLm.logo_url), true, !dLm))
       ),
 
       // Erreurs
