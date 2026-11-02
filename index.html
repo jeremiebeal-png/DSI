@@ -8825,9 +8825,9 @@ const nav = isAdmin
         React.createElement('div', { style: { fontSize: 26, fontWeight: 800, lineHeight: 1.1, color: v > 0 ? (niv === 2 ? "#C53030" : niv === 1 ? "#975A16" : "#0F0F24") : "#2F855A" } }, String(v)),
         React.createElement('div', { style: { fontSize: 11.5, color: "#777", marginTop: 3 } }, lbl)
       );
-      const ligne = (k, gauche, droite, page) => React.createElement('button', { key: k, onClick: () => goTo(page), style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, width: "100%", padding: "9px 2px", background: "none", border: "none", borderBottom: "1px solid #F0F0F5", cursor: "pointer", fontSize: 12.5, color: "#1a1a3e", textAlign: "left", fontFamily: "inherit" } },
-        React.createElement('span', { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, gauche),
-        React.createElement('span', { style: { color: "#888", whiteSpace: "nowrap", flexShrink: 0 } }, droite)
+      const ligne = (k, gauche, droite, page) => React.createElement('button', { key: k, onClick: () => goTo(page), style: { display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? 2 : 10, width: "100%", padding: "9px 2px", background: "none", border: "none", borderBottom: "1px solid #F0F0F5", cursor: "pointer", fontSize: 12.5, color: "#1a1a3e", textAlign: "left", fontFamily: "inherit" } },
+        React.createElement('span', { style: { minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, gauche),
+        React.createElement('span', { style: isMobile ? { color: "#888", fontSize: 11.5, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : { color: "#888", whiteSpace: "nowrap", flexShrink: 0 } }, droite)
       );
       const panneau = (titre, icone, niv, chiffres, lignes, vide, lien, page) => React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderTop: "4px solid " + NIV[niv].bord, borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
         React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 } },
@@ -9455,9 +9455,9 @@ const nav = isAdmin
     const aRattacher = njRapports.filter(r => r.a_rattacher || !r.hotel_id);
     const rattaches = njRapports.filter(r => r.hotel_id && !r.a_rattacher);
     const filtres = njHotelFilter === "all" ? rattaches : rattaches.filter(r => r.hotel_id === njHotelFilter);
-    const carte = (r, orphelin) => React.createElement('div', { key: r.id, style: { background: "white", border: "1px solid " + (orphelin ? "#F0C36D" : "#E8E8F0"), borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 14, marginBottom: 8 } },
+    const carte = (r, orphelin) => React.createElement('div', { key: r.id, style: { background: "white", border: "1px solid " + (orphelin ? "#F0C36D" : "#E8E8F0"), borderRadius: 10, padding: "12px 16px", display: "flex", flexWrap: isMobile ? "wrap" : "nowrap", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: 8 } },
       React.createElement('div', { style: { fontSize: 22 } }, "📄"),
-      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+      React.createElement('div', { style: { flex: isMobile ? "1 1 calc(100% - 40px)" : 1, minWidth: 0 } },
         React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.titre || r.file_name || "Rapport"),
         React.createElement('div', { style: { fontSize: 11.5, color: "#888", marginTop: 2 } },
           (orphelin ? ("⚠ Non rattaché" + (r.hotel_hint ? " · détecté : " + r.hotel_hint : "")) : ("🏨 " + (hotelsById[r.hotel_id] || "Hôtel"))) + " · " + fmtDate(r.received_at)
@@ -11631,13 +11631,15 @@ const nav = isAdmin
             const hid = c.hotel_id || (c.group_id && bkGroupMap[c.group_id]);
             const hotel = hid && hotels.find(h => String(h.id) === String(hid));
             const site = hotel ? hotel.name : (c.group || "(sans groupe)");
-            return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
+            return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap", padding: isMobile ? "10px 12px" : "10px 16px", borderBottom: i < bkAncienChecks.length - 1 ? "1px solid #F6F6FA" : "none" } },
               React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: c.justifie ? "#2F855A" : "#E53E3E", flexShrink: 0, marginTop: 4 } }),
-              React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-                React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
+              React.createElement('div', { style: { flex: isMobile ? "1 1 calc(100% - 20px)" : 1, minWidth: 0 } },
+                React.createElement('div', { style: isMobile ? { fontSize: 13, color: "#333", fontWeight: 600, wordBreak: "break-word" } : { fontSize: 13, color: "#333", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
                 React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, site + (c.description ? " · " + c.description : "")),
                 c.id && renderBackupNote(c.id)
               ),
+              isMobile && React.createElement('span', { style: { flexBasis: "100%", height: 0 } }),
+              isMobile && React.createElement('span', { style: { width: 8, flexShrink: 0 } }),
               React.createElement('span', { style: { fontSize: 11, color: c.justifie ? "#2F855A" : "#B02A2A", fontWeight: 600, whiteSpace: "nowrap", alignSelf: "flex-start" } }, (c.justifie ? "✓ Justifié · " : "") + "Il y a " + c.ageJours + " j"),
               React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap" } }, fmtDateHeureFr2(c.updatedIso))
             );
@@ -11745,11 +11747,11 @@ const nav = isAdmin
               const enWarn = !enEchec && g.pireRank === 1;
               return React.createElement('div', { key: g.key, style: { background: enEchec ? "#FDECEC" : (enWarn ? "#FEF7EF" : "white"), borderRadius: 10, border: enEchec ? "1.5px solid #E53E3E" : (enWarn ? "1px solid #F3C89B" : "1px solid #E8E8F0"), borderLeft: enEchec ? "6px solid #E53E3E" : (enWarn ? "6px solid #DD6B20" : "1px solid #E8E8F0"), overflow: "hidden", boxShadow: enEchec ? "0 2px 12px rgba(229,62,62,.20)" : "none" } },
                 // En-tête du groupe (cliquable)
-                React.createElement('div', { onClick: () => toggleGroupe(g.key), style: { padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 } },
+                React.createElement('div', { onClick: () => toggleGroupe(g.key), style: { padding: isMobile ? "11px 12px" : "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap" } },
                   React.createElement('span', { style: { width: enEchec ? 13 : 10, height: enEchec ? 13 : 10, borderRadius: "50%", background: meta.color, flexShrink: 0, boxShadow: enEchec ? "0 0 0 4px rgba(229,62,62,.20)" : "none" } }),
-                  React.createElement('div', { style: { flex: 1 } },
+                  React.createElement('div', { style: { flex: isMobile ? "1 1 calc(100% - 30px)" : 1, minWidth: 0 } },
                     React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-                      React.createElement('div', { style: { fontSize: 14, fontWeight: enEchec ? 700 : 600, color: enEchec ? "#C53030" : "#222" } }, (enEchec ? "⛔ " : "") + nomGroupe(g)),
+                      React.createElement('div', { style: { fontSize: 14, wordBreak: "break-word", fontWeight: enEchec ? 700 : 600, color: enEchec ? "#C53030" : "#222" } }, (enEchec ? "⛔ " : "") + nomGroupe(g)),
                       g.origine === "veeam" && g.hotel_id && rendreLicenceVeeam(g.hotel_id)),
                     React.createElement('div', { style: { fontSize: 11, color: enEchec ? "#B03030" : "#999", marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                       g.checks.length + " check" + (g.checks.length > 1 ? "s" : ""),
@@ -11766,11 +11768,13 @@ const nav = isAdmin
                             style: { fontSize: 11, padding: "2px 8px", border: "1px solid #9AE6B4", background: "white", color: "#2F855A", borderRadius: 6, cursor: "pointer", fontWeight: 600 } }, "✓ " + sugg.name));
                       })())
                   ),
-                  // Compteurs
+                  // Compteurs (sur mobile : ligne à part, sous le nom)
+                  isMobile && React.createElement('span', { style: { flexBasis: "100%", height: 0 } }),
+                  isMobile && React.createElement('span', { style: { width: 13, flexShrink: 0 } }),
                   g.nbEchec > 0 && React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: "white", background: "#E53E3E", padding: "3px 11px", borderRadius: 20, boxShadow: "0 1px 3px rgba(229,62,62,.35)" } }, "⛔ " + g.nbEchec + " échec" + (g.nbEchec > 1 ? "s" : "")),
                   g.nbWarn > 0 && React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: "#DD6B20", background: "#FEF0E4", padding: "2px 9px", borderRadius: 20 } }, g.nbWarn),
                   g.nbOk > 0 && React.createElement('span', { style: { fontSize: 11, fontWeight: 600, color: "#2F855A", background: "#E9F6EE", padding: "2px 9px", borderRadius: 20 } }, g.nbOk + " OK"),
-                  React.createElement('span', { style: { fontSize: 12, color: "#AAA", marginLeft: 4 } }, ouvert ? "▲" : "▼")
+                  React.createElement('span', { style: { fontSize: 12, color: "#AAA", marginLeft: isMobile ? "auto" : 4 } }, ouvert ? "▲" : "▼")
                 ),
                 // Détail des checks du groupe
                 ouvert && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8" } },
@@ -11785,10 +11789,10 @@ const nav = isAdmin
                       if (!isNaN(t)) estMuet = (Date.now() - t) > Math.max(BK_SEUIL_JOURS * 24 * 3600000, fq && fq.frequence_heures > 24 ? (fq.frequence_heures + BK_MARGE_H) * 3600000 : 0);
                     }
                     const noteEligible = !!c.id && (estEchec || estMuet);
-                    return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 16px", borderBottom: i < g.checks.length - 1 ? "1px solid #F6F6FA" : "none" } },
+                    return React.createElement('div', { key: c.id || i, style: { display: "flex", alignItems: "flex-start", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap", padding: isMobile ? "10px 12px" : "10px 16px", borderBottom: i < g.checks.length - 1 ? "1px solid #F6F6FA" : "none" } },
                       React.createElement('span', { style: { width: 8, height: 8, borderRadius: "50%", background: cm.color, flexShrink: 0, marginTop: 4 } }),
-                      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-                        React.createElement('div', { style: { fontSize: 13, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
+                      React.createElement('div', { style: { flex: isMobile ? "1 1 calc(100% - 20px)" : 1, minWidth: 0 } },
+                        React.createElement('div', { style: isMobile ? { fontSize: 13, color: "#333", fontWeight: 500, wordBreak: "break-word" } : { fontSize: 13, color: "#333", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
                         c.description && React.createElement('div', { style: { fontSize: 11, color: "#999", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.description),
                         fq && fq.frequence_heures > 24 && React.createElement('div', { style: { fontSize: 11, color: "#2B6CB0", marginTop: 2 } },
                           "📅 Sauvegarde " + bkLibFreq(fq.frequence_heures).toLowerCase() +
@@ -11804,6 +11808,8 @@ const nav = isAdmin
                           bkVeeamHist[String(c.id).replace(/^veeam:/, "")] ? "▲ Masquer l'historique" : "📊 Historique 30 jours"),
                         c.origine === "veeam" && bkRenderHistVeeam(c)
                       ),
+                      isMobile && React.createElement('span', { style: { flexBasis: "100%", height: 0 } }),
+                      isMobile && React.createElement('span', { style: { width: 8, flexShrink: 0 } }),
                       c.origine === "veeam" && bkRenderFrise(c),
                       React.createElement('span', { style: { fontSize: 11, color: "#AAA", whiteSpace: "nowrap", marginTop: 2 } }, fmtDateHeureFr2(c.updatedIso)),
                       (c.origine === "veeam" && c.planifDesc) ? React.createElement('span', { title: "Planification lue automatiquement dans Veeam (inventaire NinjaOne" + (c.inventaireIso ? " du " + new Date(c.inventaireIso).toLocaleString("fr-FR") : "") + ")",
@@ -11943,8 +11949,8 @@ const nav = isAdmin
           React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
             tuile("OK", nOk, "#2F855A", "#E6F6EA"), tuile("KO", nKo, "#C53030", "#FDE2E2"), tuile("En cours", nEc, "#8A6D1F", "#FFF3C4"), tuile("À faire", nVide, "#555", "#F1F1F6"))
         ),
-        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10 } },
-          React.createElement('div', { style: { flex: 1, height: 8, background: "#F0F0F5", borderRadius: 4, overflow: "hidden", display: "flex" } },
+        React.createElement('div', { style: { display: "flex", alignItems: "center", gap: isMobile ? "8px 6px" : 10, flexWrap: isMobile ? "wrap" : "nowrap" } },
+          React.createElement('div', { style: { flex: isMobile ? "1 1 60%" : 1, height: 8, background: "#F0F0F5", borderRadius: 4, overflow: "hidden", display: "flex" } },
             total > 0 && React.createElement('div', { style: { width: (100 * (nOk + nNa) / total) + "%", background: "#2F855A" } }),
             total > 0 && React.createElement('div', { style: { width: (100 * nEc / total) + "%", background: "#E2B93B" } }),
             total > 0 && React.createElement('div', { style: { width: (100 * nKo / total) + "%", background: "#C53030" } })),
@@ -12624,7 +12630,7 @@ const nav = isAdmin
                   const estOuverte = (cat) => soSecOuvertes[secKey(cat.k)] !== undefined ? soSecOuvertes[secKey(cat.k)] : cat.ouvert;
                   const basculer = (cat) => setSoSecOuvertes(prev => ({ ...prev, [secKey(cat.k)]: !estOuverte(cat) }));
                   const pastille = (txt, c, bg, extra) => React.createElement('span', { style: Object.assign({ fontSize: 10.5, fontWeight: 700, color: c, background: bg, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" }, extra || {}) }, txt);
-                  const cell = (w, contenu, extra) => React.createElement('div', { style: Object.assign({ flex: w.indexOf(" ") >= 0 ? w : "0 0 " + w, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, extra || {}) }, contenu);
+                  const cell = (w, contenu, extra) => React.createElement('div', { style: Object.assign({ flex: isMobile ? (w === "200px" ? "1 1 100%" : "0 1 auto") : (w.indexOf(" ") >= 0 ? w : "0 0 " + w), maxWidth: "100%", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, extra || {}) }, contenu);
 
                   // ----- Ligne d'un poste (format tableau) -----
                   const partageH = !!(c && c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1);
@@ -12646,7 +12652,7 @@ const nav = isAdmin
                     if (p.services_status && p.services_status !== "good") problemes.push("services : " + p.services_status);
                     if (p.tamper_protection === false) problemes.push("anti-altération désactivée");
                     return React.createElement('div', { key: p.hostname, style: { borderTop: "1px solid #F0F0F5", padding: "7px 12px", background: "white" } },
-                      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
+                      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: isMobile ? "4px 10px" : 10, fontSize: 12.5, flexWrap: isMobile ? "wrap" : "nowrap" } },
                         cell("200px", React.createElement('label', { style: { display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", maxWidth: "100%" }, title: "Sélectionner (anti-altération ou analyse)" },
                           React.createElement('input', { type: "checkbox", checked: !!((soTpSel[h.id] || {})[p.sophos_id]), onChange: e => soTpBasculer(h.id, [p], e.target.checked), style: { margin: 0, flexShrink: 0 } }),
                           React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis" }, title: p.hostname }, (p.type === "server" ? "🖥️ " : "💻 ") + (p.hostname || "?")),
@@ -12656,7 +12662,7 @@ const nav = isAdmin
                         cell("150px", njCell),
                         (() => { const ips = (p.ips ? String(p.ips).split(/[,\s]+/).filter(Boolean) : []).concat((n && n.ip_locales) || []); const u = [...new Set(ips)]; return cell("120px", u.length ? React.createElement('span', { style: { fontFamily: "monospace", fontSize: 12, color: "#2B6CB0" }, title: u.join(", ") }, u[0] + (u.length > 1 ? " +" + (u.length - 1) : "")) : React.createElement('span', { style: { color: "#BBB" } }, "—")); })(),
                         cell("1 1 160px", (n && n.utilisateur) || p.dernier_utilisateur ? "👤 " + ((n && n.utilisateur) || p.dernier_utilisateur) : React.createElement('span', { style: { color: "#BBB" } }, problemes.join(" · ")), { color: "#555", fontSize: 12 }),
-                        React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+                        React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: isMobile ? 1 : 0, flexWrap: isMobile ? "wrap" : "nowrap" } },
                           n && n.doublons && pastille("doublon ×" + n.doublons, "#B7791F", "#FFF6E5"),
                           React.createElement('button', { onClick: () => soScanner(h.id, [p]), disabled: muet || soTpBusy === h.id + ":scan:" + p.sophos_id,
                             title: muet ? "PC muet dans Sophos : la demande d'analyse ne lui parviendrait pas" : "Lancer une analyse Sophos complète sur ce PC",
@@ -12693,7 +12699,7 @@ const nav = isAdmin
                   };
 
                   const ligneNinja = (d) => React.createElement('div', { key: "nj-" + d.hostname, style: { borderTop: "1px solid #F0F0F5", padding: "7px 12px", background: "white" } },
-                    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 } },
+                    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: isMobile ? "4px 10px" : 10, fontSize: 12.5, flexWrap: isMobile ? "wrap" : "nowrap" } },
                       cell("200px", React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e" }, title: d.nom }, (d.serveur ? "🖥️ " : "💻 ") + d.hostname)),
                       cell("78px", pastille(d.serveur ? "Serveur" : "Poste", "#6B46C1", "#F3EEFC")),
                       cell("150px", React.createElement('b', { style: { color: "#C53030" } }, "Absent de Sophos")),
@@ -12702,7 +12708,7 @@ const nav = isAdmin
                         d.en_ligne ? React.createElement('b', { style: { color: "#2F855A" } }, "En ligne") : React.createElement('span', null, "Vu ", React.createElement('b', null, depuisTxt(d.dernier_contact))))),
                       cell("120px", (d.ips || []).length ? React.createElement('span', { style: { fontFamily: "monospace", fontSize: 12, color: "#2B6CB0" }, title: d.ips.join(", ") }, d.ips[0] + (d.ips.length > 1 ? " +" + (d.ips.length - 1) : "")) : React.createElement('span', { style: { color: "#BBB" } }, "—")),
                       cell("1 1 160px", [d.nom !== d.hostname ? d.nom : "", d.utilisateur ? "👤 " + d.utilisateur : ""].filter(Boolean).join(" · "), { color: "#555", fontSize: 12 }),
-                      React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+                      React.createElement('div', { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: isMobile ? 1 : 0, flexWrap: isMobile ? "wrap" : "nowrap" } },
                         d.lien && React.createElement('a', { href: d.lien, target: "_blank", rel: "noopener noreferrer", title: "Ouvrir dans NinjaOne", style: { color: G2, fontWeight: 600, textDecoration: "none", fontSize: 12 } }, "NinjaOne ↗"))
                     )
                   );
@@ -12758,11 +12764,11 @@ const nav = isAdmin
                       const liste = groupes[cat.k];
                       const open = estOuverte(cat);
                       return React.createElement('div', { key: cat.k, id: "sec-" + h.id + "-" + cat.k, style: { border: "1px solid " + cat.bd, borderLeft: "5px solid " + cat.c, borderRadius: 9, overflow: "hidden", marginBottom: 10, background: "white" } },
-                        React.createElement('div', { onClick: () => basculer(cat), style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: cat.bg, cursor: "pointer", userSelect: "none" } },
+                        React.createElement('div', { onClick: () => basculer(cat), style: { display: "flex", alignItems: "center", gap: isMobile ? "6px 8px" : 10, flexWrap: isMobile ? "wrap" : "nowrap", padding: "9px 12px", background: cat.bg, cursor: "pointer", userSelect: "none" } },
                           React.createElement('span', { style: { fontSize: 11, color: cat.c, width: 10 } }, open ? "▼" : "▶"),
-                          React.createElement('span', { style: { fontSize: 13.5, fontWeight: 700, color: cat.c } }, cat.ico + " " + cat.t),
+                          React.createElement('span', { style: { fontSize: 13.5, fontWeight: 700, color: cat.c, flex: isMobile ? "1 1 0" : undefined, minWidth: 0 } }, cat.ico + " " + cat.t),
                           React.createElement('span', { style: { fontSize: 12, fontWeight: 700, color: "white", background: cat.c, borderRadius: 20, padding: "1px 9px" } }, liste.length),
-                          React.createElement('span', { style: { fontSize: 11.5, color: "#666", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: open ? "normal" : "nowrap" } }, cat.aide),
+                          React.createElement('span', { style: { fontSize: 11.5, color: "#666", flex: isMobile ? "1 1 100%" : 1, order: isMobile ? 9 : 0, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: open ? "normal" : "nowrap", display: isMobile && !open ? "none" : undefined } }, cat.aide),
                           cat.k !== "sansSophos" && (() => {
                             const sel = soTpSel[h.id] || {};
                             const tous = liste.length > 0 && liste.every(p => sel[p.sophos_id]);
@@ -12773,7 +12779,7 @@ const nav = isAdmin
                         ),
                         open && React.createElement('div', null,
                           // En-tête de colonnes
-                          React.createElement('div', { style: { display: "flex", gap: 10, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".03em", background: "#FAFAFC", borderTop: "1px solid #F0F0F5" } },
+                          !isMobile && React.createElement('div', { style: { display: "flex", gap: 10, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".03em", background: "#FAFAFC", borderTop: "1px solid #F0F0F5" } },
                             cell("200px", "Poste"), cell("78px", "Santé"), cell("150px", "Sophos"), cell("150px", "NinjaOne"), cell("120px", "Adresse IP"), cell("1 1 160px", "Utilisateur / détail")),
                           liste.map(p => cat.k === "sansSophos" ? ligneNinja(p) : lignePoste(p, cat))
                         )
