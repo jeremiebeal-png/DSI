@@ -48,6 +48,38 @@
   .marker-cluster-small,.marker-cluster-medium,.marker-cluster-large{background:rgba(229,72,77,.25)}
   .marker-cluster-small div,.marker-cluster-medium div,.marker-cluster-large div{background:#E5484D;color:#fff;font-weight:700}
   @keyframes dsiPulseRouge{0%,100%{box-shadow:0 0 0 0 rgba(229,62,62,.6)}50%{box-shadow:0 0 0 7px rgba(229,62,62,0)}}
+  /* ====== MENU : barre horizontale + méga-menu (ordinateur), onglets en bas (mobile) ====== */
+  .dsi-top{height:42px;padding:0 13px;border:0;border-radius:10px;background:transparent;font:inherit;font-size:13.5px;font-weight:500;color:rgba(255,255,255,.78);display:flex;align-items:center;gap:6px;cursor:pointer;position:relative;white-space:nowrap;flex-shrink:0;transition:background .15s,color .15s}
+  .dsi-top:hover{background:rgba(255,255,255,.08);color:#fff}
+  .dsi-top.cur{color:#E7C977}
+  .dsi-top.cur::after{content:"";position:absolute;left:13px;right:13px;bottom:3px;height:2px;border-radius:2px;background:#C9A84C}
+  .dsi-top.open{background:rgba(201,168,76,.16);color:#E7C977}
+  .dsi-top .dsi-chev{display:flex;transition:transform .2s}
+  .dsi-top.open .dsi-chev{transform:rotate(180deg)}
+  .dsi-topnav{scrollbar-width:none}.dsi-topnav::-webkit-scrollbar{display:none}
+  .dsi-iconbtn{width:36px;height:36px;border-radius:18px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0;transition:background .15s}
+  .dsi-iconbtn:hover{background:rgba(201,168,76,.2)}
+  .dsi-mega{animation:dsiDrop .2s ease}
+  @keyframes dsiDrop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .dsi-tile{display:flex;align-items:flex-start;gap:12px;padding:11px 12px;border:0;border-radius:12px;background:transparent;text-align:left;font:inherit;cursor:pointer;width:100%;transition:background .15s,transform .15s}
+  .dsi-tile:hover{background:#F6F4EC;transform:translateY(-1px)}
+  .dsi-tile.on{background:#FBF3DF}
+  .dsi-tico{width:38px;height:38px;flex-shrink:0;border-radius:10px;background:#0F0F24;color:#C9A84C;display:flex;align-items:center;justify-content:center;transition:transform .15s}
+  .dsi-tile:hover .dsi-tico{transform:scale(1.06)}
+  .dsi-veil{animation:dsiFade .2s ease}
+  @keyframes dsiFade{from{opacity:0}to{opacity:1}}
+  .dsi-tab{flex:1;min-width:0;height:56px;border:0;background:transparent;font:inherit;font-size:10.5px;font-weight:600;color:#A4A7C0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;position:relative;-webkit-tap-highlight-color:transparent}
+  .dsi-tab .dsi-pill{width:52px;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;transition:background .2s}
+  .dsi-tab.on{color:#C9A84C}
+  .dsi-tab.on .dsi-pill{background:rgba(201,168,76,.18)}
+  .dsi-tab span.dsi-tl{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+  .dsi-sheet{animation:dsiUp .28s cubic-bezier(.2,.8,.2,1)}
+  @keyframes dsiUp{from{transform:translateY(100%)}to{transform:none}}
+  .dsi-mtile{border:0;background:#F4F5FA;border-radius:14px;padding:12px 6px 10px;font:inherit;font-size:11.5px;font-weight:600;color:#1F2340;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center;line-height:1.25;cursor:pointer;min-height:84px;position:relative;-webkit-tap-highlight-color:transparent;transition:transform .12s}
+  .dsi-mtile:active{transform:scale(.96)}
+  .dsi-mtile.on{background:#FBF3DF;color:#7A5A12}
+  .dsi-mtile .dsi-tico{width:36px;height:36px;border-radius:12px}
+  html.dsi-dark #root svg.dsi-ico{filter:none}
 </style>
 </head>
 <body>
@@ -1124,8 +1156,16 @@ function App() {
   const [soundOn, setSoundOn] = useState(dsiGetSound());
   const toggleSound = () => { const v = !soundOn; setSoundOn(v); dsiSetSound(v); };
   const [groupsOpen, setGroupsOpen] = useState({});
+  // Menu : méga-menu ouvert (ordinateur) et panneau « Plus » (mobile)
+  const [megaOpen, setMegaOpen] = useState(null);
+  const [plusOpen, setPlusOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { setMegaOpen(null); setPlusOpen(false); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // Config des menus deroulants de la sidebar (ordre = position du 1er sous-item)
-  const NAV_GROUPS = { assist: { icon: "🎧", label: "Assistance" }, hotel: { icon: "🏨", label: "Mon établissement" }, cli: { icon: "🏨", label: "Clients" }, sup: { icon: "🎧", label: "Support" }, pil: { icon: "📅", label: "Pilotage" }, rap: { icon: "📁", label: "Rapports" }, adm: { icon: "🛡️", label: "Administration" } };
+  const NAV_GROUPS = { assist: { icon: "🎧", label: "Assistance" }, hotel: { icon: "🏨", label: "Mon établissement" }, cli: { icon: "🏨", label: "Clients" }, sup: { icon: "🎧", label: "Support" }, sec: { icon: "🛡️", label: "Sécurité" }, org: { icon: "📅", label: "Organisation" }, rap: { icon: "📁", label: "Rapports" }, adm: { icon: "🛡️", label: "Administration" } };
   const toggleTheme = () => { const m = theme === "dark" ? "light" : "dark"; dsiApplyTheme(m); setTheme(m); };
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -2004,14 +2044,14 @@ function App() {
     { key: "tickets",    page: "tickets-admin",      icon: "🎫", label: "Tickets", grp: "sup" },
     { key: "reponses",   page: "reponses-types",     icon: "💬", label: "Réponses types", grp: "sup" },
     { key: "tickets",    page: "aide-interne",       icon: "📖", label: "Base de connaissances interne", grp: "sup" },
-    { key: "projets",    page: "projets",            icon: "📊", label: "Projets", grp: "pil" },
-    { key: "tickets",    page: "planning",           icon: "📅", label: "Planning équipe", grp: "pil" },
-    { key: "docs",       page: "backups",            icon: "💾", label: "Sauvegardes", grp: "pil" },
-    { key: "docs",       page: "sophos",             icon: "🔒", label: "Sécurité Sophos", grp: "pil" },
-    { key: "docs",       page: "m365",               icon: "🛡️", label: "Sécurité Microsoft", grp: "pil" },
-    { key: "docs",       page: "licences-m365",      icon: "🪪", label: "Licences Microsoft 365", grp: "pil" },
-    { key: "docs",       page: "checklist",          icon: "✅", label: "Check-list", grp: "pil" },
-    { key: "docs",       page: "inventaire",         icon: "🗄️", label: "Inventaire serveurs", grp: "pil" },
+    { key: "projets",    page: "projets",            icon: "📊", label: "Projets", grp: "org" },
+    { key: "tickets",    page: "planning",           icon: "📅", label: "Planning équipe", grp: "org" },
+    { key: "docs",       page: "backups",            icon: "💾", label: "Sauvegardes", grp: "sec" },
+    { key: "docs",       page: "sophos",             icon: "🔒", label: "Sécurité Sophos", grp: "sec" },
+    { key: "docs",       page: "m365",               icon: "🛡️", label: "Sécurité Microsoft", grp: "sec" },
+    { key: "docs",       page: "licences-m365",      icon: "🪪", label: "Licences Microsoft 365", grp: "sec" },
+    { key: "docs",       page: "checklist",          icon: "✅", label: "Check-list", grp: "sec" },
+    { key: "docs",       page: "inventaire",         icon: "🗄️", label: "Inventaire serveurs", grp: "sec" },
     { key: "tickets",    page: "rapport-jour",       icon: "📄", label: "Rapport du jour", grp: "rap" },
     { key: "tickets",    page: "rapport-tickets",    icon: "📈", label: "Suivi des tickets", grp: "rap" },
     { key: "rapports",   page: "rapports",           icon: "📝", label: "Rapports d'intervention", grp: "rap" },
@@ -14201,6 +14241,177 @@ const nav = isAdmin
     )
   );
 
+  // ================= MENU : barre horizontale + méga-menu (ordinateur), onglets en bas (mobile) =================
+  const NAV_SVG = {
+    accueil: "M3 11l9-8 9 8M5 10v10h14V10", "client-admin": "M4 21V4h11v17M15 9h5v12M8 8h3M8 12h3M8 16h3M2 21h20",
+    "proc-admin": "M6 3h12v18H6zM9 8h6M9 12h6M9 16h3", "docs-techniques": "M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01",
+    "historique-comptes": "M3 4h18v4H3zM5 8v12h14V8M10 12h4", "tickets-admin": "M3 5h18v4a3 3 0 0 0 0 6v4H3v-4a3 3 0 0 0 0-6zM14 5v14",
+    "reponses-types": "M4 4h16v12H8l-4 4z", "aide-interne": "M2 5h7a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H2zM22 5h-7a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z",
+    templates: "M9 3h6v3H9zM7 4H5v17h14V4h-2M9 12h6M9 16h4", projets: "M4 20V10M10 20V4M16 20v-7M22 20H2", planning: "M3 5h18v16H3zM3 10h18M8 3v4M16 3v4",
+    backups: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
+    sophos: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4", m365: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z",
+    "licences-m365": "M3 5h18v14H3zM7 10h4M7 14h6M15 9h3v4h-3z", checklist: "M4 4h16v16H4zM8 12l3 3 5-6", inventaire: "M3 13h18v6H3zM5 13l2-8h10l2 8M7 16h.01",
+    "rapport-jour": "M6 3h8l5 5v13H6zM14 3v5h5M9 13h7M9 17h5", "rapport-tickets": "M3 17l6-6 4 4 8-8M15 7h6v6",
+    rapports: "M15 4a5 5 0 0 0-5 6L3 17l4 4 7-7a5 5 0 0 0 6-5l-3 2-3-1-1-3z", capex: "M18 6a7 7 0 1 0 0 12M4 10h9M4 14h9",
+    ninjaone: "M3 4h18v12H3zM8 20h8M12 16v4", admins: "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 3a4 4 0 0 1 0 8M22 21v-1a6 6 0 0 0-4-5.6",
+    "login-logs": "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2", securite: "M7 2h10v20H7zM11 18h2", "suppr-ticket": "M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14",
+    contact: "M3 5h18v14H3zM3 6l9 7 9-7", "tickets-client": "M3 5h18v4a3 3 0 0 0 0 6v4H3v-4a3 3 0 0 0 0-6zM14 5v14",
+    knowledge: "M2 5h7a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H2zM22 5h-7a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z", "mon-installation": "M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01",
+    "rapport-securite": "M3 4h18v12H3zM8 20h8M12 16v4", "rapport-intervention": "M15 4a5 5 0 0 0-5 6L3 17l4 4 7-7a5 5 0 0 0 6-5l-3 2-3-1-1-3z",
+    _sup: "M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v6H4zM17 14h3v6h-3z", _cli: "M4 21V4h11v17M15 9h5v12M8 8h3M8 12h3M8 16h3M2 21h20",
+    _sec: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z", _org: "M3 5h18v16H3zM3 10h18M8 3v4M16 3v4", _rap: "M3 6h6l2 2h10v11H3z",
+    _plus: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"
+  };
+  const NAV_DESC = {
+    "client-admin": "Fiches hôtels et contacts", "proc-admin": "Procédures partagées avec les hôtels", "docs-techniques": "Réseau, serveurs et accès par hôtel",
+    "historique-comptes": "Créations et suppressions de comptes", "tickets-admin": "Demandes clients, appels et alertes", "reponses-types": "Modèles de réponse aux tickets",
+    "aide-interne": "Procédures internes de l'équipe", templates: "Demandes pré-remplies", projets: "Suivi des projets clients", planning: "Présences et interventions de l'équipe",
+    backups: "État des sauvegardes par hôtel", sophos: "Alertes et postes dégradés", m365: "Alertes Defender et Microsoft 365", "licences-m365": "Licences par établissement",
+    checklist: "Contrôles de sécurité des serveurs", inventaire: "Versions, Care Pack, antivirus", "rapport-jour": "Tickets ouverts du jour", "rapport-tickets": "Statistiques et délais",
+    rapports: "Comptes rendus d'intervention", capex: "Plan d'investissement", ninjaone: "Rapports de sécurité des postes", admins: "Comptes et droits des administrateurs",
+    "login-logs": "Historique des connexions", securite: "Appareils de double authentification", "suppr-ticket": "Supprimer définitivement un ticket",
+    contact: "Envoyer une demande au support", "tickets-client": "Suivre vos demandes", knowledge: "Guides et procédures", "mon-installation": "Équipements et réseau de l'hôtel",
+    "rapport-securite": "État de sécurité de vos postes", "rapport-intervention": "Comptes rendus de nos interventions"
+  };
+  const GROUP_ORDER = ["assist", "sup", "hotel", "cli", "sec", "org", "rap", "adm"];
+  const GROUP_SVG = { assist: "_sup", sup: "_sup", hotel: "_cli", cli: "_cli", sec: "_sec", org: "_org", rap: "_rap", adm: "admins" };
+  const navSvg = (key, size) => NAV_SVG[key] ? React.createElement('svg', { className: "dsi-ico", width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
+    React.createElement('path', { d: NAV_SVG[key] })) : null;
+  const navIco = (p, emoji, size) => navSvg(p, size) || React.createElement('span', { style: { fontSize: size - 2, lineHeight: 1 } }, emoji);
+  const goNav = (p) => { setMegaOpen(null); setPlusOpen(false); setMenuOpen(false); go(p); };
+  const nbAlertesMenu = nbAlertesDefenderMenu + nbAlertesSophosMenu + nbAlertesBackupMenu;
+  const badgeDe = (p) => (p === "tickets-admin" && nbAlertesMenu > 0) ? nbAlertesMenu : 0;
+  // Groupes dans l'ordre d'affichage ; un groupe d'une seule page devient une entrée simple
+  const navGroupes = GROUP_ORDER.map(g => ({ id: g, cfg: NAV_GROUPS[g], items: nav.filter(i => i.grp === g) })).filter(g => g.cfg && g.items.length > 1);
+  const enGroupe = (it) => it.grp && navGroupes.some(g => g.id === it.grp);
+  const navSimples = nav.filter(it => !enGroupe(it));
+  const groupeDePage = (navGroupes.find(g => g.items.some(i => i.p === page)) || {}).id || null;
+  const badgeGroupe = (g) => g.items.reduce((n, i) => n + badgeDe(i.p), 0);
+  const nbTicketsOuvertsMenu = isAdmin ? tickets.filter(t => t.status !== "closed").length : 0;
+  const encartGroupe = (gid) => {
+    if (!isAdmin) return null;
+    if (gid === "sup" && nbTicketsOuvertsMenu > 0 && nav.some(i => i.p === "tickets-admin")) return { n: nbTicketsOuvertsMenu, txt: nbTicketsOuvertsMenu > 1 ? "tickets ouverts" + (nbAlertesMenu > 0 ? ", dont " + nbAlertesMenu + " alerte" + (nbAlertesMenu > 1 ? "s" : "") + " à traiter" : "") : "ticket ouvert", cta: "Voir les tickets", p: "tickets-admin" };
+    if (gid === "sec" && nbAlertesMenu > 0 && nav.some(i => i.p === "tickets-admin")) return { n: nbAlertesMenu, txt: "alerte" + (nbAlertesMenu > 1 ? "s" : "") + " de sécurité ou de sauvegarde en attente dans les tickets", cta: "Traiter les alertes", p: "tickets-admin" };
+    return null;
+  };
+
+  // ---------- Ordinateur : barre horizontale ----------
+  const topNav = !isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 50 } },
+    React.createElement('div', { style: { height: 64, background: SB, display: "flex", alignItems: "center", gap: 16, padding: "0 18px", boxShadow: "0 2px 14px rgba(15,15,36,.18)" } },
+      React.createElement('button', { onClick: () => goNav("accueil"), title: "Accueil", style: { background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", flexShrink: 0 } },
+        React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 34, maxWidth: 150, objectFit: "contain", display: "block" } })),
+      React.createElement('nav', { className: "dsi-topnav", "aria-label": "Menu principal", style: { display: "flex", alignItems: "center", gap: 2, flex: 1, minWidth: 0, overflowX: "auto" } },
+        navSimples.filter(it => it.p === "accueil").map(it => React.createElement('button', { key: it.p, className: "dsi-top" + (page === it.p ? " cur" : ""), onClick: () => goNav(it.p) }, it.label)),
+        navGroupes.map(g => {
+          const ouvert = megaOpen && megaOpen.id === g.id;
+          const nb = badgeGroupe(g);
+          return React.createElement('button', { key: g.id, "aria-expanded": !!ouvert,
+            className: "dsi-top" + (groupeDePage === g.id ? " cur" : "") + (ouvert ? " open" : ""),
+            onClick: (e) => { const r = e.currentTarget.getBoundingClientRect(); setMegaOpen(ouvert ? null : { id: g.id, left: r.left }); } },
+            React.createElement('span', null, g.cfg.label),
+            nb > 0 && React.createElement('span', { style: { width: 7, height: 7, borderRadius: 4, background: "#E53E3E", animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }),
+            React.createElement('span', { className: "dsi-chev" }, React.createElement('svg', { className: "dsi-ico", width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.6, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" }, React.createElement('path', { d: "M6 9l6 6 6-6" }))));
+        }),
+        navSimples.filter(it => it.p !== "accueil").map(it => React.createElement('button', { key: it.p, className: "dsi-top" + (page === it.p ? " cur" : ""), onClick: () => goNav(it.p) }, it.label))
+      ),
+      React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap", flexShrink: 0 } }, isAdmin ? "Espace Admin" : "Intranet Client"),
+      React.createElement('button', { className: "dsi-iconbtn", onClick: toggleTheme, title: theme === "dark" ? "Passer en mode jour" : "Passer en mode nuit", "aria-label": theme === "dark" ? "Mode jour" : "Mode nuit" }, theme === "dark" ? "☀️" : "🌙"),
+      isAdmin && React.createElement('button', { className: "dsi-iconbtn", onClick: toggleSound, title: soundOn ? "Couper les notifications sonores" : "Activer les notifications sonores", "aria-label": soundOn ? "Son activé" : "Son coupé", style: { opacity: soundOn ? 1 : 0.55 } }, soundOn ? "🔔" : "🔕")
+    ),
+    // Méga-menu du groupe ouvert
+    megaOpen && (() => {
+      const g = navGroupes.find(x => x.id === megaOpen.id);
+      if (!g) return null;
+      const enc = encartGroupe(g.id);
+      const deuxCol = g.items.length > 3;
+      const larg = (deuxCol ? 600 : 330) + (enc ? 230 : 0);
+      const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+      const left = Math.max(12, Math.min(megaOpen.left - 12, vw - larg - 16));
+      return React.createElement(React.Fragment, null,
+        React.createElement('div', { className: "dsi-veil", onClick: () => setMegaOpen(null), style: { position: "fixed", left: 0, right: 0, top: 64, bottom: 0, background: "rgba(15,15,36,.32)" } }),
+        React.createElement('div', { className: "dsi-mega", role: "menu", style: { position: "fixed", top: 72, left, width: larg, maxWidth: "calc(100vw - 24px)", background: "white", borderRadius: 18, boxShadow: "0 24px 60px rgba(15,15,36,.28)", display: "flex", overflow: "hidden", zIndex: 51 } },
+          React.createElement('div', { style: { flex: 1, minWidth: 0, padding: "18px 16px 18px" } },
+            React.createElement('div', { style: { fontSize: 11, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: "#6B7090", padding: "0 12px 8px" } }, g.cfg.label),
+            React.createElement('div', { style: { display: "grid", gridTemplateColumns: deuxCol ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 2 } },
+              g.items.map(it => React.createElement('button', { key: it.p, role: "menuitem", className: "dsi-tile" + (page === it.p ? " on" : ""), onClick: () => goNav(it.p) },
+                React.createElement('span', { className: "dsi-tico" }, navIco(it.p, it.icon, 18)),
+                React.createElement('span', { style: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 } },
+                  React.createElement('span', { style: { fontSize: 13.5, fontWeight: 600, color: "#1F2340", display: "flex", alignItems: "center", gap: 6 } }, it.label,
+                    badgeDe(it.p) > 0 && React.createElement('span', { style: { minWidth: 20, height: 18, padding: "0 6px", borderRadius: 9, background: "#D63B3B", color: "white", fontSize: 10.5, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" } }, badgeDe(it.p))),
+                  NAV_DESC[it.p] && React.createElement('span', { style: { fontSize: 12, color: "#5B6078", lineHeight: 1.4 } }, NAV_DESC[it.p])
+                )
+              ))
+            )
+          ),
+          enc && React.createElement('div', { style: { width: 230, flexShrink: 0, background: SB, padding: "22px 20px", display: "flex", flexDirection: "column", gap: 8 } },
+            React.createElement('div', { style: { fontSize: 11, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: "rgba(255,255,255,.6)" } }, "À traiter"),
+            React.createElement('div', { style: { fontSize: 30, fontWeight: 800, color: G } }, enc.n),
+            React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.82)", lineHeight: 1.5 } }, enc.txt),
+            React.createElement('div', { style: { flex: 1, minHeight: 10 } }),
+            React.createElement('button', { onClick: () => goNav(enc.p), style: { height: 40, border: "none", borderRadius: 10, background: G, color: "#111", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, enc.cta)
+          )
+        )
+      );
+    })()
+  );
+
+  // ---------- Mobile : onglets en bas + panneau « Plus » ----------
+  const ongletsCandidats = isAdmin
+    ? [{ p: "accueil", label: "Accueil" }, { p: "tickets-admin", label: "Tickets" }, { grp: "sec", label: "Sécurité" }, { grp: "rap", label: "Rapports" }, { grp: "cli", label: "Clients" }, { grp: "sup", label: "Support" }]
+    : [{ p: "accueil", label: "Accueil" }, { p: "contact", label: "Demande" }, { p: "tickets-client", label: "Suivi" }, { p: "knowledge", label: "Procédures" }, { p: "mon-installation", label: "Infra" }];
+  const onglets = ongletsCandidats.map(o => {
+    if (o.p) { const it = nav.find(i => i.p === o.p); return it ? { key: o.p, label: o.label, svg: o.p, emoji: it.icon, cible: o.p, actif: page === o.p } : null; }
+    const g = nav.filter(i => i.grp === o.grp);
+    if (!g.length) return null;
+    return { key: "g-" + o.grp, label: o.label, svg: "_" + o.grp, emoji: (NAV_GROUPS[o.grp] || {}).icon, cible: g[0].p, actif: g.some(i => i.p === page) };
+  }).filter(Boolean).slice(0, 4);
+  const dansOnglets = onglets.some(o => o.actif);
+  const sectionsPlus = [
+    ...navGroupes.map(g => ({ id: g.id, label: g.cfg.label, items: g.items })),
+    ...(navSimples.filter(i => i.p !== "accueil").length ? [{ id: "autres", label: "Mon compte", items: navSimples.filter(i => i.p !== "accueil") }] : [])
+  ];
+  const btnCompte = { display: "flex", alignItems: "center", gap: 8, padding: "0 14px", height: 44, background: "#F4F5FA", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 600, color: "#1F2340", cursor: "pointer" };
+  const mobileNav = isMobile && React.createElement(React.Fragment, null,
+    React.createElement('nav', { "aria-label": "Menu principal", style: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 56, background: SB, display: "flex", padding: "5px 4px calc(6px + env(safe-area-inset-bottom))", boxShadow: "0 -4px 18px rgba(15,15,36,.25)" } },
+      onglets.map(o => React.createElement('button', { key: o.key, className: "dsi-tab" + (o.actif && !plusOpen ? " on" : ""), onClick: () => goNav(o.cible) },
+        React.createElement('span', { className: "dsi-pill" }, navIco(o.svg, o.emoji, 21)),
+        React.createElement('span', { className: "dsi-tl" }, o.label),
+        o.cible === "tickets-admin" && nbAlertesMenu > 0 && React.createElement('span', { style: { position: "absolute", top: 3, left: "calc(50% + 6px)", minWidth: 18, height: 17, padding: "0 5px", borderRadius: 9, background: "#E53E3E", color: "white", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px " + SB } }, nbAlertesMenu)
+      )),
+      React.createElement('button', { className: "dsi-tab" + (plusOpen || !dansOnglets ? " on" : ""), onClick: () => setPlusOpen(v => !v), "aria-expanded": plusOpen },
+        React.createElement('span', { className: "dsi-pill" }, navSvg("_plus", 21)),
+        React.createElement('span', { className: "dsi-tl" }, "Plus"))
+    ),
+    plusOpen && React.createElement('div', { className: "dsi-veil", onClick: () => setPlusOpen(false), style: { position: "fixed", inset: 0, zIndex: 57, background: "rgba(15,15,36,.5)" } }),
+    plusOpen && React.createElement('div', { className: "dsi-sheet", role: "dialog", "aria-label": "Toutes les pages", style: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 58, maxHeight: "86vh", background: "white", borderRadius: "22px 22px 0 0", display: "flex", flexDirection: "column", boxShadow: "0 -12px 40px rgba(15,15,36,.3)" } },
+      React.createElement('div', { style: { display: "flex", justifyContent: "center", padding: "9px 0 2px" } }, React.createElement('div', { style: { width: 40, height: 5, borderRadius: 3, background: "#D5D9E6" } })),
+      React.createElement('div', { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 16px 6px" } },
+        React.createElement('div', { style: { fontSize: 18, fontWeight: 800, color: "#1A1A3E" } }, "Toutes les pages"),
+        React.createElement('button', { onClick: () => setPlusOpen(false), "aria-label": "Fermer", style: { width: 44, height: 44, borderRadius: 22, border: "none", background: "#F3F4F9", color: "#1F2340", fontSize: 18, cursor: "pointer" } }, "✕")
+      ),
+      React.createElement('div', { style: { overflowY: "auto", padding: "0 14px calc(18px + env(safe-area-inset-bottom))", WebkitOverflowScrolling: "touch" } },
+        multiHotel && React.createElement('div', { style: { padding: "6px 2px 4px" } }, hotelSwitcher(false)),
+        sectionsPlus.map(sec => React.createElement('div', { key: sec.id },
+          React.createElement('div', { style: { fontSize: 10.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: "#6B7090", padding: "14px 2px 8px" } }, sec.label),
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 } },
+            sec.items.map(it => React.createElement('button', { key: it.p, className: "dsi-mtile" + (page === it.p ? " on" : ""), onClick: () => goNav(it.p) },
+              React.createElement('span', { className: "dsi-tico" }, navIco(it.p, it.icon, 17)),
+              React.createElement('span', null, it.label),
+              badgeDe(it.p) > 0 && React.createElement('span', { style: { position: "absolute", top: 7, right: 8, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#E53E3E", color: "white", fontSize: 9.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" } }, badgeDe(it.p))
+            ))
+          )
+        )),
+        React.createElement('div', { style: { fontSize: 10.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: "#6B7090", padding: "16px 2px 8px" } }, "Réglages"),
+        React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 8 } },
+          React.createElement('button', { onClick: toggleTheme, style: btnCompte }, theme === "dark" ? "☀️ Mode jour" : "🌙 Mode nuit"),
+          isAdmin && React.createElement('button', { onClick: toggleSound, style: btnCompte }, soundOn ? "🔔 Son activé" : "🔕 Son coupé"),
+          (isAdmin || isSupervisor) && React.createElement('button', { onClick: () => { setChangePwErr(""); setChangePwValue(""); setChangePwValue2(""); setChangePwOpen(true); setPlusOpen(false); }, style: btnCompte }, "🔑 Mot de passe"),
+          React.createElement('button', { onClick: doLogout, style: { ...btnCompte, color: "#C53030" } }, "🚪 Déconnexion")
+        )
+      )
+    )
+  );
+
   return React.createElement('div', { style: { display: "flex", alignItems: "flex-start", minHeight: "100vh", fontFamily: "system-ui,-apple-system,sans-serif", background: "#F0F2F8" } },
     // Changement de son propre mot de passe (admin / superviseur)
     changePwOpen && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 } },
@@ -14418,17 +14629,18 @@ const nav = isAdmin
         )
       )
     ),
-    sidebar,
-    // Overlay sombre derrière le menu sur mobile
-    isMobile && menuOpen && React.createElement('div', { onClick: () => setMenuOpen(false), style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 55 } }),
-    React.createElement('div', { style: { flex: 1, padding: isMobile ? "0 0 18px" : "0 0 24px", overflowX: "hidden", width: "100%", minWidth: 0 } },
-      // Barre supérieure mobile avec bouton hamburger
-      isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", marginBottom: 16 } },
-        React.createElement('button', { onClick: () => setMenuOpen(true), style: { background: "none", border: "none", cursor: "pointer", color: G, fontSize: 24, lineHeight: 1, padding: 0 } }, "☰"),
-        React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 34 } })
+    // Menu : barre horizontale (ordinateur) / onglets en bas (mobile). L'ancienne barre latérale n'est plus affichée.
+    mobileNav,
+    React.createElement('div', { style: { flex: 1, padding: isMobile ? "0 0 calc(92px + env(safe-area-inset-bottom))" : "0 0 24px", overflowX: "clip", width: "100%", minWidth: 0 } },
+      topNav,
+      // Barre supérieure mobile : logo + profil
+      isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 16px", marginBottom: 16 } },
+        React.createElement('button', { onClick: () => goNav("accueil"), "aria-label": "Accueil", style: { background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex" } },
+          React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 32 } })),
+        React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap" } }, isAdmin ? "Espace Admin" : "Intranet Client")
       ),
       // Barre supérieure desktop : titre à gauche, compte et déconnexion à droite
-      !isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: "rgba(240,242,248,.92)", backdropFilter: "blur(6px)", borderBottom: "1px solid #E2E4EE", display: "flex", alignItems: "center", gap: 16, padding: "13px 22px", marginBottom: 18 } },
+      !isMobile && React.createElement('div', { style: { position: "sticky", top: 64, zIndex: 40, background: "rgba(240,242,248,.92)", backdropFilter: "blur(6px)", borderBottom: "1px solid #E2E4EE", display: "flex", alignItems: "center", gap: 16, padding: "13px 22px", marginBottom: 18 } },
         React.createElement('div', { style: { flex: 1, minWidth: 0 } },
           React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
           page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
