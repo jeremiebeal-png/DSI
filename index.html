@@ -8693,55 +8693,128 @@ const nav = isAdmin
         React.createElement('span', null, lbl)
       );
 
-      // Encarts d'alerte : uniquement ceux qui ont du contenu (sinon on montre "tout est calme")
-      const alertes = [];
-      if (enRetard.length > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "🔴", enRetard.length + " ticket" + (enRetard.length > 1 ? "s" : "") + " en retard", "Sans réponse depuis plus de 4h — à traiter", "tickets-admin"));
-      if (bkEchec > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "💾", bkEchec + " backup" + (bkEchec > 1 ? "s" : "") + " en échec", "Sauvegardes en échec à vérifier", "backups"));
-      if (bkMuets > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "⚠️", bkMuets + " backup" + (bkMuets > 1 ? "s" : "") + " muet" + (bkMuets > 1 ? "s" : ""), "Aucune exécution depuis plus de 7 jours", "backups"));
-      if (nonAssignes.length > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "🏨", nonAssignes.length + " ticket" + (nonAssignes.length > 1 ? "s" : "") + " non assigné" + (nonAssignes.length > 1 ? "s" : ""), "À rattacher à un établissement", "tickets-admin"));
+      // ---- Tableau de bord par domaine (Support / Sauvegardes / Sécurité Sophos / Microsoft 365 & échéances) ----
+      const nomHotelAcc = (id) => { if (!id) return "Non assigné"; const h = (hotels || []).find(x => String(x.id) === String(id)); return h ? h.name : "—"; };
+      const ageAcc = (iso) => {
+        if (!iso) return "";
+        const h = Math.floor((Date.now() - new Date(iso).getTime()) / 3600000);
+        return h >= 48 ? Math.floor(h / 24) + " j" : h + " h";
+      };
+      const pluriel = (n, s) => n + " " + s + (n > 1 ? "s" : "");
+
       // Rappels de fiches (Care Pack, contrats, licences…) échus ou proches.
-      const rappelsEchus = (rappelsDus || []).filter(r => { const j = new Date(r.rappel_date + "T00:00:00"); const t = new Date(); t.setHours(0,0,0,0); return j.getTime() <= t.getTime(); });
-      const rappelsProches = (rappelsDus || []).filter(r => { const j = new Date(r.rappel_date + "T00:00:00"); const t = new Date(); t.setHours(0,0,0,0); return j.getTime() > t.getTime(); });
-      if (rappelsEchus.length > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "⏰", rappelsEchus.length + " rappel" + (rappelsEchus.length > 1 ? "s" : "") + " à échéance", "Fiche" + (rappelsEchus.length > 1 ? "s" : "") + " à revoir (Care Pack, contrat, licence…)", "docs-techniques"));
-      if (rappelsProches.length > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "⏰", rappelsProches.length + " rappel" + (rappelsProches.length > 1 ? "s" : "") + " à venir", "Échéance dans les 30 jours", "docs-techniques"));
-      // Sophos : alertes hautes, postes en mauvaise santé, comptes en erreur
-      // Alertes hautes de SÉCURITÉ uniquement (les licences expirées ne comptent pas)
+      const auj0 = new Date(); auj0.setHours(0, 0, 0, 0);
+      const rappelsEchus = (rappelsDus || []).filter(r => new Date(r.rappel_date + "T00:00:00").getTime() <= auj0.getTime());
+      const rappelsProches = (rappelsDus || []).filter(r => new Date(r.rappel_date + "T00:00:00").getTime() > auj0.getTime());
+
+      // Sophos : alertes hautes de SÉCURITÉ uniquement (les licences expirées ne comptent pas)
       const soActifs = new Set((soComptes || []).filter(c => c.actif).map(c => c.hotel_id));
-      const soHautes = soDedoublonner(soAlertes).filter(a => a.statut === "ouverte" && a.severity === "high" && soActifs.has(a.hotel_id)
-        && !(a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" ")))).length;
-      const soKo = (soComptes || []).filter(c => c.actif).reduce((n, c) => n + (c.nb_postes_ko || 0), 0);
-      const soErrs = (soComptes || []).filter(c => c.actif && c.dernier_statut === "erreur").length;
-      if (soHautes > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "🔒", soHautes + " alerte" + (soHautes > 1 ? "s" : "") + " Sophos haute" + (soHautes > 1 ? "s" : ""), "Menaces détectées à traiter", "sophos"));
-      if (soKo > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "💻", soKo + " poste" + (soKo > 1 ? "s" : "") + " en mauvaise santé", "Protection Sophos dégradée", "sophos"));
-      if (soErrs > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "🔌", soErrs + " compte" + (soErrs > 1 ? "s" : "") + " Sophos en erreur", "Connexion à Sophos Central impossible", "sophos"));
+      const soHautesListe = soDedoublonner(soAlertes).filter(a => a.statut === "ouverte" && a.severity === "high" && soActifs.has(a.hotel_id)
+        && !(a.licence === true || /licen[cs]e|subscription|abonnement|\bexpir/i.test([a.type, a.description, a.category].filter(Boolean).join(" "))));
+      const soHautes = soHautesListe.length;
+      const soComptesKo = (soComptes || []).filter(c => c.actif && (c.nb_postes_ko || 0) > 0).sort((a, b) => (b.nb_postes_ko || 0) - (a.nb_postes_ko || 0));
+      const soKo = soComptesKo.reduce((n, c) => n + (c.nb_postes_ko || 0), 0);
+      const soComptesErr = (soComptes || []).filter(c => c.actif && c.dernier_statut === "erreur");
+      const soErrs = soComptesErr.length;
+
       // Microsoft 365 : alertes hautes ouvertes non prises en charge, tenants en erreur
       const msActifsAcc = new Set((msTenants || []).filter(t => t.actif).map(t => t.tenant_id));
       const msHautesAcc = (msAlertes || []).filter(a => a.statut !== "resolved" && a.severite === "high" && !a.vu_par && msActifsAcc.has(a.tenant_id)).length;
-      const msErrsAcc = (msTenants || []).filter(t => t.actif && t.derniere_erreur && !/^Plus de/.test(t.derniere_erreur)).length;
-      if (msHautesAcc > 0) alertes.push(alerte("#C53030", "#FDECEC", "#F5B5B5", "🛡️", msHautesAcc + " alerte" + (msHautesAcc > 1 ? "s" : "") + " Microsoft 365 haute" + (msHautesAcc > 1 ? "s" : ""), "Hameçonnage, compte compromis… à prendre en charge", "m365"));
-      if (msErrsAcc > 0) alertes.push(alerte("#B7791F", "#FFFBEB", "#F0D98A", "🔌", msErrsAcc + " tenant" + (msErrsAcc > 1 ? "s" : "") + " Microsoft en erreur", "Connexion à Microsoft 365 impossible", "m365"));
+      const msTenantsErr = (msTenants || []).filter(t => t.actif && t.derniere_erreur && !/^Plus de/.test(t.derniere_erreur));
+      const msErrsAcc = msTenantsErr.length;
+
+      // Sauvegardes : sites en échec, du plus touché au moins touché
+      const bkSitesEchec = (bkGroupes || []).filter(g => g.pireRank === 0).sort((a, b) => b.nbEchec - a.nbEchec);
+      const nomSiteBk = (g) => g.hotel_id ? nomHotelAcc(g.hotel_id) : g.group;
+
+      // Tickets en retard, les plus anciens d'abord
+      const sinceAcc = (t) => { const st = ticketState[t.id]; return st && st.since ? new Date(st.since).getTime() : Date.now(); };
+      const retardTries = enRetard.slice().sort((a, b) => sinceAcc(a) - sinceAcc(b));
+
+      // Niveau d'un panneau : 2 = critique, 1 = attention, 0 = OK
+      const NIV = [
+        { l: "OK", fg: "#2F855A", bg: "#E9F6EE", bord: "#38A169" },
+        { l: "Attention", fg: "#975A16", bg: "#FFFBEB", bord: "#D69E2E" },
+        { l: "Critique", fg: "#C53030", bg: "#FDECEC", bord: "#E53E3E" }
+      ];
+      const chiffre = (v, lbl, niv) => React.createElement('div', { key: lbl, style: { minWidth: 90 } },
+        React.createElement('div', { style: { fontSize: 26, fontWeight: 800, lineHeight: 1.1, color: v > 0 ? (niv === 2 ? "#C53030" : niv === 1 ? "#975A16" : "#0F0F24") : "#2F855A" } }, String(v)),
+        React.createElement('div', { style: { fontSize: 11.5, color: "#777", marginTop: 3 } }, lbl)
+      );
+      const ligne = (k, gauche, droite, page) => React.createElement('button', { key: k, onClick: () => goTo(page), style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, width: "100%", padding: "9px 2px", background: "none", border: "none", borderBottom: "1px solid #F0F0F5", cursor: "pointer", fontSize: 12.5, color: "#1a1a3e", textAlign: "left", fontFamily: "inherit" } },
+        React.createElement('span', { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, gauche),
+        React.createElement('span', { style: { color: "#888", whiteSpace: "nowrap", flexShrink: 0 } }, droite)
+      );
+      const panneau = (titre, icone, niv, chiffres, lignes, vide, lien, page) => React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderTop: "4px solid " + NIV[niv].bord, borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
+        React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 } },
+          React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#1a1a3e" } },
+            React.createElement('span', { style: { fontSize: 18 } }, icone), titre),
+          React.createElement('span', { style: { fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: NIV[niv].bg, color: NIV[niv].fg, whiteSpace: "nowrap" } }, (niv === 0 ? "✓ " : "! ") + NIV[niv].l)
+        ),
+        React.createElement('div', { style: { display: "flex", gap: 22, flexWrap: "wrap" } }, chiffres),
+        React.createElement('div', { style: { borderTop: "1px solid #F0F0F5", flex: 1 } },
+          lignes.length > 0 ? lignes : React.createElement('div', { style: { fontSize: 12.5, color: "#2F855A", padding: "10px 2px" } }, "✓ " + vide)
+        ),
+        React.createElement('button', { onClick: () => goTo(page), style: { alignSelf: "flex-start", background: "none", border: "none", padding: 0, color: G2, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, lien + " →")
+      );
+
+      const nivSupport = enRetard.length > 0 ? 2 : (nonAssignes.length > 0 ? 1 : 0);
+      const nivBackup = bkEchec > 0 ? 2 : ((bkStats && bkStats.warn > 0) || bkMuets > 0 ? 1 : 0);
+      const nivSophos = (soHautes > 0 || soKo > 0) ? 2 : (soErrs > 0 ? 1 : 0);
+      const nivMs = (msHautesAcc > 0 || rappelsEchus.length > 0) ? 2 : ((msErrsAcc > 0 || rappelsProches.length > 0) ? 1 : 0);
+      const nbDomainesAlerte = [nivSupport, nivBackup, nivSophos, nivMs].filter(n => n > 0).length;
+
+      const lignesSupport = [
+        ...retardTries.slice(0, 3).map(t => ligne("r" + t.id, (t.reference ? t.reference + " · " : "") + (t.subject || "(sans objet)"), nomHotelAcc(t.hotel_id) + " · " + ageAcc(ticketState[t.id] && ticketState[t.id].since), "tickets-admin")),
+        ...(nonAssignes.length > 0 ? [ligne("na", pluriel(nonAssignes.length, "ticket") + " à rattacher à un établissement", "Non assigné", "tickets-admin")] : [])
+      ];
+      const lignesBackup = [
+        ...bkSitesEchec.slice(0, 3).map(g => ligne("b" + g.key, nomSiteBk(g), pluriel(g.nbEchec, "échec"), "backups")),
+        ...(bkMuets > 0 ? [ligne("muets", pluriel(bkMuets, "backup") + " sans exécution depuis 7 jours", "Muet", "backups")] : [])
+      ];
+      const lignesSophos = [
+        ...soHautesListe.slice(0, 2).map(a => ligne("sa" + a.id, a.description || a.type || "Menace détectée", nomHotelAcc(a.hotel_id) + (a.poste ? " · " + a.poste : ""), "sophos")),
+        ...soComptesKo.slice(0, 2).map(c => ligne("sk" + (c.id || c.hotel_id), nomHotelAcc(c.hotel_id), pluriel(c.nb_postes_ko, "poste") + " dégradé" + (c.nb_postes_ko > 1 ? "s" : ""), "sophos")),
+        ...soComptesErr.slice(0, 1).map(c => ligne("se" + (c.id || c.hotel_id), "Connexion Sophos Central impossible", nomHotelAcc(c.hotel_id), "sophos"))
+      ];
+      const lignesMs = [
+        ...(msHautesAcc > 0 ? [ligne("msh", pluriel(msHautesAcc, "alerte") + " haute" + (msHautesAcc > 1 ? "s" : "") + " à prendre en charge", "Microsoft 365", "m365")] : []),
+        ...msTenantsErr.slice(0, 2).map(t => ligne("mt" + t.tenant_id, "Connexion impossible", t.nom || nomHotelAcc(t.hotel_id), "m365")),
+        ...(rappelsDus || []).slice(0, 2).map(r => ligne("rp" + r.id, r.titre || r.rappel_note || "Fiche à revoir", nomHotelAcc(r.hotel_id) + " · " + new Date(r.rappel_date + "T00:00:00").toLocaleDateString("fr-FR"), "docs-techniques"))
+      ];
+
+      const bandeauChiffre = (v, lbl) => React.createElement('div', { key: lbl },
+        React.createElement('div', { style: { fontSize: 24, fontWeight: 700, color: "white" } }, String(v)),
+        React.createElement('div', { style: { fontSize: 12, color: "rgba(255,255,255,.65)" } }, lbl));
 
       content = React.createElement('div', null,
-        // Bandeau de bienvenue
-        React.createElement('div', { style: { background: SB, borderRadius: 14, padding: "22px 26px", marginBottom: 20, color: "white" } },
-          React.createElement('div', { style: { fontSize: 20, fontWeight: 700, color: G } }, "Bonjour" + (prenom ? " " + prenom : "") + " 👋"),
-          React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 6, lineHeight: 1.6 } }, "Bienvenue sur le portail DSI Hotel. Voici l'essentiel à traiter aujourd'hui. Sélectionnez un onglet à gauche à tout moment.")
+        // Bandeau de bienvenue + chiffres globaux
+        React.createElement('div', { style: { background: SB, borderRadius: 14, padding: "22px 26px", marginBottom: 20, color: "white", display: "flex", flexWrap: "wrap", gap: 18, alignItems: "flex-end", justifyContent: "space-between" } },
+          React.createElement('div', null,
+            React.createElement('div', { style: { fontSize: 20, fontWeight: 700, color: G } }, "Bonjour" + (prenom ? " " + prenom : "") + " 👋"),
+            React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 6, lineHeight: 1.6 } },
+              nbDomainesAlerte === 0 ? "Rien d'urgent pour le moment. Tout est sous contrôle." : (nbDomainesAlerte + " domaine" + (nbDomainesAlerte > 1 ? "s" : "") + " sur 4 demande" + (nbDomainesAlerte > 1 ? "nt" : "") + " votre attention."))
+          ),
+          React.createElement('div', { style: { display: "flex", gap: 26, flexWrap: "wrap" } },
+            bandeauChiffre((hotels || []).length, "établissements"),
+            bandeauChiffre(ouverts.length, "tickets ouverts"),
+            bandeauChiffre((rappelsDus || []).length, "rappels à 30 jours")
+          )
         ),
-        // Encarts d'alerte
-        alertes.length > 0
-          ? React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 } }, alertes)
-          : React.createElement('div', { style: { background: "#E9F6EE", border: "1px solid #B7E0C6", borderRadius: 12, padding: "16px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 } },
-              React.createElement('span', { style: { fontSize: 24 } }, "✅"),
-              React.createElement('div', { style: { fontSize: 14, fontWeight: 600, color: "#2F855A" } }, "Rien d'urgent pour le moment. Tout est sous contrôle.")
-            ),
-        // Chiffres secondaires
-        React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 } }, "En un coup d'œil"),
-        React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 22 } },
-          miniChiffre(ouverts.length, "Tickets ouverts", "#0F0F24"),
-          miniChiffre(enRetard.length, "En retard", enRetard.length > 0 ? "#E53E3E" : "#2F855A"),
-          miniChiffre(bkStats ? bkStats.echec : "—", "Backups en échec", bkEchec > 0 ? "#E53E3E" : "#2F855A"),
-          miniChiffre(bkStats ? (bkStats.groupesEnEchec + " / " + bkStats.nbGroupes) : "—", "Sites en échec", bkStats && bkStats.groupesEnEchec > 0 ? "#E53E3E" : "#2F855A"),
-          miniChiffre((hotels || []).length, "Établissements", "#0F0F24")
+        // Quatre domaines
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 14, marginBottom: 22 } },
+          panneau("Support", "🎫", nivSupport,
+            [chiffre(ouverts.length, "ouverts", 0), chiffre(enRetard.length, "en retard > 4 h", 2), chiffre(nonAssignes.length, "non assigné" + (nonAssignes.length > 1 ? "s" : ""), 1)],
+            lignesSupport, "Aucun ticket en retard", "Ouvrir les tickets", "tickets-admin"),
+          panneau("Sauvegardes", "💾", nivBackup,
+            [chiffre(bkEchec, "en échec", 2), chiffre(bkStats ? bkStats.groupesEnEchec : 0, "site" + (bkStats && bkStats.groupesEnEchec > 1 ? "s" : "") + " touché" + (bkStats && bkStats.groupesEnEchec > 1 ? "s" : "") + (bkStats ? " / " + bkStats.nbGroupes : ""), 2), chiffre(bkMuets, "muet" + (bkMuets > 1 ? "s" : ""), 1)],
+            lignesBackup, "Toutes les sauvegardes sont OK", "Ouvrir les sauvegardes", "backups"),
+          panneau("Sécurité Sophos", "🔒", nivSophos,
+            [chiffre(soHautes, "alerte" + (soHautes > 1 ? "s" : "") + " haute" + (soHautes > 1 ? "s" : ""), 2), chiffre(soKo, "poste" + (soKo > 1 ? "s" : "") + " dégradé" + (soKo > 1 ? "s" : ""), 2), chiffre(soErrs, "compte" + (soErrs > 1 ? "s" : "") + " en erreur", 1)],
+            lignesSophos, "Aucune menace ni poste dégradé", "Ouvrir Sécurité Sophos", "sophos"),
+          panneau("Microsoft 365 & échéances", "🛡️", nivMs,
+            [chiffre(msHautesAcc, "alerte" + (msHautesAcc > 1 ? "s" : "") + " haute" + (msHautesAcc > 1 ? "s" : ""), 2), chiffre(msErrsAcc, "tenant" + (msErrsAcc > 1 ? "s" : "") + " en erreur", 1), chiffre(rappelsEchus.length, "rappel" + (rappelsEchus.length > 1 ? "s" : "") + " échu" + (rappelsEchus.length > 1 ? "s" : ""), 2)],
+            lignesMs, "Aucune alerte ni échéance proche", "Ouvrir Microsoft 365", "m365")
         ),
         // Raccourcis
         React.createElement('div', { style: { fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 } }, "Accès rapide"),
