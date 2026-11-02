@@ -107,6 +107,9 @@ const estAlerteSophos = (t) => !!t && t.source === "sophos";
 const estAlerteBackup = (t) => !!t && t.source === "checkcentral";
 // Onglet « Alerte Microsoft » : mails Defender + tickets créés par le Worker Microsoft 365
 const estAlerteMicrosoft = (t) => estAlerteDefender(t) || (!!t && t.source === "m365");
+// Ticket ouvert par le support suite à un appel téléphonique
+const estTicketTelephone = (t) => !!t && t.source === "telephone";
+const ROLES_CONTACT = ["Front Office", "Réservation", "Room Service", "Économat", "Directeur Général", "Directeur des opérations", "Finance", "Technique", "Sales", "Revenue", "HK", "Autre"];
 const estAlerteAuto = (t) => estAlerteMicrosoft(t) || estAlerteSophos(t) || estAlerteBackup(t);
 const RDV_CRENEAUX = ["09h30 - 10h30", "10h30 - 11h30", "12h30 - 13h30", "14h30 - 15h30", "15h30 - 16h30", "16h30 - 17h30"];
 const semaineOuvree = (dateStr) => { const d = new Date(dateStr + "T00:00:00"); if (isNaN(d.getTime())) return []; const dow = (d.getDay() + 6) % 7; const monday = new Date(d); monday.setDate(d.getDate() - dow); const noms = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]; const out = []; for (let i = 0; i < 5; i++) { const x = new Date(monday); x.setDate(monday.getDate() + i); const iso = x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); out.push({ iso: iso, label: noms[i] + " " + String(x.getDate()).padStart(2, "0") + "/" + String(x.getMonth() + 1).padStart(2, "0") }); } return out; };
@@ -1872,6 +1875,7 @@ function App() {
   const [fwdMsg, setFwdMsg] = useState("");            // retour d'état (succès/erreur)
   const [replyNote, setReplyNote] = useState(""); // info/erreur d'envoi email
   const [ticketFiles, setTicketFiles] = useState({}); // { ticketId: [fichiers] }
+  const [telModal, setTelModal] = useState(null); // formulaire « Ticket téléphone » (null = fermé)
   const [replyFiles, setReplyFiles] = useState([]);   // fichiers à joindre à la réponse en cours
   const [replyImageUrls, setReplyImageUrls] = useState([]); // images (URLs) issues d'une réponse type
   const [replyCcList, setReplyCcList] = useState([]);      // adresses CC cochées pour l'envoi
@@ -3441,6 +3445,86 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         setNoteSaved(prev => ({ ...prev, [ticket.id]: !!String(data).trim() }));
       }
     } catch (e) { /* silencieux : l'éditeur s'ouvre vide */ }
+  };
+
+  // ====== TICKET TÉLÉPHONE : le support enregistre un appel reçu ======
+  // Même informations qu'un ticket client + durée de l'appel et résolution éventuelle.
+  // source = "telephone" (pas de migration SQL : la colonne source existe déjà).
+  const ouvrirTicketTelephone = () => setTelModal({
+    hotel_id: "", contact_name: "", contact_role: "Front Office", contact_email: "", contact_phone: "",
+    category: CATS[0], priority: "Moyenne", subject: "", message: "", duree: "",
+    resolu: false, solution: "", recap: false, busy: false, err: ""
+  });
+  const creerTicketTelephone = async () => {
+    const f = telModal;
+    if (!f || f.busy) return;
+    const erreur = (m) => setTelModal({ ...f, err: m });
+    const email = nettoyerEmail(f.contact_email || "").trim();
+    if (!f.hotel_id) return erreur("Choisissez l'établissement qui appelle.");
+    if (!f.contact_name.trim()) return erreur("Indiquez le nom de la personne qui appelle.");
+    if (!f.message.trim()) return erreur("Décrivez la demande.");
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return erreur("Adresse email invalide.");
+    if (f.resolu && !f.solution.trim()) return erreur("Indiquez la solution apportée pendant l'appel.");
+    if (f.recap && !email) return erreur("Pour envoyer le récapitulatif, renseignez l'email du contact.");
+    setTelModal({ ...f, busy: true, err: "" });
+    const qui = adminFromName();
+    const maintenant = new Date();
+    const duree = parseInt(f.duree, 10);
+    const sujet = f.subject.trim() || f.category;
+    try {
+      const ligne = {
+        hotel_id: f.hotel_id,
+        contact_name: f.contact_name.trim(),
+        contact_role: f.contact_role,
+        contact_email: email || null,
+        contact_phone: f.contact_phone.trim() || null,
+        category: f.category,
+        priority: f.priority,
+        subject: sujet,
+        message: f.message.trim(),
+        status: f.resolu ? "closed" : "open",
+        closed_at: f.resolu ? maintenant.toISOString() : null,
+        source: "telephone",
+        assigned_to: (session && session.user && session.user.id) || null,
+      };
+      const { data: ticket, error } = await sb.from("tickets").insert(ligne).select().single();
+      if (error) throw error;
+      // Message « appel pris en charge » : trace dans le fil et compte comme 1re réponse (SLA)
+      const quand = maintenant.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      const esc = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const body = "📞 Appel reçu et pris en charge par " + qui + " le " + quand + (duree > 0 ? " — durée : " + duree + " min" : "") +
+        (f.resolu ? "\nRésolu pendant l'appel : " + f.solution.trim() : "");
+      const body_html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;">' +
+        '<div style="background:#2B6CB0;color:#fff;border-radius:8px;padding:11px 15px;">' +
+          '<div style="font-size:15px;font-weight:bold;">📞 APPEL TÉLÉPHONIQUE</div>' +
+          '<div style="font-size:13px;margin-top:3px;">Pris en charge par <b>' + esc(qui) + '</b> le ' + esc(quand) + (duree > 0 ? ' — durée : <b>' + duree + ' min</b>' : '') + '</div>' +
+        '</div>' +
+        (f.resolu ? '<div style="margin-top:8px;padding:8px 12px;background:#E9F6EE;border-left:3px solid #2F855A;font-size:13px;"><b>✅ Résolu pendant l\'appel :</b><br>' + esc(f.solution.trim()).replace(/\n/g, "<br>") + '</div>' : '') +
+      '</div>';
+      await sb.from("ticket_messages").insert({ ticket_id: ticket.id, sender_role: "admin", sender_name: qui, body, body_html });
+      // Récapitulatif au client (optionnel) : il reçoit la référence et peut répondre par email
+      let note = "";
+      if (f.recap && email) {
+        try {
+          const texte = "Bonjour " + f.contact_name.trim() + ",\n\n" +
+            "Suite à votre appel du " + quand + ", votre demande a été enregistrée sous la référence " + (ticket.reference || "") + ".\n\n" +
+            "Votre demande :\n" + f.message.trim() + "\n\n" +
+            (f.resolu ? "Solution apportée pendant l'appel :\n" + f.solution.trim() + "\n\nNous considérons cette demande comme résolue. Si le problème persiste, répondez simplement à cet email."
+                      : "Notre équipe s'en occupe et revient vers vous rapidement. Pour toute précision, répondez directement à cet email en conservant la référence dans l'objet.");
+          const mail = buildSignedEmail(texte);
+          const res = await fetchEmailApi({ method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to: email, subject: "[" + (ticket.reference || "DSI") + "] Votre appel au support — " + sujet, text: mail.text, html: mail.html, replyTo: SUPPORT_EMAIL, fromName: qui }) });
+          if (!res.ok) note = " (le récapitulatif email n'a pas pu partir)";
+        } catch (e) { note = " (le récapitulatif email n'a pas pu partir)"; }
+      }
+      setTickets(prev => [ticket, ...prev]);
+      setTicketState(prev => ({ ...prev, [ticket.id]: { kind: null, since: null } }));
+      setTelModal(null);
+      setTicketFilter("telephone");
+      if (note) alert("Ticket " + (ticket.reference || "") + " créé" + note + ".");
+    } catch (e) {
+      setTelModal({ ...f, busy: false, err: "Création impossible : " + (e.message || e) });
+    }
   };
 
   // Alerte sauvegarde : le technicien indique qu'il a relancé la sauvegarde.
@@ -10098,6 +10182,7 @@ const nav = isAdmin
     const nbDefender = tickets.filter(t => estAlerteMicrosoft(t) && t.status !== "closed").length;
     const nbSophosTk = tickets.filter(t => estAlerteSophos(t) && t.status !== "closed").length;
     const nbBackupTk = tickets.filter(t => estAlerteBackup(t) && t.status !== "closed").length;
+    const nbTelOuv = tickets.filter(t => estTicketTelephone(t) && t.status !== "closed").length;
     const ALERTE_ONGLETS = { defender: { nb: nbDefender, titre: "alerte(s) Microsoft à traiter" }, sophos: { nb: nbSophosTk, titre: "alerte(s) Sophos à traiter" }, backup: { nb: nbBackupTk, titre: "alerte(s) de sauvegarde à traiter" } };
     let list = tickets;
     if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente && !estSheraton(t) && !estAlerteAuto(t));
@@ -10110,6 +10195,8 @@ const nav = isAdmin
     const monId = session && session.user ? session.user.id : null;
     if (ticketFilter === "mine") list = tickets.filter(t => t.assigned_to && t.assigned_to === monId && t.status !== "closed");
     if (ticketFilter === "unassigned") list = tickets.filter(t => !t.assigned_to && t.status !== "closed");
+    // Onglet Téléphone : tous les appels (ouverts et fermés), pour les comptabiliser
+    if (ticketFilter === "telephone") list = tickets.filter(t => estTicketTelephone(t));
 
     // Recherche : dès qu'un terme est saisi, on ignore le filtre Ouverts/Fermés/Tous
     // et on cherche dans TOUS les tickets (objet + contact + hôtel + corps des messages).
@@ -10134,7 +10221,7 @@ const nav = isAdmin
     content = React.createElement('div', null,
       openTicketId && React.createElement('button', { onClick: () => setOpenTicketId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux tickets"),
       !openTicketId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        [["open", "Ouverts"], ["mine", "👤 Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["defender", "🛡️ Alerte Microsoft" + (nbDefender ? " (" + nbDefender + ")" : "")], ["sophos", "🔒 Alerte Sophos" + (nbSophosTk ? " (" + nbSophosTk + ")" : "")], ["backup", "💾 Alerte Sauvegarde" + (nbBackupTk ? " (" + nbBackupTk + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
+        [["open", "Ouverts"], ["mine", "👤 Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["telephone", "📞 Téléphone" + (nbTelOuv ? " (" + nbTelOuv + ")" : "")], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["defender", "🛡️ Alerte Microsoft" + (nbDefender ? " (" + nbDefender + ")" : "")], ["sophos", "🔒 Alerte Sophos" + (nbSophosTk ? " (" + nbSophosTk + ")" : "")], ["backup", "💾 Alerte Sauvegarde" + (nbBackupTk ? " (" + nbBackupTk + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
           (ALERTE_ONGLETS[v] && ALERTE_ONGLETS[v].nb > 0)
             ? React.createElement('button', { key: v, "data-no-invert": "1", onClick: () => setTicketFilter(v), title: ALERTE_ONGLETS[v].nb + " " + ALERTE_ONGLETS[v].titre, style: { padding: "6px 14px", border: "1px solid #C53030", background: ticketFilter === v ? "#9B2C2C" : "#E53E3E", color: "white", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: 700, animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, lbl)
             : React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
@@ -10157,6 +10244,7 @@ const nav = isAdmin
           React.createElement('button', { onClick: () => setTicketView("cards"), title: "Vue cartes", style: { padding: "6px 11px", border: "none", background: ticketView === "cards" ? G + "18" : "white", color: ticketView === "cards" ? G2 : "#888", fontSize: 12, cursor: "pointer", fontWeight: ticketView === "cards" ? 600 : 400 } }, "\u2630 Liste"),
           React.createElement('button', { onClick: () => setTicketView("table"), title: "Vue tableau", style: { padding: "6px 11px", border: "none", borderLeft: "1px solid #DDD", background: ticketView === "table" ? G + "18" : "white", color: ticketView === "table" ? G2 : "#888", fontSize: 12, cursor: "pointer", fontWeight: ticketView === "table" ? 600 : 400 } }, "\u25A6 Tableau")
         ),
+        React.createElement('button', { onClick: ouvrirTicketTelephone, title: "Enregistrer un appel reçu au support", style: { padding: "6px 12px", border: "1px solid #2B6CB0", background: "#EBF4FF", color: "#2B6CB0", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "📞 + Ticket téléphone"),
         React.createElement('button', { onClick: loadTickets, style: { padding: "6px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔄 Actualiser"),
         React.createElement('button', { onClick: () => {
             // Débloque le contexte audio (au cas où) puis joue le son de test
@@ -10176,6 +10264,20 @@ const nav = isAdmin
         React.createElement('span', { style: { fontSize: 12, color: "#2B6CB0", flex: 1 } }, mergeSel.length < 2 ? "Cochez au moins 2 tickets à fusionner. Le plus ancien deviendra le ticket principal." : (mergeSel.length + " tickets sélectionnés — ils seront fusionnés dans le plus ancien.")),
         React.createElement('button', { onClick: doMergeTickets, disabled: mergeSel.length < 2 || mergeBusy, style: { padding: "7px 14px", background: mergeSel.length >= 2 ? G : "#CCC", border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: mergeSel.length >= 2 ? "pointer" : "default", opacity: mergeBusy ? 0.6 : 1 } }, mergeBusy ? "Fusion..." : "Fusionner les tickets")
       ),
+      !openTicketId && ticketFilter === "telephone" && !rechercheActive && (() => {
+        const debut = new Date(); debut.setDate(1); debut.setHours(0, 0, 0, 0);
+        const mois = tickets.filter(t => estTicketTelephone(t) && new Date(t.created_at) >= debut);
+        const resolusDirect = mois.filter(t => t.status === "closed").length;
+        const parHotel = {};
+        mois.forEach(t => { const n = (hotels.find(h => h.id === t.hotel_id) || {}).name || "?"; parHotel[n] = (parHotel[n] || 0) + 1; });
+        const top = Object.entries(parHotel).sort((a, b) => b[1] - a[1]).slice(0, 4);
+        const nomMois = debut.toLocaleDateString("fr-FR", { month: "long" });
+        return React.createElement('div', { style: { background: "#EBF4FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 12.5, color: "#2B6CB0" } },
+          React.createElement('b', null, "📞 " + nomMois.charAt(0).toUpperCase() + nomMois.slice(1) + " : " + mois.length + " appel" + (mois.length > 1 ? "s" : "")),
+          React.createElement('span', null, resolusDirect + " fermé(s) · " + (mois.length - resolusDirect) + " en cours"),
+          top.length > 0 && React.createElement('span', { style: { color: "#4A6FA5" } }, top.map(([n, c]) => n + " (" + c + ")").join(" · "))
+        );
+      })(),
       closeMode && React.createElement('div', { style: { background: "#FFF5F5", border: "1px solid #FEB2B2", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
         React.createElement('span', { style: { fontSize: 12, color: "#C53030", flex: 1 } }, closeSel.length < 1 ? "Cochez les tickets à fermer." : (closeSel.length + " ticket" + (closeSel.length > 1 ? "s" : "") + " sélectionné" + (closeSel.length > 1 ? "s" : "") + " — ils seront marqués comme fermés.")),
         React.createElement('button', { onClick: () => setCloseSel(list.map(t => t.id)), style: { padding: "7px 12px", background: "white", border: "1px solid #FEB2B2", color: "#C53030", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer" } }, "Tout cocher"),
@@ -10255,14 +10357,14 @@ const nav = isAdmin
                     React.createElement('span', { style: { width: 96, flexShrink: 0, overflow: "hidden" } }, t.prestataire ? React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prestaColor(t.prestataire), background: prestaColor(t.prestataire) + "1C", padding: "2px 7px", borderRadius: 20, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "inline-block", maxWidth: "100%", boxSizing: "border-box" } }, t.prestataire) : null),
                     React.createElement('span', { style: { width: 96, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11.5, color: t.assigned_to ? "#2B6CB0" : "#BBB", fontWeight: t.assigned_to ? 600 : 400 }, title: t.assigned_to ? "Assigné à " + nomTechnicien(t.assigned_to) : "Non assigné" }, t.assigned_to ? "👤 " + nomTechnicien(t.assigned_to) : "—"),
                     React.createElement('span', { style: { width: 130, textAlign: "center", flexShrink: 0 } }, ticketStateBadge(ticketState[t.id], t.status)),
-                    React.createElement('span', { style: { fontSize: 15, flexShrink: 0 }, title: t.source === "email" ? "Email" : "Formulaire" }, t.source === "email" ? "📧" : "📝"),
+                    React.createElement('span', { style: { fontSize: 15, flexShrink: 0 }, title: t.source === "email" ? "Email" : estTicketTelephone(t) ? "Téléphone" : "Formulaire" }, t.source === "email" ? "📧" : estTicketTelephone(t) ? "📞" : "📝"),
                     React.createElement('span', { style: { width: 70, textAlign: "center", fontSize: 10, fontWeight: 600, color: prioColor(t.priority), flexShrink: 0 } }, t.priority),
                     React.createElement('span', { style: { width: 100, textAlign: "right", fontSize: 10, color: "#AAA", flexShrink: 0 } }, new Date(t.created_at).toLocaleDateString("fr-FR") + " " + new Date(t.created_at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }))
                   )
                 : React.createElement('div', { style: { flex: 1, minWidth: 0 } },
                     React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" } },
                       React.createElement('span', { style: { fontWeight: 600, fontSize: 13, color: t.hotel_id ? "#1a1a3e" : "#DD6B20" } }, hotelLabel),
-                      React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: t.source === "email" ? "#3182CE" : "#718096", background: (t.source === "email" ? "#3182CE" : "#718096") + "18", padding: "2px 8px", borderRadius: 20 } }, t.source === "email" ? "📧 Email" : "📝 Formulaire"),
+                      React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: t.source === "email" ? "#3182CE" : estTicketTelephone(t) ? "#2B6CB0" : "#718096", background: (t.source === "email" ? "#3182CE" : estTicketTelephone(t) ? "#2B6CB0" : "#718096") + "18", padding: "2px 8px", borderRadius: 20 } }, t.source === "email" ? "📧 Email" : estTicketTelephone(t) ? "📞 Téléphone" : "📝 Formulaire"),
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: prioColor(t.priority), background: prioColor(t.priority) + "18", padding: "2px 8px", borderRadius: 20 } }, t.priority),
                       React.createElement('span', { style: { fontSize: 10, color: "#888", background: "#F0F0F8", padding: "2px 8px", borderRadius: 20 } }, t.category),
                       React.createElement('span', { style: { fontSize: 10, fontWeight: 600, color: statusColor(t.status), background: statusColor(t.status) + "18", padding: "2px 8px", borderRadius: 20 } }, statusLabel(t.status)),
@@ -10507,7 +10609,7 @@ const nav = isAdmin
                   m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                   m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                   React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
-                  m.sender_role === "admin" && !/^(Sauvegarde relancée|Alerte mise en silence)/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
+                  m.sender_role === "admin" && !/^(Sauvegarde relancée|Alerte mise en silence|📞 Appel reçu)/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
                 ))
               ),
               React.createElement('div', { style: (t.source === "checkcentral" || t.source === "sophos")
@@ -10574,7 +10676,76 @@ const nav = isAdmin
             )
           );
         })
-      )
+      ),
+      telModal && (() => {
+        const f = telModal;
+        const setF = (patch) => setTelModal(prev => ({ ...prev, ...patch, err: "" }));
+        const inp = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
+        const lbl = { display: "block", fontSize: 11.5, fontWeight: 600, color: "#555", margin: "10px 0 4px" };
+        // Contacts déjà connus pour cet hôtel (tickets précédents) : remplissage automatique
+        const contacts = {};
+        tickets.filter(t => f.hotel_id && t.hotel_id === f.hotel_id && t.contact_name && !estAlerteAuto(t)).forEach(t => {
+          const k = t.contact_name.trim();
+          if (!contacts[k]) contacts[k] = t;
+        });
+        const choisirContact = (nom) => {
+          const c = contacts[nom.trim()];
+          if (c) setF({ contact_name: nom, contact_email: f.contact_email || (c.contact_email ? nettoyerEmail(c.contact_email) : ""), contact_phone: f.contact_phone || c.contact_phone || "", contact_role: ROLES_CONTACT.includes(c.contact_role) ? c.contact_role : f.contact_role });
+          else setF({ contact_name: nom });
+        };
+        return React.createElement('div', { onClick: e => { if (e.target === e.currentTarget && !f.busy) setTelModal(null); }, style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: isMobile ? 12 : "40px 20px", zIndex: 1000, overflowY: "auto" } },
+          React.createElement('div', { style: { background: "white", borderRadius: 12, padding: isMobile ? 18 : 24, width: "100%", maxWidth: 620, boxShadow: "0 12px 40px rgba(0,0,0,.25)", marginBottom: 30 } },
+            React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, "📞 Nouveau ticket téléphone"),
+            React.createElement('div', { style: { fontSize: 12, color: "#888", margin: "3px 0 6px" } }, "Enregistrez l'appel reçu : il sera comptabilisé comme un ticket (canal Téléphone) et assigné à vous."),
+            React.createElement('label', { style: lbl }, "Établissement *"),
+            React.createElement('select', { value: f.hotel_id, onChange: e => setF({ hotel_id: e.target.value }), autoFocus: true, style: inp },
+              React.createElement('option', { value: "" }, "— Choisir l'hôtel qui appelle —"),
+              hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "fr")).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+            React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 } },
+              React.createElement('div', null,
+                React.createElement('label', { style: lbl }, "Nom de l'appelant *"),
+                React.createElement('input', { value: f.contact_name, onChange: e => choisirContact(e.target.value), list: "tel-contacts", placeholder: "Prénom Nom", style: inp }),
+                React.createElement('datalist', { id: "tel-contacts" }, Object.keys(contacts).sort().map(n => React.createElement('option', { key: n, value: n })))),
+              React.createElement('div', null,
+                React.createElement('label', { style: lbl }, "Service"),
+                React.createElement('select', { value: f.contact_role, onChange: e => setF({ contact_role: e.target.value }), style: inp }, ROLES_CONTACT.map(r => React.createElement('option', { key: r, value: r }, r)))),
+              React.createElement('div', null,
+                React.createElement('label', { style: lbl }, "Téléphone"),
+                React.createElement('input', { value: f.contact_phone, onChange: e => setF({ contact_phone: e.target.value }), placeholder: "+33 …", style: inp })),
+              React.createElement('div', null,
+                React.createElement('label', { style: lbl }, "Email"),
+                React.createElement('input', { type: "email", value: f.contact_email, onChange: e => setF({ contact_email: e.target.value }), placeholder: "contact@hotel.com", style: inp })),
+              React.createElement('div', null,
+                React.createElement('label', { style: lbl }, "Catégorie"),
+                React.createElement('select', { value: f.category, onChange: e => setF({ category: e.target.value }), style: inp }, CATS.map(c => React.createElement('option', { key: c, value: c }, c)))),
+              React.createElement('div', null,
+                React.createElement('label', { style: lbl }, "Priorité"),
+                React.createElement('select', { value: f.priority, onChange: e => setF({ priority: e.target.value }), style: inp }, SLA_PRIORITES.map(sp => React.createElement('option', { key: sp.p, value: sp.p }, sp.code + " " + sp.p))))
+            ),
+            React.createElement('label', { style: lbl }, "Objet"),
+            React.createElement('input', { value: f.subject, onChange: e => setF({ subject: e.target.value }), placeholder: "Ex. : Imprimante réception hors ligne (par défaut : la catégorie)", style: inp }),
+            React.createElement('label', { style: lbl }, "Demande de l'appelant *"),
+            React.createElement('textarea', { value: f.message, onChange: e => setF({ message: e.target.value }), rows: 4, placeholder: "Ce que la personne a décrit : poste, message d'erreur, depuis quand…", style: { ...inp, resize: "vertical" } }),
+            React.createElement('div', { style: { display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap", marginTop: 4 } },
+              React.createElement('div', { style: { width: 140 } },
+                React.createElement('label', { style: lbl }, "Durée de l'appel (min)"),
+                React.createElement('input', { type: "number", min: 0, value: f.duree, onChange: e => setF({ duree: e.target.value }), placeholder: "ex. 10", style: inp })),
+              React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#2F855A", fontWeight: 600, cursor: "pointer", paddingBottom: 9 } },
+                React.createElement('input', { type: "checkbox", checked: f.resolu, onChange: e => setF({ resolu: e.target.checked }) }), "✅ Résolu pendant l'appel (ticket fermé directement)")
+            ),
+            f.resolu && React.createElement('div', null,
+              React.createElement('label', { style: lbl }, "Solution apportée *"),
+              React.createElement('textarea', { value: f.solution, onChange: e => setF({ solution: e.target.value }), rows: 3, placeholder: "Ce qui a été fait pendant l'appel", style: { ...inp, resize: "vertical", borderColor: "#B7E0C6" } })),
+            React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#555", cursor: "pointer", marginTop: 12 } },
+              React.createElement('input', { type: "checkbox", checked: f.recap, onChange: e => setF({ recap: e.target.checked }) }), "✉️ Envoyer un récapitulatif par email à l'appelant (avec la référence du ticket)"),
+            f.err && React.createElement('div', { style: { fontSize: 12.5, color: "#C53030", background: "#FDECEC", borderRadius: 7, padding: "8px 10px", marginTop: 12 } }, f.err),
+            React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 } },
+              React.createElement('button', { onClick: () => setTelModal(null), disabled: f.busy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+              React.createElement('button', { onClick: creerTicketTelephone, disabled: f.busy, style: { padding: "8px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: f.busy ? "default" : "pointer", opacity: f.busy ? 0.6 : 1 } }, f.busy ? "Création…" : (f.resolu ? "Créer et fermer le ticket" : "Créer le ticket"))
+            )
+          )
+        );
+      })()
     );
   }
 
@@ -10623,7 +10794,7 @@ const nav = isAdmin
                       m.cc && React.createElement('div', { style: { fontSize: 10, color: "#999", marginBottom: 3 } }, "Cc : " + m.cc),
                       m.body_html ? React.createElement(RichHtml, { html: m.body_html, style: { fontSize: 13, color: "#333", lineHeight: 1.6 } }) : React.createElement('div', { style: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" } }, nettoyerSignature(m.body)),
                       React.createElement(FileList, { files: (ticketFiles[t.id] || []).filter(f => f.message_id === m.id && !(m.body_html && m.body_html.includes(f.file_url))), onOpenImage: openViewer }),
-                      m.sender_role === "admin" && !/^Sauvegarde relancée/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
+                      m.sender_role === "admin" && !/^(Sauvegarde relancée|📞 Appel reçu)/.test(String(m.body || "")) && React.createElement(SignatureBlock, { key: "sig" })
                     ))
                   )
                 : React.createElement('div', { style: { fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 12 } }, "Pas encore de réponse. Notre équipe traite votre demande."),
