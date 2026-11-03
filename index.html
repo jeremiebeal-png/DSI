@@ -141,6 +141,15 @@ const estAlerteBackup = (t) => !!t && t.source === "checkcentral";
 const estAlerteMicrosoft = (t) => estAlerteDefender(t) || (!!t && t.source === "m365");
 // Ticket ouvert par le support suite à un appel téléphonique
 const estTicketTelephone = (t) => !!t && t.source === "telephone";
+// Libellé d'un technicien : « Prénom Nom », jamais l'adresse email.
+// Si le nom complet n'est pas renseigné, on le déduit de l'email (jeremie.beal@… -> Jeremie Beal).
+const nomTechDepuis = (t) => {
+  const n = String((t && t.full_name) || "").trim();
+  if (n && n.indexOf("@") < 0) return n;
+  const local = String((n || (t && t.email) || "")).split("@")[0];
+  const mots = local.split(/[._-]+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  return mots.join(" ") || "?";
+};
 const ROLES_CONTACT = ["Front Office", "Réservation", "Room Service", "Économat", "Directeur Général", "Directeur des opérations", "Finance", "Technique", "Sales", "Revenue", "HK", "Autre"];
 const estAlerteAuto = (t) => estAlerteMicrosoft(t) || estAlerteSophos(t) || estAlerteBackup(t);
 const RDV_CRENEAUX = ["09h30 - 10h30", "10h30 - 11h30", "12h30 - 13h30", "14h30 - 15h30", "15h30 - 16h30", "16h30 - 17h30"];
@@ -1964,7 +1973,7 @@ function App() {
   useEffect(() => {
     if (!isAdmin) return;
     sb.rpc("liste_techniciens").then(({ data, error }) => {
-      if (!error && Array.isArray(data)) setTechniciens(data.map(t => ({ id: t.id, nom: (t.full_name || "").trim() || t.email || "?", email: t.email || "" })).sort((a, b) => a.nom.localeCompare(b.nom, "fr")));
+      if (!error && Array.isArray(data)) setTechniciens(data.map(t => ({ id: t.id, nom: nomTechDepuis(t), email: t.email || "" })).sort((a, b) => a.nom.localeCompare(b.nom, "fr")));
     });
   }, [isAdmin]);
   // ---------- MULTI-HÔTELS (superviseur de groupe) ----------
