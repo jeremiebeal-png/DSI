@@ -176,6 +176,8 @@ const CHECKCENTRAL_API_URL = "https://dsi-hotel-checkcentral.jeremie-beal.worker
 const SOPHOS_API_URL = "https://dsi-hotel-sophos.jeremie-beal.workers.dev";
 // Worker de blocage d'expéditeurs frauduleux (Tenant Allow/Block List Microsoft 365).
 const BLOCAGE_API_URL = "https://dsi-hotel-blocage.jeremie-beal.workers.dev";
+// Worker de l'agent Claude des tickets (brouillons de réponse + état du PC via NinjaOne, compte « agent »).
+const AGENT_API_URL = "https://dsi-hotel-agent.jeremie-beal.workers.dev";
 // Worker de création des boîtes Microsoft 365 (provisioning). Ajuster l'URL après déploiement si le sous-domaine diffère.
 const PROVISIONING_API_URL = "https://dsi-hotel-provisioning.jeremie-beal.workers.dev";
 // ID d'application (client) de l'app Entra multi-tenant « DSI Hotel Provisioning » — à renseigner après sa création.
@@ -3961,6 +3963,106 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setReplyText(prev => { const q = (prev || "").trim(); return q ? (q + "\n\n" + plain) : plain; });
     adPollRef.current++;
     setAdTicket(null);
+  };
+
+  // ====== AGENT CLAUDE (Worker dsi-hotel-agent) : brouillon de réponse, relu par un technicien ======
+  const [agTicket, setAgTicket] = useState(null);     // ticket pour lequel la fenêtre est ouverte
+  const [agEtat, setAgEtat] = useState(null);         // { phase: "analyse"|"pret"|"verif"|"erreur", msg, data }
+  const [agTexte, setAgTexte] = useState("");         // brouillon modifiable
+  const [agDevice, setAgDevice] = useState("");       // PC choisi à la main (id NinjaOne)
+  const [agScripts, setAgScripts] = useState([]);     // résultats de scripts de vérification [{ cle, deviceId, resultat }]
+  const agRef = useRef(0);
+
+  const callAgentApi = async (path, payload) => {
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = (sessionData.session && sessionData.session.access_token) || "";
+    const res = await fetch(AGENT_API_URL + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("Erreur " + res.status + " (le Worker dsi-hotel-agent est-il déployé ?)"));
+    return data;
+  };
+
+  const lancerAgent = async (t, deviceId, resultatsScripts) => {
+    const essai = ++agRef.current;
+    setAgEtat(prev => ({ phase: "analyse", msg: resultatsScripts && resultatsScripts.length ? "L'agent relit le ticket avec les résultats des vérifications…" : "L'agent lit le ticket, identifie le PC et vérifie son état dans NinjaOne…", data: prev && prev.data }));
+    try {
+      const d = await callAgentApi("/proposer", { ticketId: t.id, deviceId: deviceId || undefined, resultatsScripts: resultatsScripts || [] });
+      if (agRef.current !== essai) return;
+      setAgTexte((d.proposition && d.proposition.reponse_client) || "");
+      setAgDevice(d.ninja && d.ninja.identification && d.ninja.identification.deviceId ? String(d.ninja.identification.deviceId) : (deviceId || ""));
+      setAgEtat({ phase: "pret", data: d });
+    } catch (e) {
+      if (agRef.current === essai) setAgEtat({ phase: "erreur", msg: (e && e.message) || String(e) });
+    }
+  };
+
+  const ouvrirAgent = (t) => {
+    if (!isAdmin || !t) return;
+    setAgTicket(t); setAgTexte(""); setAgDevice(""); setAgScripts([]); setAgEtat(null);
+    lancerAgent(t, null, []);
+  };
+  const fermerAgent = () => { agRef.current++; setAgTicket(null); setAgEtat(null); };
+
+  // Scripts de vérification (lecture seule, liste fermée agent_scripts) — lancés seulement sur clic du technicien
+  const lancerVerifsAgent = async () => {
+    const t = agTicket, d = agEtat && agEtat.data;
+    if (!t || !d) return;
+    const deviceId = agDevice || (d.ninja && d.ninja.identification && d.ninja.identification.deviceId);
+    const cles = (d.scripts || []).map(x => x.cle);
+    if (!deviceId || !cles.length) return;
+    const essai = ++agRef.current;
+    setAgEtat({ phase: "verif", msg: "Lancement des vérifications sur le PC…", data: d });
+    try {
+      const r = await callAgentApi("/verifier", { ticketId: t.id, deviceId, scripts: cles });
+      const jetons = (r.lances || []).filter(x => x.ok).map(x => ({ cle: x.cle, jeton: x.jeton }));
+      const echecs = (r.lances || []).filter(x => !x.ok);
+      if (!jetons.length) throw new Error("Aucune vérification lancée" + (echecs.length ? " : " + echecs.map(x => x.cle + " — " + x.erreur).join(" ; ") : ""));
+      const debut = Date.now();
+      let res = null;
+      while (Date.now() - debut < 150000) {
+        await new Promise(ok => setTimeout(ok, 5000));
+        if (agRef.current !== essai) return;
+        setAgEtat({ phase: "verif", msg: "Vérifications en cours sur le PC (" + Math.round((Date.now() - debut) / 1000) + " s)…", data: d });
+        res = await callAgentApi("/verifier-resultat", { deviceId, jetons }).catch(() => null);
+        if (res && res.tous_prets) break;
+      }
+      const obtenus = ((res && res.resultats) || []).filter(x => x.pret).map(x => ({ cle: x.cle, deviceId, resultat: x.resultat }));
+      if (!obtenus.length) throw new Error("Pas de résultat des scripts après 2 min 30 (PC lent ou script en échec : voir les activités du PC dans NinjaOne).");
+      const tous = agScripts.filter(a => !obtenus.some(o => o.cle === a.cle)).concat(obtenus);
+      setAgScripts(tous);
+      await lancerAgent(t, deviceId, tous);
+    } catch (e) {
+      if (agRef.current === essai) setAgEtat({ phase: "erreur", msg: (e && e.message) || String(e), data: d });
+    }
+  };
+
+  const retourAgent = (statut) => {
+    const d = agEtat && agEtat.data;
+    if (d && d.propositionId) callAgentApi("/retour", { propositionId: d.propositionId, statut }).catch(() => {});
+  };
+
+  const utiliserReponseAgent = () => {
+    const plain = String(agTexte || "").trim();
+    if (!plain) return;
+    const escE = (x) => String(x || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = plain.split(/\n{2,}/).map(par => "<p>" + escE(par).replace(/\n/g, "<br>") + "</p>").join("");
+    setReplyHtmlOverride(null);
+    setReplyHtml(prev => (prev && prev.trim()) ? (prev + "<br>" + html) : html);
+    setReplyText(prev => { const q = (prev || "").trim(); return q ? (q + "\n\n" + plain) : plain; });
+    retourAgent("utilisee");
+    fermerAgent();
+  };
+
+  const connecterNinjaAgent = async () => {
+    try {
+      const d = await callAgentApi("/ninja/lien", {});
+      if (d.url) window.open(d.url, "_blank", "noopener");
+      setAgEtat(prev => ({ phase: "erreur", data: prev && prev.data, msg: "Dans l'onglet NinjaOne qui vient de s'ouvrir, connectez-vous avec le compte « agent » (pas votre compte technicien) et cliquez sur « Autoriser », puis relancez l'agent." }));
+    } catch (e) { setAgEtat(prev => ({ phase: "erreur", data: prev && prev.data, msg: (e && e.message) || String(e) })); }
   };
 
   // ====== BLOCAGE D'EXPÉDITEUR FRAUDULEUX (Worker dsi-hotel-blocage → Defender M365) ======
@@ -7978,7 +8080,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [openRtId, setOpenRtId] = useState(null);   // réponse type dépliée dans la liste
 
   // ---------- AIDE — PROCÉDURES INTERNES (admin) ----------
-  const AIDE_CATS = ["Général", "Onboarding", "Cybersécurité", "Réseau", "Serveurs", "Sauvegardes", "M365 / Email", "Téléphonie", "Clients / Hôtels", "Outils internes", "Autre"];
+  const AIDE_CATS = ["Général", "Onboarding", "Cybersécurité", "Réseau", "Serveurs", "Sauvegardes", "M365 / Email", "Téléphonie", "Clients / Hôtels", "Outils internes", "Agent", "Autre"];
   const [aideProcs, setAideProcs] = useState([]);
   const [aideLoading, setAideLoading] = useState(false);
   const [aideFiles, setAideFiles] = useState({});     // { procId: [fichiers] }
@@ -10444,6 +10546,7 @@ const nav = isAdmin
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "7px 13px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirAgent(t), title: "L'agent Claude lit le ticket, vérifie l'état du PC dans NinjaOne et propose une réponse (rien n'est envoyé sans vous)", style: { padding: "7px 13px", background: "none", border: "1px solid #D6BCFA", color: "#6B46C1", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✨ Agent"),
                 (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && React.createElement('button', { onClick: () => genererAttestation(t), title: "Télécharger l'attestation de validation (PDF)", style: { padding: "7px 13px", background: "#EAF6EC", border: "1px solid #B5DBB9", color: "#256029", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "\uD83D\uDCC4 Attestation"),
                 t.status === "closed"
                   ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
@@ -10643,6 +10746,7 @@ const nav = isAdmin
                   React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                   isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirAgent(t), title: "L'agent Claude lit le ticket, vérifie l'état du PC dans NinjaOne et propose une réponse (rien n'est envoyé sans vous)", style: { padding: "7px 13px", background: "none", border: "1px solid #D6BCFA", color: "#6B46C1", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✨ Agent"),
                   React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
                   React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
                   React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
@@ -10718,6 +10822,7 @@ const nav = isAdmin
                 React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { marginRight: "auto", padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
                 isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
+                isAdmin && React.createElement('button', { onClick: () => ouvrirAgent(t), title: "L'agent Claude lit le ticket, vérifie l'état du PC dans NinjaOne et propose une réponse (rien n'est envoyé sans vous)", style: { padding: "7px 13px", background: "none", border: "1px solid #D6BCFA", color: "#6B46C1", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✨ Agent"),
                 React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
               ),
               // Éditeur de remarque interne (admin only) — vue cartes, ticket fermé
@@ -14514,6 +14619,78 @@ const nav = isAdmin
             adEtat && adEtat.phase === "fini" && React.createElement('button', { onClick: preparerReponseAd, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px" } }, "✉️ Préparer la réponse au client"),
             !(adEtat && adEtat.phase === "fini") && React.createElement('button', { onClick: () => lancerDeverrouillageAd("diagnostic"), disabled: adBusy || !adCompte.trim(), style: { background: "white", border: "1px solid #2B6CB0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", opacity: (adBusy || !adCompte.trim()) ? 0.55 : 1 } }, "🔎 Diagnostiquer"),
             !(adEtat && adEtat.phase === "fini") && React.createElement('button', { onClick: () => lancerDeverrouillageAd("deverrouiller"), disabled: adBusy || !adCompte.trim(), style: { background: "#2B6CB0", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", opacity: (adBusy || !adCompte.trim()) ? 0.55 : 1 } }, adBusy ? "En cours…" : "🔓 Déverrouiller")
+          )
+        )
+      );
+    })(),
+    // Fenêtre « Agent Claude » (Worker dsi-hotel-agent)
+    agTicket && (() => {
+      const t = agTicket;
+      const h = hotels.find(x => x.id === t.hotel_id);
+      const d = agEtat && agEtat.data;
+      const p = d && d.proposition;
+      const nj = d && d.ninja;
+      const occupe = agEtat && (agEtat.phase === "analyse" || agEtat.phase === "verif");
+      const besoinNinja = (agEtat && /NINJA_CONNEXION_REQUISE|user_context_required|pas encore connecté|reconnectez/i.test(String(agEtat.msg || ""))) || (nj && nj.connecte === false);
+      const badge = (txt, bg, col) => React.createElement('span', { style: { display: "inline-block", padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: bg, color: col, marginRight: 6, marginBottom: 4 } }, txt);
+      const titreBloc = (txt) => React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: ".04em", margin: "12px 0 6px" } }, txt);
+      const icone = { ok: "✅", probleme: "⚠️", inconnu: "❔", corrige: "🔧" };
+      const libStatut = { resolu: ["✅ Résolu", "#E9F6EE", "#2F855A"], attente_client: ["⏳ Action du client attendue", "#EBF4FF", "#2B6CB0"], technicien: ["👤 À traiter par un technicien", "#FDECEC", "#C53030"], en_cours: ["🔎 Vérifications à lancer", "#F3EEFF", "#6B46C1"] };
+      const fmt = (iso) => { if (!iso) return "—"; try { return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); } catch (e) { return iso; } };
+      const diag = nj && nj.diagnostic;
+      return React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 640, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto" } },
+          React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, "✨ Agent — proposition de réponse"),
+          React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 12 } }, (t.reference ? t.reference + " · " : "") + (h ? h.name : "⚠ Ticket non rattaché à un hôtel") + " · " + (t.subject || "")),
+          occupe && React.createElement('div', { style: { background: "#F4F4F8", borderRadius: 8, padding: "12px 14px", fontSize: 13, color: "#333", marginBottom: 12 } }, "⏳ " + agEtat.msg),
+          agEtat && agEtat.phase === "erreur" && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12, lineHeight: 1.5 } },
+            "❌ " + String(agEtat.msg || "").replace(/^NINJA_CONNEXION_REQUISE\s*:\s*/, "")),
+          besoinNinja && React.createElement('button', { onClick: connecterNinjaAgent, style: { marginBottom: 12, padding: "7px 13px", background: "#1F4E8C", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "🔗 Connecter NinjaOne (compte agent, une seule fois)"),
+          p && React.createElement('div', null,
+            React.createElement('div', null,
+              p.procedure_titre ? badge("📘 " + p.procedure_titre, "#EBF4FF", "#2B6CB0") : badge("Aucune procédure Agent", "#FEF4DC", "#7a5600"),
+              badge("Confiance " + p.confiance, p.confiance === "haute" ? "#E9F6EE" : p.confiance === "moyenne" ? "#FEF4DC" : "#FDECEC", p.confiance === "haute" ? "#2F855A" : p.confiance === "moyenne" ? "#7a5600" : "#C53030"),
+              libStatut[p.statut] && badge(libStatut[p.statut][0], libStatut[p.statut][1], libStatut[p.statut][2])),
+            p.statut === "technicien" && p.raison_technicien && React.createElement('div', { style: { fontSize: 12, color: "#C53030", marginTop: 4 } }, p.raison_technicien),
+
+            titreBloc("PC concerné"),
+            nj && nj.erreur && React.createElement('div', { style: { fontSize: 12, color: "#7a5600", background: "#FEF4DC", borderRadius: 7, padding: "7px 10px", marginBottom: 6 } }, "NinjaOne : " + String(nj.erreur).replace(/^NINJA_CONNEXION_REQUISE\s*:\s*/, "")),
+            nj && nj.identification && React.createElement('div', { style: { fontSize: 12.5, color: "#333", marginBottom: 6 } },
+              nj.identification.hostname ? React.createElement('span', null, React.createElement('b', null, nj.identification.hostname), " — " + nj.identification.raison) : "Non identifié — " + nj.identification.raison,
+              diag && diag.lien && React.createElement('a', { href: diag.lien, target: "_blank", rel: "noopener noreferrer", style: { marginLeft: 8, fontSize: 12, color: "#2B6CB0" } }, "Ouvrir dans NinjaOne ↗")),
+            nj && (nj.postes || []).length > 0 && React.createElement('div', { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 6 } },
+              React.createElement('select', { value: agDevice, onChange: e => setAgDevice(e.target.value), disabled: occupe, style: { flex: 1, padding: "7px 9px", border: "1px solid #DDD", borderRadius: 7, fontSize: 12, background: "white" } },
+                React.createElement('option', { value: "" }, "— Choisir un autre PC —"),
+                nj.postes.slice().sort((a, b) => String(a.hostname).localeCompare(String(b.hostname))).map(x => React.createElement('option', { key: x.id, value: String(x.id) }, x.hostname + (x.en_ligne ? " · en ligne" : " · hors ligne") + (x.utilisateur ? " · " + x.utilisateur : "")))),
+              React.createElement('button', { onClick: () => { setAgScripts([]); lancerAgent(t, agDevice, []); }, disabled: occupe || !agDevice || (nj.identification && String(nj.identification.deviceId) === agDevice), style: { padding: "7px 12px", background: "white", border: "1px solid #6B46C1", color: "#6B46C1", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: (occupe || !agDevice) ? 0.5 : 1 } }, "↻ Relancer avec ce PC")),
+            diag && React.createElement('div', { style: { fontSize: 12, color: "#555", background: "#F8F8FB", borderRadius: 7, padding: "7px 10px", lineHeight: 1.6 } },
+              (diag.en_ligne ? "🟢 En ligne" : "🔴 Hors ligne (dernier contact " + fmt(diag.dernier_contact) + ")") +
+              (diag.dernier_demarrage ? " · démarré le " + fmt(diag.dernier_demarrage) : "") +
+              (diag.utilisateur ? " · utilisateur " + diag.utilisateur : "") +
+              ((diag.disques || []).length ? " · " + diag.disques.map(x => x.lecteur + " " + (x.libre_go == null ? "?" : x.libre_go) + " Go libres").join(", ") : "")),
+
+            (p.verifications || []).length > 0 && titreBloc("Vérifications"),
+            (p.verifications || []).map((v, i) => React.createElement('div', { key: i, style: { display: "flex", gap: 8, fontSize: 12.5, padding: "3px 0", lineHeight: 1.45 } },
+              React.createElement('span', null, icone[v.statut] || "❔"),
+              React.createElement('span', null, React.createElement('b', null, v.point), " — " + v.resultat))),
+
+            (d.scripts || []).length > 0 && React.createElement('div', { style: { marginTop: 10, background: "#F3EEFF", borderRadius: 8, padding: "9px 12px", fontSize: 12.5 } },
+              React.createElement('div', { style: { marginBottom: 6, color: "#44337A" } }, "L'agent propose de lancer sur le PC (lecture seule) : " + d.scripts.map(x => x.libelle).join(", ")),
+              React.createElement('button', { onClick: lancerVerifsAgent, disabled: occupe || !(agDevice || (nj && nj.identification && nj.identification.deviceId)), style: { padding: "7px 13px", background: "#6B46C1", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: occupe ? 0.6 : 1 } }, "▶ Lancer les vérifications")),
+            agScripts.length > 0 && React.createElement('div', { style: { fontSize: 11.5, color: "#6B46C1", marginTop: 6 } }, "Résultats pris en compte : " + agScripts.map(x => x.cle).join(", ")),
+
+            titreBloc("Analyse (interne, jamais envoyée)"),
+            React.createElement('div', { style: { fontSize: 12.5, color: "#444", background: "#F8F8FB", borderLeft: "3px solid #6B46C1", borderRadius: 6, padding: "8px 11px", whiteSpace: "pre-wrap", lineHeight: 1.55 } }, p.analyse_interne || "—"),
+
+            titreBloc("Réponse proposée au client (modifiable)"),
+            React.createElement('textarea', { value: agTexte, onChange: e => setAgTexte(e.target.value), disabled: occupe, rows: 9, placeholder: "L'agent ne propose pas de réponse pour ce ticket.", style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, lineHeight: 1.5, boxSizing: "border-box", fontFamily: "inherit", resize: "vertical" } }),
+            React.createElement('div', { style: { fontSize: 11, color: "#999", marginTop: 4 } }, "Brouillon généré par l'IA à partir des procédures Agent : relisez-le. Il est placé dans la zone de réponse, rien n'est envoyé automatiquement." + (d.usage && d.usage.entree ? " · " + d.usage.modele + " · " + (d.usage.entree + d.usage.sortie) + " jetons" : ""))
+          ),
+          React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 14 } },
+            React.createElement('button', { onClick: fermerAgent, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 14px" } }, "Fermer"),
+            p && React.createElement('button', { onClick: () => { retourAgent("rejetee"); fermerAgent(); }, disabled: occupe, style: { background: "white", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "8px 14px" } }, "👎 Proposition inutile"),
+            agEtat && agEtat.phase === "erreur" && React.createElement('button', { onClick: () => lancerAgent(t, agDevice, agScripts), style: { background: "white", border: "1px solid #6B46C1", color: "#6B46C1", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px" } }, "↻ Relancer l'agent"),
+            p && React.createElement('button', { onClick: utiliserReponseAgent, disabled: occupe || !agTexte.trim(), style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "8px 14px", opacity: (occupe || !agTexte.trim()) ? 0.55 : 1 } }, "✉️ Utiliser cette réponse")
           )
         )
       );
