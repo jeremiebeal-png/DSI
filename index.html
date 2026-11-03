@@ -2034,6 +2034,16 @@ function App() {
     setCxRows(prev => prev.map(x => x.id === row.id ? { ...x, ...maj } : x));
     return true;
   };
+  // Menu « Technicien » : un seul compte par nom (deux comptes admin peuvent porter le même nom).
+  // En cas de doublon, on garde le compte connecté, sinon le premier. Les doublons masqués
+  // restent connus pour afficher le nom des tickets qui leur sont déjà assignés.
+  const techniciensMenu = (() => {
+    const norm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+    const moi = session && session.user ? session.user.id : null;
+    const parNom = {};
+    techniciens.forEach(t => { const k = norm(t.nom); if (!parNom[k] || t.id === moi) parNom[k] = t; });
+    return techniciens.filter(t => parNom[norm(t.nom)] === t);
+  })();
   const nomTechnicien = (id) => { if (!id) return ""; const t = techniciens.find(x => x.id === id); return t ? t.nom : "Technicien inconnu"; };
   const assignerTechnicien = async (ticket, techId) => {
     const val = techId || null;
@@ -10493,7 +10503,7 @@ const nav = isAdmin
                 React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "👤 Technicien :"),
                 React.createElement('select', { value: t.assigned_to || "", onChange: e => assignerTechnicien(t, e.target.value), style: { padding: "5px 9px", border: "1px solid " + (t.assigned_to ? "#BEE3F8" : "#DDD"), borderRadius: 6, fontSize: 12, background: t.assigned_to ? "#EBF8FF" : "white" } },
                   React.createElement('option', { value: "" }, "Non assigné"),
-                  techniciens.map(tc => React.createElement('option', { key: tc.id, value: tc.id }, tc.nom))
+                  techniciensMenu.concat(t.assigned_to && !techniciensMenu.some(x => x.id === t.assigned_to) ? techniciens.filter(x => x.id === t.assigned_to) : []).map(tc => React.createElement('option', { key: tc.id, value: tc.id }, tc.nom))
                 ),
                 (session && session.user && t.assigned_to !== session.user.id) && React.createElement('button', { onClick: () => assignerTechnicien(t, session.user.id), style: { padding: "4px 9px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 6, fontSize: 11.5, cursor: "pointer" } }, "M'assigner"),
                 React.createElement('span', { style: { width: 1, height: 18, background: "#E0E0E8" } }),
