@@ -6373,7 +6373,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       }
       const data = await res.json();
       if (data.error) { setBkNote("Erreur : " + data.error + (data.detail ? " — " + data.detail : "")); setBkChecks([]); return; }
-      setBkChecks(data.checks || []);
+      // Jobs Veeam retirés du suivi (veeam_jobs.actif = false) : masqués du portail (ce ne sont pas des sauvegardes)
+      setBkChecks((data.checks || []).filter(c => !(c.origine === "veeam" && c.message === "Retiré du suivi")));
       setBkFetchedAt(data.fetchedAt || new Date().toISOString());
       if (Array.isArray(data.erreurs) && data.erreurs.length) setBkNote("⚠ Lecture partielle : " + data.erreurs.join(" ; "));
       loadBackupNotes(); // charge les notes d'explication en parallèle
