@@ -4352,6 +4352,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ---- Rapport Jour (tickets ouverts d'un client, pour les techniciens) ----
   const [rjHotel, setRjHotel] = useState("");   // hôtel sélectionné
+  const [rjPick, setRjPick] = useState(false);  // liste des établissements ouverte (sélecteur maison)
+  const [rjQ, setRjQ] = useState("");            // filtre de recherche du sélecteur
   const [rjEmail, setRjEmail] = useState("");   // destinataire de l'envoi (technicien)
   const [rjEnvoi, setRjEnvoi] = useState(false); // envoi en cours
   const [rjNote, setRjNote] = useState("");      // message d'état
@@ -11395,10 +11397,36 @@ const nav = isAdmin
       React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: 16, marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" } },
         React.createElement('div', { style: { flex: "1 1 260px" } },
           React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 5 } }, "Établissement"),
-          React.createElement('select', { value: rjHotel, onChange: e => { setRjHotel(e.target.value); setRjNote(""); }, style: { width: "100%", padding: "9px 11px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13 } },
-            React.createElement('option', { value: "" }, "— Choisir un établissement —"),
-            hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))
-          )
+          // Sélecteur maison (liste dans la page) : la liste déroulante native s'affichait mal
+          // sur certains postes Windows (options invisibles, sélection impossible).
+          (() => {
+            const choisi = hotels.find(h => h.id === rjHotel);
+            const q = rjQ.trim().toLowerCase();
+            const liste = hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "fr"))
+              .filter(h => !q || String(h.name || "").toLowerCase().includes(q) || String(h.city || "").toLowerCase().includes(q));
+            const choisir = (id) => { setRjHotel(id); setRjNote(""); setRjPick(false); setRjQ(""); };
+            return React.createElement('div', { style: { position: "relative" } },
+              React.createElement('button', { type: "button", onClick: () => { setRjPick(v => !v); setRjQ(""); },
+                style: { width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", border: "1px solid " + (rjPick ? G : "#DDD"), borderRadius: 7, fontSize: 13, background: "white", color: choisi ? "#1a1a3e" : "#888", fontWeight: choisi ? 600 : 400, cursor: "pointer", textAlign: "left", fontFamily: "inherit" } },
+                React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, choisi ? "🏨 " + choisi.name : "— Choisir un établissement —"),
+                React.createElement('span', { style: { fontSize: 11, color: "#999" } }, rjPick ? "▲" : "▼")
+              ),
+              rjPick && React.createElement('div', { onClick: () => { setRjPick(false); setRjQ(""); }, style: { position: "fixed", inset: 0, zIndex: 44 } }),
+              rjPick && React.createElement('div', { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 45, background: "white", border: "1px solid #E2E2EA", borderRadius: 9, boxShadow: "0 12px 32px rgba(15,15,36,.18)", padding: 6 } },
+                React.createElement('input', { autoFocus: true, value: rjQ, onChange: e => setRjQ(e.target.value), placeholder: "Rechercher un établissement…",
+                  onKeyDown: e => { if (e.key === "Escape") { setRjPick(false); setRjQ(""); } if (e.key === "Enter" && liste.length) choisir(liste[0].id); },
+                  style: { width: "100%", boxSizing: "border-box", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 13, marginBottom: 6, fontFamily: "inherit", outline: "none" } }),
+                React.createElement('div', { style: { maxHeight: 320, overflowY: "auto" } },
+                  liste.length === 0 && React.createElement('div', { style: { padding: "10px 8px", fontSize: 12.5, color: "#999" } }, "Aucun établissement ne correspond."),
+                  liste.map(h => React.createElement('div', { key: h.id, onClick: () => choisir(h.id),
+                    onMouseEnter: e => { if (h.id !== rjHotel) e.currentTarget.style.background = "#F5F5FB"; },
+                    onMouseLeave: e => { if (h.id !== rjHotel) e.currentTarget.style.background = "transparent"; },
+                    style: { padding: "8px 10px", borderRadius: 6, fontSize: 13, cursor: "pointer", color: h.id === rjHotel ? G2 : "#333", fontWeight: h.id === rjHotel ? 700 : 400, background: h.id === rjHotel ? G + "14" : "transparent" } },
+                    h.name, h.city ? React.createElement('span', { style: { fontSize: 11.5, color: "#999", marginLeft: 6 } }, h.city) : null))
+                )
+              )
+            );
+          })()
         ),
         React.createElement('button', { onClick: exportRapportJourPdf, disabled: !rjHotel, style: { padding: "9px 18px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: rjHotel ? "pointer" : "default", opacity: rjHotel ? 1 : 0.5 } }, "⬇️ Télécharger le PDF")
       ),
