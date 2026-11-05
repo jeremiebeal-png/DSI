@@ -1900,6 +1900,7 @@ function App() {
   const [closeSel, setCloseSel] = useState([]); // ids de tickets à fermer en masse
   const [closeBusy, setCloseBusy] = useState(false)
   const [ticketView, setTicketView] = useState("table"); // "cards" | "table" — tableau par défaut
+  const [tkMenu, setTkMenu] = useState(false); // menu « … » de la barre des tickets
   const [ticketSearch, setTicketSearch] = useState(""); // terme de recherche tickets
   const [ticketBodies, setTicketBodies] = useState({}); // { ticket_id: "corps concaténé des messages" }
   const [ticketBodiesLoaded, setTicketBodiesLoaded] = useState(false); // corps chargés au moins une fois
@@ -10384,33 +10385,69 @@ const nav = isAdmin
 
     content = React.createElement('div', null,
       openTicketId && React.createElement('button', { onClick: () => setOpenTicketId(null), style: { display: "inline-flex", alignItems: "center", gap: 7, marginBottom: 14, padding: "8px 15px", background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" } }, "← Retour aux tickets"),
-      !openTicketId && React.createElement('div', { style: { display: "flex", gap: 7, marginBottom: 14, flexWrap: "wrap", alignItems: "center" } },
-        [["open", "Ouverts"], ["mine", "👤 Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["telephone", "📞 Téléphone" + (nbTelOuv ? " (" + nbTelOuv + ")" : "")], ["sheraton", "Sheraton" + (nbSheraton ? " (" + nbSheraton + ")" : "")], ["defender", "🛡️ Alerte Microsoft" + (nbDefender ? " (" + nbDefender + ")" : "")], ["sophos", "🔒 Alerte Sophos" + (nbSophosTk ? " (" + nbSophosTk + ")" : "")], ["backup", "💾 Alerte Sauvegarde" + (nbBackupTk ? " (" + nbBackupTk + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]].map(([v, lbl]) =>
-          (ALERTE_ONGLETS[v] && ALERTE_ONGLETS[v].nb > 0)
-            ? React.createElement('button', { key: v, "data-no-invert": "1", onClick: () => setTicketFilter(v), title: ALERTE_ONGLETS[v].nb + " " + ALERTE_ONGLETS[v].titre, style: { padding: "6px 14px", border: "1px solid #C53030", background: ticketFilter === v ? "#9B2C2C" : "#E53E3E", color: "white", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: 700, animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }, lbl)
-            : React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: `1px solid ${ticketFilter === v ? G : "#DDD"}`, background: ticketFilter === v ? G + "18" : "white", color: ticketFilter === v ? G2 : "#555", borderRadius: 20, fontSize: 12, cursor: "pointer", fontWeight: ticketFilter === v ? 500 : 400 } }, lbl)
-        ),
-        React.createElement('div', { style: { flex: "1 1 240px", position: "relative", minWidth: 180 } },
-          React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
-          React.createElement('input', {
-            type: "text",
-            value: ticketSearch,
-            onChange: e => setTicketSearch(e.target.value),
-            placeholder: "Rechercher un ticket (objet, contact, hôtel, message)…",
-            style: { width: "100%", padding: "7px 32px 7px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 12.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }
-          }),
-          ticketSearch && React.createElement('button', { onClick: () => setTicketSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
-        ),
-        React.createElement('span', { style: { marginLeft: "auto", fontSize: 12, color: "#666", background: "#F0F0F8", padding: "6px 12px", borderRadius: 20, fontWeight: 500 } }, list.length + (list.length > 1 ? " tickets" : " ticket")),
-        React.createElement('button', { onClick: () => { setMergeMode(m => !m); setMergeSel([]); setCloseMode(false); setCloseSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (mergeMode ? G : "#DDD"), background: mergeMode ? G + "18" : "white", color: mergeMode ? G2 : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: mergeMode ? 500 : 400 } }, mergeMode ? "✕ Annuler la fusion" : "⚄ Fusionner"),
-        React.createElement('button', { onClick: () => { setCloseMode(m => !m); setCloseSel([]); setMergeMode(false); setMergeSel([]); }, style: { padding: "6px 12px", border: "1px solid " + (closeMode ? "#E53E3E" : "#DDD"), background: closeMode ? "#FFF5F5" : "white", color: closeMode ? "#C53030" : "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: closeMode ? 500 : 400 } }, closeMode ? "✕ Annuler" : "✓ Fermer plusieurs"),
-        !isMobile && React.createElement('div', { style: { display: "flex", border: "1px solid #DDD", borderRadius: 7, overflow: "hidden" } },
-          React.createElement('button', { onClick: () => setTicketView("cards"), title: "Vue cartes", style: { padding: "6px 11px", border: "none", background: ticketView === "cards" ? G + "18" : "white", color: ticketView === "cards" ? G2 : "#888", fontSize: 12, cursor: "pointer", fontWeight: ticketView === "cards" ? 600 : 400 } }, "\u2630 Liste"),
-          React.createElement('button', { onClick: () => setTicketView("table"), title: "Vue tableau", style: { padding: "6px 11px", border: "none", borderLeft: "1px solid #DDD", background: ticketView === "table" ? G + "18" : "white", color: ticketView === "table" ? G2 : "#888", fontSize: 12, cursor: "pointer", fontWeight: ticketView === "table" ? 600 : 400 } }, "\u25A6 Tableau")
-        ),
-        React.createElement('button', { onClick: ouvrirTicketTelephone, title: "Enregistrer un appel reçu au support", style: { padding: "6px 12px", border: "1px solid #2B6CB0", background: "#EBF4FF", color: "#2B6CB0", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "📞 + Ticket téléphone"),
-        React.createElement('button', { onClick: loadTickets, style: { padding: "6px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔄 Actualiser"),
-        React.createElement('button', { onClick: () => {
+      // Barre des tickets — proposition 3 : cartes d'alertes au-dessus, filtres sobres, actions secondaires dans « ⋯ »
+      !openTicketId && (() => {
+        const ico = (d) => React.createElement('svg', { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" }, React.createElement('path', { d }));
+        const cartes = [
+          { v: "backup", nb: nbBackupTk, lib: "Alertes sauvegarde", alerte: true, d: "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" },
+          { v: "sophos", nb: nbSophosTk, lib: "Alertes Sophos", alerte: true, d: "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z" },
+          { v: "defender", nb: nbDefender, lib: "Alertes Microsoft", alerte: true, d: "M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" },
+          { v: "sheraton", nb: nbSheraton, lib: "Sheraton", alerte: false, d: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" },
+        ];
+        const filtres = [["open", "Ouverts"], ["mine", "Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["telephone", "Téléphone" + (nbTelOuv ? " (" + nbTelOuv + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]];
+        const rtOk = rtStatus === "SUBSCRIBED";
+        const itemMenu = (lib, fn, rouge) => React.createElement('button', { onClick: () => { setTkMenu(false); fn(); },
+          onMouseEnter: e => { e.currentTarget.style.background = "#F5F5FB"; }, onMouseLeave: e => { e.currentTarget.style.background = "transparent"; },
+          style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", borderRadius: 6, fontSize: 13, color: rouge ? "#C53030" : "#333", cursor: "pointer", fontFamily: "inherit" } }, lib);
+        const sepMenu = (k) => React.createElement('div', { key: k, style: { height: 1, background: "#EEF0F5", margin: "4px 2px" } });
+        return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 } },
+          // Cartes d'alertes
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", gap: 12 } },
+            cartes.map(c => {
+              const rouge = c.alerte && c.nb > 0;
+              const actif = ticketFilter === c.v;
+              return React.createElement('button', { key: c.v, "data-no-invert": rouge ? "1" : undefined, onClick: () => setTicketFilter(actif ? "open" : c.v), title: actif ? "Revenir aux tickets ouverts" : "Afficher : " + c.lib,
+                style: { textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: actif ? (rouge ? "#FFF5F5" : "#FBF7EA") : "white", border: "1px solid " + (actif ? (rouge ? "#C53030" : G) : (rouge ? "#F1B5B5" : "#E2E4EE")), boxShadow: actif ? "0 0 0 1px " + (rouge ? "#C53030" : G) : "none", borderRadius: 10, cursor: "pointer", fontFamily: "inherit" } },
+                React.createElement('span', { style: { width: 36, height: 36, flexShrink: 0, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", background: rouge ? "#FDEDED" : (c.alerte ? "#EEF0F5" : "#F7F1DE"), color: rouge ? "#C53030" : (c.alerte ? "#555" : "#8A6D1F") } }, ico(c.d)),
+                React.createElement('span', { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+                  React.createElement('span', { style: { fontSize: 22, fontWeight: 700, lineHeight: 1, color: rouge ? "#C53030" : "#1A1A3E" } }, c.nb),
+                  React.createElement('span', { style: { fontSize: 12.5, color: "#555", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, c.lib)
+                )
+              );
+            })
+          ),
+          // Filtres + recherche + actions
+          React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+            filtres.map(([v, lbl]) => React.createElement('button', { key: v, onClick: () => setTicketFilter(v), style: { padding: "6px 14px", border: "1px solid " + (ticketFilter === v ? G : "#DDE0EA"), background: ticketFilter === v ? "#F7F1DE" : "white", color: ticketFilter === v ? "#6E5815" : "#444", borderRadius: 18, fontSize: 12.5, cursor: "pointer", fontWeight: ticketFilter === v ? 600 : 400, fontFamily: "inherit" } }, lbl)),
+          React.createElement('div', { style: { flex: "1 1 260px", position: "relative", minWidth: 200 } },
+            React.createElement('span', { style: { position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#AAA", pointerEvents: "none" } }, "🔍"),
+            React.createElement('input', {
+              type: "text",
+              value: ticketSearch,
+              onChange: e => setTicketSearch(e.target.value),
+              placeholder: "Rechercher un ticket (objet, contact, hôtel, message)…",
+              style: { width: "100%", padding: "7px 32px 7px 32px", border: "1px solid #DDD", borderRadius: 20, fontSize: 12.5, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }
+            }),
+            ticketSearch && React.createElement('button', { onClick: () => setTicketSearch(""), title: "Effacer", style: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", color: "#999", fontSize: 15, cursor: "pointer", lineHeight: 1, padding: 2 } }, "✕")
+          ),
+            React.createElement('span', { title: rtOk ? "Alertes temps réel actives (nouveaux tickets signalés en direct)" : "Connexion temps réel inactive : actualisez la page", style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#555", whiteSpace: "nowrap" } },
+              React.createElement('span', { style: { width: 7, height: 7, borderRadius: "50%", background: rtOk ? "#38A169" : "#DD6B20" } }),
+              list.length + (list.length > 1 ? " tickets" : " ticket")
+            ),
+            mergeMode && React.createElement('button', { onClick: () => { setMergeMode(false); setMergeSel([]); }, style: { padding: "0 12px", height: 34, border: "1px solid " + G, background: "#F7F1DE", color: "#6E5815", borderRadius: 8, fontSize: 12.5, cursor: "pointer", fontWeight: 600, fontFamily: "inherit" } }, "✕ Annuler la fusion"),
+            closeMode && React.createElement('button', { onClick: () => { setCloseMode(false); setCloseSel([]); }, style: { padding: "0 12px", height: 34, border: "1px solid #E53E3E", background: "#FFF5F5", color: "#C53030", borderRadius: 8, fontSize: 12.5, cursor: "pointer", fontWeight: 600, fontFamily: "inherit" } }, "✕ Annuler la fermeture"),
+            React.createElement('button', { onClick: ouvrirTicketTelephone, title: "Enregistrer un appel reçu au support", style: { padding: "0 14px", height: 34, border: "none", background: SB, color: "white", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "+ Ticket téléphone"),
+            React.createElement('div', { style: { position: "relative" } },
+              React.createElement('button', { onClick: () => setTkMenu(m => !m), "aria-label": "Autres actions", title: "Autres actions", style: { width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid " + (tkMenu ? G : "#DDE0EA"), background: "white", color: "#555", borderRadius: 8, cursor: "pointer", fontSize: 16, fontWeight: 700, lineHeight: 1, paddingBottom: 6 } }, "…"),
+              tkMenu && React.createElement('div', { onClick: () => setTkMenu(false), style: { position: "fixed", inset: 0, zIndex: 44 } }),
+              tkMenu && React.createElement('div', { style: { position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 45, minWidth: 220, background: "white", border: "1px solid #E2E4EE", borderRadius: 10, boxShadow: "0 12px 32px rgba(15,15,36,.18)", padding: 5 } },
+                itemMenu("🔄 Actualiser", loadTickets),
+                !isMobile && itemMenu(ticketView === "table" ? "☰ Afficher en liste" : "▦ Afficher en tableau", () => setTicketView(v => v === "table" ? "cards" : "table")),
+                sepMenu("s1"),
+                itemMenu(mergeMode ? "✕ Annuler la fusion" : "⧉ Fusionner des tickets", () => { setMergeMode(m => !m); setMergeSel([]); setCloseMode(false); setCloseSel([]); }),
+                itemMenu(closeMode ? "✕ Annuler la fermeture" : "✓ Fermer plusieurs tickets", () => { setCloseMode(m => !m); setCloseSel([]); setMergeMode(false); setMergeSel([]); }),
+                sepMenu("s2"),
+                itemMenu("🔔 Tester le son d'alerte", () => {
             // Débloque le contexte audio (au cas où) puis joue le son de test
             try {
               if (!audioCtxRef.current) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audioCtxRef.current = new AC(); }
@@ -10418,12 +10455,15 @@ const nav = isAdmin
               audioReadyRef.current = true;
             } catch (e) {}
             jouerSonAlerte(true);
-          }, title: "Tester le son d'alerte des nouveaux tickets", style: { padding: "6px 12px", border: "1px solid #DDD", background: "white", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "🔔 Tester le son"),
-        React.createElement('span', { title: "État de la connexion temps réel (Supabase Realtime). 'SUBSCRIBED' = alertes actives.", style: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: rtStatus === "SUBSCRIBED" ? "#2F855A" : "#C05621", background: rtStatus === "SUBSCRIBED" ? "#E9F6EE" : "#FFF7ED", border: "1px solid " + (rtStatus === "SUBSCRIBED" ? "#B7E0C6" : "#FBD38D"), borderRadius: 20, padding: "5px 10px", fontWeight: 600 } },
-          React.createElement('span', { style: { width: 7, height: 7, borderRadius: "50%", background: rtStatus === "SUBSCRIBED" ? "#38A169" : "#DD6B20" } }),
-          rtStatus === "SUBSCRIBED" ? "Alertes actives" : "Alertes inactives"
-        )
-      ),
+          }),
+                React.createElement('div', { style: { padding: "8px 12px 6px", fontSize: 11.5, color: rtOk ? "#2F855A" : "#C05621", display: "flex", alignItems: "center", gap: 6 } },
+                  React.createElement('span', { style: { width: 7, height: 7, borderRadius: "50%", background: rtOk ? "#38A169" : "#DD6B20" } }),
+                  rtOk ? "Alertes temps réel actives" : "Alertes temps réel inactives")
+              )
+            )
+          )
+        );
+      })(),
       mergeMode && React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 8, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
         React.createElement('span', { style: { fontSize: 12, color: "#2B6CB0", flex: 1 } }, mergeSel.length < 2 ? "Cochez au moins 2 tickets à fusionner. Le plus ancien deviendra le ticket principal." : (mergeSel.length + " tickets sélectionnés — ils seront fusionnés dans le plus ancien.")),
         React.createElement('button', { onClick: doMergeTickets, disabled: mergeSel.length < 2 || mergeBusy, style: { padding: "7px 14px", background: mergeSel.length >= 2 ? G : "#CCC", border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: mergeSel.length >= 2 ? "pointer" : "default", opacity: mergeBusy ? 0.6 : 1 } }, mergeBusy ? "Fusion..." : "Fusionner les tickets")
