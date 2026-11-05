@@ -1904,6 +1904,25 @@ function App() {
   const [closeBusy, setCloseBusy] = useState(false)
   const [ticketView, setTicketView] = useState("table"); // "cards" | "table" — tableau par défaut
   const [tkMenu, setTkMenu] = useState(false); // menu « … » de la barre des tickets
+  const [tkActMenu, setTkActMenu] = useState(null); // menu « … » des actions d'un ticket ouvert ("haut-<id>" / "bas-<id>")
+  // Bouton « … » + menu déroulant d'actions secondaires (écran d'un ticket)
+  const menuActionsTicket = (cle, items, versLeHaut) => {
+    const ouvert = tkActMenu === cle;
+    const liste = items.filter(Boolean);
+    if (!liste.length) return null;
+    return React.createElement('div', { style: { position: "relative" } },
+      React.createElement('button', { type: "button", onClick: () => setTkActMenu(ouvert ? null : cle), "aria-label": "Autres actions", title: "Autres actions",
+        style: { width: 34, height: 32, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid " + (ouvert ? G : "#DDE0EA"), background: "white", color: "#555", borderRadius: 8, cursor: "pointer", fontSize: 16, fontWeight: 700, lineHeight: 1, paddingBottom: 6 } }, "…"),
+      ouvert && React.createElement('div', { onClick: () => setTkActMenu(null), style: { position: "fixed", inset: 0, zIndex: 44 } }),
+      ouvert && React.createElement('div', { style: { position: "absolute", right: 0, [versLeHaut ? "bottom" : "top"]: "calc(100% + 6px)", zIndex: 45, minWidth: 230, background: "white", border: "1px solid #E2E4EE", borderRadius: 10, boxShadow: "0 12px 32px rgba(15,15,36,.18)", padding: 5 } },
+        liste.map((it, k) => it === "sep"
+          ? React.createElement('div', { key: "s" + k, style: { height: 1, background: "#EEF0F5", margin: "4px 2px" } })
+          : React.createElement('button', { key: it.lib, type: "button", disabled: it.disabled, title: it.title || "", onClick: () => { setTkActMenu(null); it.fn(); },
+              onMouseEnter: e => { if (!it.disabled) e.currentTarget.style.background = "#F5F5FB"; }, onMouseLeave: e => { e.currentTarget.style.background = "transparent"; },
+              style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", background: "transparent", borderRadius: 6, fontSize: 13, color: it.disabled ? "#BBB" : (it.rouge ? "#C53030" : "#333"), cursor: it.disabled ? "default" : "pointer", fontFamily: "inherit" } }, it.lib))
+      )
+    );
+  };
   const [ticketSearch, setTicketSearch] = useState(""); // terme de recherche tickets
   const [ticketBodies, setTicketBodies] = useState({}); // { ticket_id: "corps concaténé des messages" }
   const [ticketBodiesLoaded, setTicketBodiesLoaded] = useState(false); // corps chargés au moins une fois
@@ -10659,38 +10678,7 @@ const nav = isAdmin
               !tableView && React.createElement('span', { style: { fontSize: 12, color: "#AAA" } }, isOpen ? "▲" : "▼")
             ),
             isOpen && React.createElement('div', { style: { borderTop: "1px solid #F0F0F8", padding: 16, background: "#FAFAFC" } },
-              React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center", marginBottom: 14, paddingBottom: 12, borderBottom: "1px dashed #E2E2EA" } },
-                React.createElement('span', { style: { marginRight: "auto", fontSize: 11, color: "#AAA" } }, "Actions rapides"),
-                React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "7px 13px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
-                isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "7px 13px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
-                isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
-                isAdmin && React.createElement('button', { onClick: () => ouvrirAgent(t), title: "L'agent Claude lit le ticket, vérifie l'état du PC dans NinjaOne et propose une réponse (rien n'est envoyé sans vous)", style: { padding: "7px 13px", background: "none", border: "1px solid #D6BCFA", color: "#6B46C1", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✨ Agent"),
-                (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && React.createElement('button', { onClick: () => genererAttestation(t), title: "Télécharger l'attestation de validation (PDF)", style: { padding: "7px 13px", background: "#EAF6EC", border: "1px solid #B5DBB9", color: "#256029", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 600 } }, "\uD83D\uDCC4 Attestation"),
-                t.status === "closed"
-                  ? React.createElement('button', { onClick: () => setTicketStatus(t, "open"), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Rouvrir le ticket")
-                  : React.createElement(React.Fragment, null,
-                      React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
-                      React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "7px 13px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
-                      React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "7px 13px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
-                      React.createElement('button', { onClick: () => { setFwdTicket(t); setFwdEmail(""); setFwdNote(""); setFwdMsg(""); }, style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "↪ Faire suivre"),
-                      React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "7px 15px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
-                    )
-              ),
-              // Éditeur de remarque interne (admin only) — jamais visible du client
-              noteOpenId === t.id && React.createElement('div', { style: { background: "#FFFDF3", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginBottom: 14 } },
-                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
-                  React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#B7791F" } }, "🔒 Remarque interne"),
-                  React.createElement('span', { style: { fontSize: 11, color: "#B7791F99" } }, "Visible uniquement par les administrateurs — jamais envoyée au client.")
-                ),
-                React.createElement('textarea', { value: noteText, onChange: e => setNoteText(e.target.value), placeholder: "Ex. : mot de passe TeamViewer, contexte du dossier, personne à recontacter…", rows: 4, style: { width: "100%", padding: "9px 11px", border: "1px solid #E4D08A", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none", background: "white" } }),
-                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 } },
-                  React.createElement('button', { onClick: () => setNoteOpenId(null), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
-                  React.createElement('button', { onClick: () => enregistrerNote(t), disabled: noteBusy, style: { padding: "7px 15px", background: "#F0B429", border: "none", color: "#3D2E00", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: noteBusy ? 0.6 : 1 } }, noteBusy ? "Enregistrement…" : "Enregistrer la remarque")
-                )
-              ),
-              // Rattachement / réattribution de l'hôtel. Toujours affiché :
-              //  - non assigné : bandeau orange + sélecteur
-              //  - déjà assigné : ligne discrète avec sélecteur pour corriger l'hôtel
+              // Barre d'actions du ticket (option B) : hôtel à gauche, actions fréquentes à droite, le reste dans « … »
               (() => {
                 const hAssigne = hotels.find(hh => hh.id === t.hotel_id);
                 const onChangeHotel = async (e) => {
@@ -10705,24 +10693,53 @@ const nav = isAdmin
                   if (!error) { setTickets(prev => prev.map(x => x.id === t.id ? { ...x, ...maj } : x)); apprendreDomaineTicket(t, hid); }
                   else alert("Erreur lors de la réattribution : " + error.message);
                 };
-                return t.hotel_id
-                  ? React.createElement('div', { style: { background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 8, padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-                      React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "🏨 Hôtel : "),
-                      React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, hAssigne ? hAssigne.name : "Hôtel inconnu"),
-                      t.hotel_auto && React.createElement('span', { title: "Hôtel trouvé automatiquement à la réception du mail : " + t.hotel_auto, style: { fontSize: 10.5, fontWeight: 600, color: "#276749", background: "#E9F6EE", border: "1px solid #B7E0C6", padding: "1px 8px", borderRadius: 10 } }, "auto · " + t.hotel_auto),
-                      React.createElement('span', { style: { fontSize: 11, color: "#999", marginLeft: 4 } }, "— modifier en cas d'erreur :"),
-                      React.createElement('select', { value: t.hotel_id, onChange: onChangeHotel, style: { padding: "5px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
-                        hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
-                      )
+                const ferme = t.status === "closed";
+                const peutRepFermer = isOpen && (replyText.trim() || /<img/i.test(replyHtml));
+                const bt = (lib, onClick, extra) => React.createElement('button', { type: "button", onClick, disabled: extra && extra.disabled, title: (extra && extra.title) || "",
+                  style: { padding: "0 12px", height: 32, background: (extra && extra.bg) || "white", border: "1px solid " + ((extra && extra.bord) || "#DDE0EA"), color: (extra && extra.col) || "#444", borderRadius: 8, fontSize: 12.5, cursor: "pointer", fontWeight: (extra && extra.gras) ? 600 : 400, whiteSpace: "nowrap", fontFamily: "inherit", opacity: (extra && extra.disabled) ? 0.6 : 1 } }, lib);
+                return React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14, padding: "10px 12px", background: "white", border: "1px solid #E2E4EE", borderRadius: 10 } },
+                  React.createElement('label', { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: hAssigne ? "#6B6B80" : "#C05621", fontWeight: hAssigne ? 400 : 600 } },
+                    hAssigne ? "Hôtel" : "⚠️ Hôtel",
+                    React.createElement('select', { value: t.hotel_id || "", onChange: onChangeHotel,
+                      style: { padding: "0 9px", height: 32, border: "1px solid " + (hAssigne ? "#DDE0EA" : "#F6AD55"), background: hAssigne ? "white" : "#FFFAF0", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: "#1a1a3e", minWidth: 170, maxWidth: 260, fontFamily: "inherit" } },
+                      !t.hotel_id && React.createElement('option', { value: "" }, "Assigner à un hôtel…"),
+                      (t.hotel_id && !hAssigne) && React.createElement('option', { value: t.hotel_id }, "Hôtel inconnu"),
+                      hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
                     )
-                  : React.createElement('div', { style: { background: "#FFFAF0", border: "1px solid #FBD38D", borderRadius: 8, padding: "10px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-                      React.createElement('span', { style: { fontSize: 12, color: "#C05621", fontWeight: 500 } }, "⚠️ Ticket non assigné à un hôtel."),
-                      React.createElement('select', { defaultValue: "", onChange: onChangeHotel, style: { padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
-                        React.createElement('option', { value: "" }, "Assigner à un hôtel…"),
-                        hotels.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).map(hh => React.createElement('option', { key: hh.id, value: hh.id }, hh.name))
-                      )
-                    );
+                  ),
+                  t.hotel_auto && React.createElement('span', { title: "Hôtel trouvé automatiquement à la réception du mail : " + t.hotel_auto, style: { fontSize: 10.5, fontWeight: 600, color: "#276749", background: "#E9F6EE", border: "1px solid #B7E0C6", padding: "1px 8px", borderRadius: 10 } }, "auto"),
+                  React.createElement('span', { style: { flex: 1 } }),
+                  bt(noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque", () => ouvrirNote(t), { title: "Note interne visible uniquement par les administrateurs", bg: noteOpenId === t.id ? "#FEF3C7" : "white", bord: noteSaved[t.id] ? "#F0B429" : "#DDE0EA", col: noteSaved[t.id] ? "#B7791F" : "#444" }),
+                  !ferme && bt("↪ Faire suivre", () => { setFwdTicket(t); setFwdEmail(""); setFwdNote(""); setFwdMsg(""); }),
+                  isAdmin && bt("✨ Agent", () => ouvrirAgent(t), { title: "L'agent Claude lit le ticket, vérifie l'état du PC dans NinjaOne et propose une réponse (rien n'est envoyé sans vous)", col: "#6B46C1", bord: "#D6BCFA" }),
+                  (t.reference && validations[t.reference] && validations[t.reference].status === "validated") && bt("\uD83D\uDCC4 Attestation", () => genererAttestation(t), { title: "Télécharger l'attestation de validation (PDF)", bg: "#EAF6EC", bord: "#B5DBB9", col: "#256029", gras: true }),
+                  ferme
+                    ? bt("Rouvrir le ticket", () => setTicketStatus(t, "open"), { bord: G + "88", col: G2, gras: true })
+                    : React.createElement(React.Fragment, null,
+                        bt("✅ Fermer + notifier", () => closeTicket(t, true), { disabled: replyBusy, bg: "#F0FFF4", bord: "#9AE6B4", col: "#276749", gras: true }),
+                        React.createElement('button', { type: "button", onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "0 16px", height: 32, background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1, whiteSpace: "nowrap", fontFamily: "inherit" } }, replyBusy ? "Envoi..." : "Répondre →")
+                      ),
+                  menuActionsTicket("haut-" + t.id, [
+                    !ferme && { lib: "Répondre et fermer", fn: () => replyAndClose(t), disabled: replyBusy || !peutRepFermer, title: peutRepFermer ? "" : "Écrivez d'abord une réponse" },
+                    !ferme && { lib: "Fermer sans notifier", fn: () => closeTicket(t, false), disabled: replyBusy },
+                    isAdmin && "sep",
+                    isAdmin && { lib: "🔓 Déverrouiller AD", fn: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne" },
+                    isAdmin && { lib: "🚫 Bloquer l'expéditeur", fn: () => ouvrirBlocage(t), rouge: true, title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)" }
+                  ], false)
+                );
               })(),
+              // Éditeur de remarque interne (admin only) — jamais visible du client
+              noteOpenId === t.id && React.createElement('div', { style: { background: "#FFFDF3", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginBottom: 14 } },
+                React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+                  React.createElement('span', { style: { fontSize: 12, fontWeight: 600, color: "#B7791F" } }, "🔒 Remarque interne"),
+                  React.createElement('span', { style: { fontSize: 11, color: "#B7791F99" } }, "Visible uniquement par les administrateurs — jamais envoyée au client.")
+                ),
+                React.createElement('textarea', { value: noteText, onChange: e => setNoteText(e.target.value), placeholder: "Ex. : mot de passe TeamViewer, contexte du dossier, personne à recontacter…", rows: 4, style: { width: "100%", padding: "9px 11px", border: "1px solid #E4D08A", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", outline: "none", background: "white" } }),
+                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 } },
+                  React.createElement('button', { onClick: () => setNoteOpenId(null), style: { padding: "7px 13px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Annuler"),
+                  React.createElement('button', { onClick: () => enregistrerNote(t), disabled: noteBusy, style: { padding: "7px 15px", background: "#F0B429", border: "none", color: "#3D2E00", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: noteBusy ? 0.6 : 1 } }, noteBusy ? "Enregistrement…" : "Enregistrer la remarque")
+                )
+              ),
               React.createElement('div', { style: { background: "#F6F6FA", border: "1px solid #E8E8F0", borderRadius: 8, padding: "8px 12px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
                 React.createElement('span', { style: { fontSize: 12, color: "#555" } }, "👤 Technicien :"),
                 React.createElement('select', { value: t.assigned_to || "", onChange: e => assignerTechnicien(t, e.target.value), style: { padding: "5px 9px", border: "1px solid " + (t.assigned_to ? "#BEE3F8" : "#DDD"), borderRadius: 6, fontSize: 12, background: t.assigned_to ? "#EBF8FF" : "white" } },
@@ -10810,33 +10827,30 @@ const nav = isAdmin
                     setReplyCcList(prev => prev.includes(adr) ? prev : [...prev, adr]);
                     setReplyCcManual("");
                   };
-                  return React.createElement('div', { style: { marginBottom: 8, background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 7, padding: "9px 11px" } },
-                    React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#555", marginBottom: toutes.length ? 6 : 0 } }, "👥 Personnes en copie (Cc)"),
-                    toutes.length > 0 && React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 8 } },
+                  return React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", background: "white", border: "1px solid #E2E4EE", borderRadius: "10px 10px 0 0", padding: "9px 12px" } },
+                    React.createElement('span', { title: "Personnes en copie", style: { fontSize: 12, fontWeight: 600, color: "#6B6B80", marginRight: 2 } }, "Cc"),
+                    toutes.length > 0 && React.createElement(React.Fragment, null,
                       toutes.map(adr => {
                         const coche = (replyCcList || []).includes(adr);
-                        return React.createElement('label', { key: adr, style: { display: "inline-flex", alignItems: "center", gap: 6, background: coche ? G + "18" : "white", border: "1px solid " + (coche ? G + "66" : "#E2E2E8"), borderRadius: 20, padding: "4px 11px", fontSize: 11.5, color: "#444", cursor: "pointer" } },
+                        return React.createElement('label', { key: adr, style: { display: "inline-flex", alignItems: "center", gap: 6, background: coche ? "#F7F1DE" : "white", border: "1px solid " + (coche ? "#E8D89A" : "#E2E2E8"), borderRadius: 14, padding: "3px 10px", fontSize: 12, color: coche ? "#333" : "#999", cursor: "pointer" } },
                           React.createElement('input', { type: "checkbox", checked: coche, onChange: () => toggleCc(adr), style: { cursor: "pointer", margin: 0 } }),
                           adr
                         );
                       })
                     ),
-                    toutes.length === 0 && React.createElement('div', { style: { fontSize: 11, color: "#999", margin: "5px 0 8px" } }, "Aucune adresse en copie détectée. Vous pouvez en ajouter une ci-dessous."),
-                    React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                      React.createElement('input', { value: replyCcManual, onChange: e => setReplyCcManual(e.target.value), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouterManuel(); } }, placeholder: "Ajouter une adresse en copie…", type: "email", list: "dsi-cc-suggestions", autoComplete: "off", style: { flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+                    React.createElement('div', { style: { display: "flex", gap: 6, flex: "1 1 260px" } },
+                      React.createElement('input', { value: replyCcManual, onChange: e => setReplyCcManual(e.target.value), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouterManuel(); } }, placeholder: toutes.length ? "+ ajouter une adresse (Entrée)" : "Aucune copie — ajouter une adresse (Entrée)", type: "email", list: "dsi-cc-suggestions", autoComplete: "off", style: { flex: 1, minWidth: 180, padding: "6px 10px", border: "1px solid #DDE0EA", borderRadius: 7, fontSize: 12.5, boxSizing: "border-box", fontFamily: "inherit" } }),
                       React.createElement('datalist', { id: "dsi-cc-suggestions" },
                         adressesConnues().map(a => React.createElement('option', { key: a, value: a }))
                       ),
-                      React.createElement('button', { type: "button", onClick: ajouterManuel, style: { padding: "6px 12px", background: SB, border: "none", color: G, borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" } }, "+ Ajouter")
+                      React.createElement('button', { type: "button", onClick: ajouterManuel, style: { padding: "0 12px", background: SB, border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } }, "+ Ajouter")
                     )
                   );
                 })(),
-                React.createElement('div', { style: { marginBottom: 8 } },
-                  React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "📎 Joindre des fichiers à la réponse"),
-                  React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => setReplyFiles(prev => [...prev, ...Array.from(e.target.files)]), style: { fontSize: 12 } }),
-                  replyFiles.length > 0 && React.createElement('div', { style: { marginTop: 7, display: "flex", flexDirection: "column", gap: 5 } },
-                    replyFiles.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "white", border: "1px solid #E8E8F0", borderRadius: 6, padding: "5px 9px", fontSize: 11 } },
-                      React.createElement('span', null, "🆕"),
+                replyFiles.length > 0 && React.createElement('div', { style: { background: "white", borderLeft: "1px solid #E2E4EE", borderRight: "1px solid #E2E4EE", borderTop: "1px solid #EEF0F5", padding: "8px 12px" } },
+                  React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+                    replyFiles.map((f, i) => React.createElement('div', { key: i, style: { display: "flex", alignItems: "center", gap: 7, background: "#F6F7FB", border: "1px solid #E2E4EE", borderRadius: 8, padding: "4px 9px", fontSize: 12, maxWidth: 360 } },
+                      React.createElement('span', null, "📎"),
                       React.createElement('span', { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, f.name),
                       React.createElement('span', { style: { color: "#AAA" } }, f.size ? Math.round(f.size / 1024) + " Ko" : ""),
                       React.createElement('button', { onClick: () => setReplyFiles(prev => prev.filter((_, idx) => idx !== i)), style: { background: "none", border: "none", color: "#E53E3E", cursor: "pointer", fontSize: 12 } }, "✕")
@@ -10853,26 +10867,40 @@ const nav = isAdmin
                     ))
                   )
                 ),
-                React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center" } },
-                  React.createElement('select', {
-                    value: "",
-                    onChange: e => { if (e.target.value) { applyReponseType(e.target.value); e.target.value = ""; } },
-                    disabled: reponsesTypes.length === 0,
-                    title: reponsesTypes.length === 0 ? "Aucune réponse type — créez-en dans l'onglet Réponses types" : "Insérer une réponse type",
-                    style: { marginRight: "auto", padding: "8px 10px", border: "1px solid " + G + "88", borderRadius: 7, fontSize: 12, color: "#555", background: "#FFFDF5", cursor: reponsesTypes.length === 0 ? "default" : "pointer", maxWidth: 220 }
-                  },
-                    React.createElement('option', { value: "" }, reponsesTypes.length === 0 ? "Réponses types (vide)" : "💬 Insérer une réponse type…"),
-                    reponsesTypes.map(r => React.createElement('option', { key: r.id, value: r.id }, r.titre))
-                  ),
-                  React.createElement('button', { onClick: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs", style: { padding: "8px 14px", background: noteOpenId === t.id ? "#FEF3C7" : "none", border: "1px solid " + (noteSaved[t.id] ? "#F0B429" : "#DDD"), color: noteSaved[t.id] ? "#B7791F" : "#666", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, (noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque")),
-                  isAdmin && React.createElement('button', { onClick: () => ouvrirBlocage(t), title: "Bloquer l'expéditeur d'un email frauduleux dans Microsoft 365 (Defender)", style: { padding: "8px 14px", background: "none", border: "1px solid #F3B8B4", color: "#B3261E", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🚫 Bloquer expéditeur"),
-                isAdmin && React.createElement('button', { onClick: () => ouvrirDeverrouillageAd(t), title: "Déverrouiller (ou diagnostiquer) un compte Windows dans l'Active Directory de l'hôtel, via NinjaOne", style: { padding: "7px 13px", background: "none", border: "1px solid #B7D3F0", color: "#2B6CB0", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "🔓 Déverrouiller AD"),
-                isAdmin && React.createElement('button', { onClick: () => ouvrirAgent(t), title: "L'agent Claude lit le ticket, vérifie l'état du PC dans NinjaOne et propose une réponse (rien n'est envoyé sans vous)", style: { padding: "7px 13px", background: "none", border: "1px solid #D6BCFA", color: "#6B46C1", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✨ Agent"),
-                  React.createElement('button', { onClick: () => closeTicket(t, false), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #DDD", color: "#666", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "Fermer sans notifier"),
-                  React.createElement('button', { onClick: () => closeTicket(t, true), disabled: replyBusy, style: { padding: "8px 14px", background: "none", border: "1px solid #C6F6D5", color: "#2F855A", borderRadius: 7, fontSize: 12, cursor: "pointer", fontWeight: 500 } }, "✅ Fermer + notifier"),
-                  React.createElement('button', { onClick: () => replyAndClose(t), disabled: replyBusy || !(isOpen && (replyText.trim() || /<img/i.test(replyHtml))), style: { padding: "8px 14px", background: "none", border: `1px solid ${G}55`, color: G2, borderRadius: 7, fontSize: 12, cursor: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? "pointer" : "default", fontWeight: 500, opacity: (isOpen && (replyText.trim() || /<img/i.test(replyHtml))) ? 1 : 0.5 } }, "Répondre et fermer"),
-                  React.createElement('button', { onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1 } }, replyBusy ? "Envoi..." : "Répondre →")
-                ),
+                // Barre du bas (option B) : réponse type, pièces jointes, envoi ; actions secondaires dans « … »
+                (() => {
+                  const peutRepFermer = isOpen && (replyText.trim() || /<img/i.test(replyHtml));
+                  const bt = (lib, onClick, extra) => React.createElement('button', { type: "button", onClick, disabled: extra && extra.disabled, title: (extra && extra.title) || "",
+                    style: { padding: "0 12px", height: 32, background: (extra && extra.bg) || "white", border: "1px solid " + ((extra && extra.bord) || "#DDE0EA"), color: (extra && extra.col) || "#444", borderRadius: 8, fontSize: 12.5, cursor: (extra && extra.disabled) ? "default" : "pointer", fontWeight: (extra && extra.gras) ? 600 : 400, whiteSpace: "nowrap", fontFamily: "inherit", opacity: (extra && extra.disabled) ? 0.5 : 1 } }, lib);
+                  return React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", background: "#FAFBFD", border: "1px solid #E2E4EE", borderTop: "1px solid #EEF0F5", borderRadius: "0 0 10px 10px", padding: "10px 12px" } },
+                    React.createElement('select', {
+                      value: "",
+                      onChange: e => { if (e.target.value) { applyReponseType(e.target.value); e.target.value = ""; } },
+                      disabled: reponsesTypes.length === 0,
+                      title: reponsesTypes.length === 0 ? "Aucune réponse type — créez-en dans l'onglet Réponses types" : "Insérer une réponse type",
+                      style: { padding: "0 10px", height: 32, border: "1px solid #DDE0EA", borderRadius: 8, fontSize: 12.5, color: "#444", background: "white", cursor: reponsesTypes.length === 0 ? "default" : "pointer", maxWidth: 230, fontFamily: "inherit" }
+                    },
+                      React.createElement('option', { value: "" }, reponsesTypes.length === 0 ? "Réponses types (vide)" : "💬 Insérer une réponse type…"),
+                      reponsesTypes.map(r => React.createElement('option', { key: r.id, value: r.id }, r.titre))
+                    ),
+                    React.createElement('label', { title: "Joindre des fichiers à la réponse", style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "0 12px", height: 32, background: "white", border: "1px solid #DDE0EA", color: "#444", borderRadius: 8, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap", boxSizing: "border-box" } },
+                      "📎 Joindre des fichiers" + (replyFiles.length ? " (" + replyFiles.length + ")" : ""),
+                      React.createElement('input', { type: "file", multiple: true, accept: ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp", onChange: e => { setReplyFiles(prev => [...prev, ...Array.from(e.target.files)]); e.target.value = ""; }, style: { display: "none" } })
+                    ),
+                    React.createElement('span', { style: { flex: 1 } }),
+                    bt("✅ Fermer + notifier", () => closeTicket(t, true), { disabled: replyBusy, bg: "#F0FFF4", bord: "#9AE6B4", col: "#276749", gras: true }),
+                    bt("Répondre et fermer", () => replyAndClose(t), { disabled: replyBusy || !peutRepFermer, title: peutRepFermer ? "" : "Écrivez d'abord une réponse", bord: G + "88", col: G2, gras: true }),
+                    React.createElement('button', { type: "button", onClick: () => sendReply(t), disabled: replyBusy, style: { padding: "0 18px", height: 32, background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: replyBusy ? 0.6 : 1, whiteSpace: "nowrap", fontFamily: "inherit" } }, replyBusy ? "Envoi..." : "Répondre →"),
+                    menuActionsTicket("bas-" + t.id, [
+                      { lib: noteSaved[t.id] ? "📝 Remarque •" : "📝 Remarque", fn: () => ouvrirNote(t), title: "Note interne visible uniquement par les administrateurs" },
+                      isAdmin && { lib: "✨ Agent", fn: () => ouvrirAgent(t) },
+                      { lib: "Fermer sans notifier", fn: () => closeTicket(t, false), disabled: replyBusy },
+                      isAdmin && "sep",
+                      isAdmin && { lib: "🔓 Déverrouiller AD", fn: () => ouvrirDeverrouillageAd(t) },
+                      isAdmin && { lib: "🚫 Bloquer l'expéditeur", fn: () => ouvrirBlocage(t), rouge: true }
+                    ], true)
+                  );
+                })(),
                 // Éditeur de remarque interne (admin only) — vue cartes, ticket ouvert
                 noteOpenId === t.id && React.createElement('div', { style: { background: "#FFFDF3", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", marginTop: 12 } },
                   React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
