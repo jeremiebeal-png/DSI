@@ -180,6 +180,8 @@ const BLOCAGE_API_URL = "https://dsi-hotel-blocage.jeremie-beal.workers.dev";
 const AGENT_API_URL = "https://dsi-hotel-agent.jeremie-beal.workers.dev";
 // Worker de création des boîtes Microsoft 365 (provisioning). Ajuster l'URL après déploiement si le sous-domaine diffère.
 const PROVISIONING_API_URL = "https://dsi-hotel-provisioning.jeremie-beal.workers.dev";
+// Worker d'inventaire serveurs depuis NinjaOne (lecture seule côté NinjaOne, client API « monitoring »).
+const INVENTAIRE_API_URL = "https://dsi-hotel-inventaire.jeremie-beal.workers.dev";
 // ID d'application (client) de l'app Entra multi-tenant « DSI Hotel Provisioning » — à renseigner après sa création.
 const M365_PROV_APP_ID = "81d69908-c061-4f97-aa17-5bb4a6028a37";
 
@@ -5257,7 +5259,38 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setInvSynth({ loading: false, rows, notes: notes || [] });
     } catch (e) { setInvErr(invErrMsg(e)); setInvSynth({ loading: false, rows: [], notes: [] }); }
   };
-  const invChoisirHotel = (hid) => { setInvHotel(hid); setInvRows([]); setInvNotes(null); if (hid) loadInv(hid); };
+  const invChoisirHotel = (hid) => { setInvHotel(hid); setInvRows([]); setInvNotes(null); setInvNinja(null); if (hid) loadInv(hid); };
+  // ---- Remplissage depuis NinjaOne (Worker dsi-hotel-inventaire, route /importer) ----
+  // { busy, progression, resultats: [{ hotel, ok, erreur, mis_a_jour, ajoutes, ecarts, absents_de_ninjaone }] }
+  const [invNinja, setInvNinja] = useState(null);
+  const invImporterNinja = async (hotelId) => {
+    const cibles = hotelId ? hotels.filter(h => h.id === hotelId) : [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!cibles.length) return;
+    if (!hotelId && !window.confirm("Remplir l'inventaire des " + cibles.length + " établissements depuis NinjaOne ?\n\nMise à jour : OS, version, IP, n° de série (si vide), « À jour ? », dernière MAJ, antivirus. Les machines absentes sont ajoutées.\nJamais modifiés : nom, rôle, Care Pack, licence Veeam, notes, date de contrôle. Rien n'est supprimé.")) return;
+    const { data: sessionData } = await sb.auth.getSession();
+    const token = (sessionData.session && sessionData.session.access_token) || "";
+    const resultats = [];
+    setInvErr("");
+    for (let i = 0; i < cibles.length; i++) {
+      const h = cibles[i];
+      setInvNinja({ busy: true, progression: (i + 1) + " / " + cibles.length + " — " + h.name, resultats: [...resultats] });
+      try {
+        const res = await fetch(INVENTAIRE_API_URL + "/importer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({ hotelId: h.id }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw Object.assign(new Error(d.error || ("Erreur " + res.status + " (le Worker dsi-hotel-inventaire est-il déployé ?)")), { introuvable: res.status === 404 });
+        resultats.push({ hotel: h.name, ok: true, mis_a_jour: d.mis_a_jour || [], ajoutes: d.ajoutes || [], ecarts: d.ecarts || [], absents: d.absents_de_ninjaone || [], erreurs: d.erreurs || [] });
+      } catch (e) {
+        resultats.push({ hotel: h.name, ok: false, introuvable: !!e.introuvable, erreur: e.message || String(e) });
+        if (/401|403|Session|déployé/i.test(e.message || "")) break; // inutile de continuer
+      }
+    }
+    setInvNinja({ busy: false, resultats });
+    if (hotelId) loadInv(hotelId); else loadInvSynthese();
+  };
   // Care Pack : jours restants + statut (même calcul que le fichier Excel)
   const invCarePack = (r) => {
     if (r.care_pack === "Non") return { j: null, l: "Aucun", c: "#718096", bg: "#EEF0F4" };
@@ -12417,9 +12450,35 @@ const nav = isAdmin
         invHotel && React.createElement('button', { onClick: () => invAjouter(null), style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un hôte physique"),
         invHotel && React.createElement('button', { onClick: () => invChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels"),
         React.createElement('button', { onClick: () => invOuvrirImport(invHotel || null), title: "Lire les tableaux des fiches Infrastructure (hôtes ESXi, serveurs / VM) et proposer les serveurs à ajouter", style: { padding: "8px 14px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
-          invHotel ? "📥 Reprendre depuis Infrastructure" : "📥 Pré-remplir tous les hôtels depuis Infrastructure")
+          invHotel ? "📥 Reprendre depuis Infrastructure" : "📥 Pré-remplir tous les hôtels depuis Infrastructure"),
+        React.createElement('button', { onClick: () => invImporterNinja(invHotel || null), disabled: !!(invNinja && invNinja.busy),
+          title: "Lire NinjaOne : met à jour OS, version, IP, n° de série, mises à jour et antivirus, et ajoute les machines manquantes. Ne touche jamais au Care Pack, à la licence Veeam, au rôle ni aux notes.",
+          style: { padding: "8px 14px", background: "#1A1A3E", border: "none", color: "white", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: (invNinja && invNinja.busy) ? "wait" : "pointer", opacity: (invNinja && invNinja.busy) ? 0.7 : 1 } },
+          (invNinja && invNinja.busy) ? "⏳ NinjaOne… " + invNinja.progression : (invHotel ? "🔄 Remplir depuis NinjaOne" : "🔄 Remplir tous les hôtels depuis NinjaOne"))
       ),
       invErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, invErr),
+      invNinja && !invNinja.busy && invNinja.resultats && invNinja.resultats.length > 0 && (() => {
+        const rs = invNinja.resultats;
+        const ok = rs.filter(r => r.ok), ko = rs.filter(r => !r.ok && !r.introuvable), introuvables = rs.filter(r => r.introuvable);
+        const nbMaj = ok.reduce((a, r) => a + r.mis_a_jour.length, 0), nbAjout = ok.reduce((a, r) => a + r.ajoutes.length, 0);
+        const li = (t, k, c) => React.createElement('li', { key: k, style: { margin: "2px 0", color: c || "#333" } }, t);
+        return React.createElement('div', { style: { background: "#F4F6FB", border: "1px solid #D5DBEA", borderRadius: 8, padding: "12px 14px", fontSize: 12.5, marginBottom: 12, lineHeight: 1.55 } },
+          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 6 } },
+            React.createElement('b', { style: { color: "#1A1A3E" } }, "🔄 NinjaOne : " + nbMaj + " ligne(s) mise(s) à jour, " + nbAjout + " machine(s) ajoutée(s)" + (rs.length > 1 ? " sur " + ok.length + " établissement(s)" : "")),
+            React.createElement('button', { onClick: () => setInvNinja(null), style: { background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 16 } }, "×")),
+          React.createElement('ul', { style: { margin: 0, paddingLeft: 18 } },
+            ok.filter(r => r.mis_a_jour.length || r.ajoutes.length || r.ecarts.length || r.absents.length || r.erreurs.length).map((r, i) => React.createElement('li', { key: "h" + i, style: { margin: "4px 0" } },
+              rs.length > 1 && React.createElement('b', null, r.hotel + " : "),
+              r.ajoutes.length ? "ajoutées : " + r.ajoutes.join(", ") + ". " : "",
+              r.mis_a_jour.length ? "mises à jour : " + r.mis_a_jour.map(m => m.nom).join(", ") + ". " : "",
+              React.createElement('ul', { style: { margin: "2px 0 0", paddingLeft: 16 } },
+                r.ecarts.map((t, j) => li("⚠ " + t, "e" + j, "#B7791F")),
+                r.absents.length ? li("Absentes de NinjaOne (à saisir ou superviser) : " + r.absents.join(", "), "a", "#718096") : null,
+                r.erreurs.map((t, j) => li("Donnée partielle — " + t, "x" + j, "#C53030"))))),
+            ok.length && !nbMaj && !nbAjout && !ok.some(r => r.ecarts.length || r.absents.length) ? li("Rien à changer : l'inventaire correspond déjà à NinjaOne.", "rien") : null,
+            ko.map((r, i) => li("✗ " + r.hotel + " : " + r.erreur, "k" + i, "#C53030")),
+            introuvables.length ? li("Sans organisation NinjaOne correspondante (renseignez « Nom NinjaOne » sur la fiche établissement) : " + introuvables.map(r => r.hotel).join(", "), "i", "#718096") : null));
+      })(),
 
       // ===== Synthèse de tous les hôtels =====
       !invHotel && (() => {
