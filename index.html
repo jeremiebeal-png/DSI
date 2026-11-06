@@ -182,6 +182,9 @@ const AGENT_API_URL = "https://dsi-hotel-agent.jeremie-beal.workers.dev";
 const PROVISIONING_API_URL = "https://dsi-hotel-provisioning.jeremie-beal.workers.dev";
 // Worker d'inventaire serveurs depuis NinjaOne (lecture seule côté NinjaOne, client API « monitoring »).
 const INVENTAIRE_API_URL = "https://dsi-hotel-inventaire.jeremie-beal.workers.dev";
+// Console NinjaOne (liens vers la fiche d'un appareil) et portail de support HPE.
+const NINJA_CONSOLE_URL = "https://dsihotel.rmmservice.eu";
+const HPE_SUPPORT_URL = "https://support.hpe.com/connect/s/?language=fr";
 // ID d'application (client) de l'app Entra multi-tenant « DSI Hotel Provisioning » — à renseigner après sa création.
 const M365_PROV_APP_ID = "81d69908-c061-4f97-aa17-5bb4a6028a37";
 
@@ -5250,7 +5253,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const rows = [];
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien").range(from, from + 999);
+        const { data, error } = await sb.from("inventaire_serveurs").select("hotel_id,type,os,a_jour,care_pack,care_pack_fin,antivirus,date_controle,technicien,nom,derniere_maj,commentaire").range(from, from + 999);
         if (error) throw error;
         (data || []).forEach(x => rows.push(x));
         if (!data || data.length < 1000) break;
@@ -5259,10 +5262,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setInvSynth({ loading: false, rows, notes: notes || [] });
     } catch (e) { setInvErr(invErrMsg(e)); setInvSynth({ loading: false, rows: [], notes: [] }); }
   };
-  const invChoisirHotel = (hid) => { setInvHotel(hid); setInvRows([]); setInvNotes(null); setInvNinja(null); if (hid) loadInv(hid); };
+  const invChoisirHotel = (hid) => { setInvHotel(hid); setInvRows([]); setInvNotes(null); setInvNinja(null); setInvDetail(false); setInvOuvert(""); if (hid) loadInv(hid); };
   // ---- Remplissage depuis NinjaOne (Worker dsi-hotel-inventaire, route /importer) ----
   // { busy, progression, resultats: [{ hotel, ok, erreur, mis_a_jour, ajoutes, ecarts, absents_de_ninjaone }] }
   const [invNinja, setInvNinja] = useState(null);
+  // Présentation « file d'actions » : vue de la synthèse, détail éditable de la fiche, groupe déplié
+  const [invVue, setInvVue] = useState("actions");
+  const [invDetail, setInvDetail] = useState(false);
+  const [invOuvert, setInvOuvert] = useState("");
   const invImporterNinja = async (hotelId) => {
     const cibles = hotelId ? hotels.filter(h => h.id === hotelId) : [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name)));
     if (!cibles.length) return;
@@ -12439,6 +12446,203 @@ const nav = isAdmin
       if (invEstVeeam(r) && r.licence_fin && new Date(r.licence_fin + "T23:59:59") < new Date()) p.push("licence Veeam expirée");
       return p;
     };
+    // ================= Présentation « file d'actions » =================
+    const nomHotelInv = (id) => { const h = hotels.find(x => x.id === id); return h ? h.name : "?"; };
+    const lienNinja = (r) => r && r.ninja_id ? NINJA_CONSOLE_URL + "/#/deviceDashboard/" + r.ninja_id + "/overview" : null;
+    const pastille = (c) => React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: c, flexShrink: 0 } });
+    const VERT = "#12B76A", ROUGE = "#D92D20", GRIS = "#D0D5DD";
+    const btnC = (fonce) => ({ padding: "8px 13px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer", textDecoration: "none", whiteSpace: "nowrap", border: fonce ? "none" : "1px solid #D0D5DD", background: fonce ? SB : "white", color: fonce ? "white" : "#1a1a3e", display: "inline-block" });
+    const carte = { background: "white", border: "1px solid #E8E8F0", borderRadius: 12 };
+    const dateFr = () => new Date().toLocaleDateString("fr-FR");
+    const estVerifie = (r) => /vérifié le/i.test(r.commentaire || "");
+    const ajouterCommentaire = (r, txt) => invMaj(r, { commentaire: ((r.commentaire || "").trim() ? (r.commentaire || "").trim() + " · " : "") + txt });
+
+    // Ticket « Demande de devis Care Pack », créé directement dans le portail (pas d'email : évite le filtre anti-boucle)
+    const invDemanderDevis = async (r, nbVm) => {
+      const h = hotels.find(x => x.id === r.hotel_id);
+      if (!window.confirm("Créer un ticket « Demande de devis Care Pack » pour " + r.nom + " (" + (h ? h.name : "") + ") ?")) return;
+      const cp = invCarePack(r);
+      const lignes = [
+        "Demande de devis de renouvellement Care Pack",
+        "Établissement : " + (h ? h.name : "?"),
+        "Serveur : " + r.nom + (r.ip && r.ip !== r.nom ? " (" + r.ip + ")" : ""),
+        "Système : " + [r.os, r.version].filter(Boolean).join(" "),
+        "N° série / réf. : " + (r.care_pack_ref || "non renseigné"),
+        "Fin du Care Pack : " + (r.care_pack_fin ? fmtD(r.care_pack_fin) : "non renseignée") + (cp.j != null ? (cp.j < 0 ? " (expiré depuis " + (-cp.j) + " j)" : " (dans " + cp.j + " j)") : ""),
+        nbVm ? "VM hébergées : " + nbVm : "",
+        "",
+        "Ticket créé depuis Sécurité › Inventaire serveurs par " + adminFromName() + "."
+      ].filter(x => x !== "").join("\n");
+      try {
+        const { data, error } = await sb.from("tickets").insert({
+          hotel_id: r.hotel_id, contact_name: "Inventaire serveurs", contact_email: TEAM_EMAIL,
+          category: "Problème Matériel", priority: "Moyenne", type_ticket: "demande",
+          subject: "[Care Pack] Demande de devis — " + (h ? h.name : "") + " — " + r.nom,
+          message: lignes, status: "open", source: "inventaire",
+        }).select().single();
+        if (error) throw error;
+        await ajouterCommentaire(r, "Devis Care Pack demandé le " + dateFr() + (data && data.reference ? " (" + data.reference + ")" : ""));
+        alert("Ticket créé" + (data && data.reference ? " : " + data.reference : "") + ".");
+      } catch (e) { alert("Création du ticket impossible : " + (e.message || e)); }
+    };
+    const copier = (txt) => { try { navigator.clipboard.writeText(txt); } catch (_) {} };
+
+    // ---------- Synthèse : file d'actions ----------
+    const invVueActions = () => {
+      if (invSynth.loading) return React.createElement('div', { style: { padding: 20, color: "#999", fontSize: 13 } }, "Chargement de la synthèse…");
+      const rows = invSynth.rows;
+      const tri = (a, b) => String(a || "9999").localeCompare(String(b || "9999"));
+      const it = (r, d, c) => ({ key: r.hotel_id + (r.nom || "") + d, hotelId: r.hotel_id, hotel: nomHotelInv(r.hotel_id), serveur: r.nom || "—", d, c });
+      const cpExp = rows.filter(r => invCarePack(r).l === "Expiré").sort((a, b) => tri(a.care_pack_fin, b.care_pack_fin)).map(r => it(r, "depuis le " + fmtD(r.care_pack_fin), "#B42318"));
+      const maj = rows.filter(r => r.a_jour === "Non").sort((a, b) => tri(a.derniere_maj, b.derniere_maj)).map(r => it(r, r.derniere_maj ? "dernière le " + fmtD(r.derniere_maj) : "date inconnue", r.derniere_maj ? "#B54708" : "#667085"));
+      const cp90 = rows.filter(r => invCarePack(r).l === "Moins de 90 j").sort((a, b) => tri(a.care_pack_fin, b.care_pack_fin)).map(r => it(r, "le " + fmtD(r.care_pack_fin), "#B54708"));
+      const avecInv = [...new Set(rows.map(r => r.hotel_id))];
+      const jamais = avecInv.filter(id => !rows.some(r => r.hotel_id === id && r.date_controle)).map(id => {
+        const rs = rows.filter(r => r.hotel_id === id);
+        return { key: "j" + id, hotelId: id, hotel: nomHotelInv(id), serveur: rs.filter(r => r.type === "Physique").length + " phys. · " + rs.filter(r => r.type === "VM").length + " VM", d: "aucun contrôle", c: "#667085" };
+      }).sort((a, b) => a.hotel.localeCompare(b.hotel));
+      const sansInv = hotels.filter(h => !avecInv.includes(h.id)).length;
+      const parHotelAv = {};
+      rows.filter(r => r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)).forEach(r => { parHotelAv[r.hotel_id] = (parHotelAv[r.hotel_id] || 0) + 1; });
+      const avListe = Object.entries(parHotelAv).sort((a, b) => b[1] - a[1]);
+      const nbAv = avListe.reduce((s, x) => s + x[1], 0);
+
+      const groupe = (key, titre, aide, items, c, bg) => {
+        const ouvert = invOuvert === key;
+        const vus = ouvert ? items : items.slice(0, 6);
+        return React.createElement('section', { key, style: { ...carte, overflow: "hidden" } },
+          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid #EEF0F4" } },
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: "#1a1a3e" } }, titre),
+              React.createElement('div', { style: { fontSize: 12, color: "#667085", marginTop: 2 } }, aide)),
+            React.createElement('span', { style: { minWidth: 26, textAlign: "center", padding: "4px 10px", borderRadius: 20, fontSize: 13, fontWeight: 700, color: c, background: bg } }, items.length)),
+          items.length === 0 && React.createElement('div', { style: { padding: "14px 16px", fontSize: 13, color: "#2F855A" } }, "✓ Rien à signaler"),
+          vus.map(x => React.createElement('div', { key: x.key, onClick: () => invChoisirHotel(x.hotelId),
+              style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.3fr 1fr 0.9fr", gap: isMobile ? 2 : 10, padding: "9px 16px", borderTop: "1px solid #F2F4F7", fontSize: 13, alignItems: "center", cursor: "pointer" },
+              onMouseEnter: ev => ev.currentTarget.style.background = "#FAFAFD", onMouseLeave: ev => ev.currentTarget.style.background = "white" },
+            React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e" } }, x.hotel),
+            React.createElement('span', { style: { fontFamily: "monospace", fontSize: 12, color: "#344054" } }, x.serveur),
+            React.createElement('span', { style: { color: x.c, fontWeight: 600, fontSize: 12.5 } }, x.d))),
+          items.length > 6 && React.createElement('button', { onClick: () => setInvOuvert(ouvert ? "" : key), style: { width: "100%", padding: "9px 16px", background: "white", border: "none", borderTop: "1px solid #F2F4F7", color: G2, fontWeight: 600, fontSize: 12.5, cursor: "pointer", textAlign: "left" } },
+            ouvert ? "Réduire" : "Voir les " + items.length + " →"));
+      };
+      return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 14 } },
+        React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 14, alignItems: "start" } },
+          groupe("cp", "Care Pack expirés", "Renouveler ou remplacer le matériel", cpExp, "#B42318", "#FEE4E2"),
+          groupe("maj", "Mises à jour en retard", "Machines marquées « pas à jour »", maj, "#B54708", "#FEF0C7"),
+          groupe("cp90", "Care Pack bientôt échus", "Moins de 90 jours", cp90, "#B54708", "#FEF0C7"),
+          groupe("jamais", "Jamais contrôlés sur place", "Inventaire saisi, aucune date de contrôle" + (sansInv ? " · + " + sansInv + " établissement(s) sans inventaire" : ""), jamais, "#475467", "#F2F4F7")),
+        React.createElement('section', { style: { ...carte, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 } },
+          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 15, fontWeight: 700, color: "#1a1a3e" } }, "Windows sans antivirus connu"),
+              React.createElement('div', { style: { fontSize: 12, color: "#667085", marginTop: 2 } }, nbAv + " machine(s) — « Remplir depuis NinjaOne » complète l'antivirus quand NinjaOne le connaît")),
+            React.createElement('span', { style: { minWidth: 26, textAlign: "center", padding: "4px 10px", borderRadius: 20, fontSize: 13, fontWeight: 700, color: "#6B46C1", background: "#F3EEFC" } }, nbAv)),
+          avListe.length > 0 && React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+            avListe.map(([id, n]) => React.createElement('button', { key: id, onClick: () => invChoisirHotel(id), style: { padding: "5px 11px", borderRadius: 20, border: "1px solid #E2E2EA", background: "white", fontSize: 12.5, cursor: "pointer", color: "#344054" } },
+              nomHotelInv(id) + " · ", React.createElement('b', null, n))))));
+    };
+
+    // ---------- Fiche hôtel : à traiter / à vérifier / tout le parc ----------
+    const invVueHotel = (liste) => {
+      const enfants = (id) => invRows.filter(x => x.parent_id === id);
+      const actions = [];
+      liste.forEach(({ r }) => {
+        const cp = invCarePack(r);
+        const sys = [r.os, r.version].filter(Boolean).join(" ");
+        const nom = (r.type === "Physique" && /esxi/i.test(r.os || "") ? "ESXi " : "") + r.nom;
+        if (cp.l === "Expiré" || cp.l === "Moins de 90 j") {
+          const nbVm = enfants(r.id).length;
+          const devis = /Devis Care Pack demandé/i.test(r.commentaire || "");
+          actions.push({ rang: cp.l === "Expiré" ? 1 : 5, key: "cp" + r.id, type: "Care Pack", c: cp.l === "Expiré" ? "#B42318" : "#B54708", bg: cp.l === "Expiré" ? "#FEE4E2" : "#FEF0C7",
+            titre: nom + " — Care Pack " + (cp.l === "Expiré" ? "expiré le " : "expire le ") + fmtD(r.care_pack_fin),
+            detail: [sys, r.care_pack_ref ? "n° série " + r.care_pack_ref : "n° série non renseigné", nbVm ? nbVm + " VM" : ""].filter(Boolean).join(" · "),
+            boutons: [
+              r.care_pack_ref && React.createElement('button', { key: "cs", onClick: () => copier(r.care_pack_ref), title: "Copier le n° de série", style: btnC(false) }, "Copier le n° de série"),
+              React.createElement('a', { key: "hpe", href: HPE_SUPPORT_URL, target: "_blank", rel: "noopener noreferrer", style: btnC(false) }, "Ouvrir un dossier HPE"),
+              devis ? React.createElement('span', { key: "dv", style: { ...btnC(false), cursor: "default", color: "#B54708", borderColor: "#FEDF89", background: "#FFFAEB" } }, "Devis demandé")
+                : React.createElement('button', { key: "dv", onClick: () => invDemanderDevis(r, nbVm), style: btnC(true) }, "Demander un devis")] });
+        }
+        if (r.a_jour === "Non") actions.push({ rang: 2, key: "maj" + r.id, type: "Mises à jour", c: "#B54708", bg: "#FEF0C7",
+          titre: nom + " — pas à jour", detail: [r.ip, sys, r.derniere_maj ? "dernière installée le " + fmtD(r.derniere_maj) : "date de dernière MAJ inconnue"].filter(Boolean).join(" · "),
+          boutons: [lienNinja(r) && React.createElement('a', { key: "nj", href: lienNinja(r), target: "_blank", rel: "noopener noreferrer", style: btnC(true) }, "Ouvrir dans NinjaOne")] });
+        if (r.antivirus === "Non" || (invEstWindows(r) && !r.antivirus)) actions.push({ rang: 3, key: "av" + r.id, type: "Antivirus", c: "#6B46C1", bg: "#F3EEFC",
+          titre: nom + " — " + (r.antivirus === "Non" ? "sans antivirus" : "antivirus non renseigné"), detail: [r.ip, sys].filter(Boolean).join(" · "),
+          boutons: [lienNinja(r) && React.createElement('a', { key: "nj", href: lienNinja(r), target: "_blank", rel: "noopener noreferrer", style: btnC(true) }, "Ouvrir dans NinjaOne")] });
+        if (invEstVeeam(r) && r.licence_fin) {
+          const j = Math.round((new Date(r.licence_fin + "T12:00:00") - new Date()) / 86400000);
+          if (j < 60) actions.push({ rang: 4, key: "vl" + r.id, type: "Licence Veeam", c: j < 0 ? "#B42318" : "#B54708", bg: j < 0 ? "#FEE4E2" : "#FEF0C7",
+            titre: nom + " — licence Veeam " + (j < 0 ? "expirée le " : "expire le ") + fmtD(r.licence_fin), detail: r.licence_info || "", boutons: [] });
+        }
+      });
+      actions.sort((a, b) => a.rang - b.rang);
+
+      const verifs = [];
+      liste.forEach(({ r }) => {
+        if (estVerifie(r)) return;
+        if (/à vérifier/i.test(r.commentaire || "")) { const p = invRows.find(x => x.id === r.parent_id); verifs.push({ r, t: r.nom + " : rangée sous " + (p ? p.nom : "un hôte") + " par déduction (hôte non supervisé dans NinjaOne)" }); }
+        else if (r.type === "VM" && !r.os && !r.ip) verifs.push({ r, t: r.nom + " : ni IP ni OS connus (VMware Tools absents ?) — doublon possible" });
+        else if (r.type === "Physique" && /esxi|vmware|hyper-v/i.test((r.os || "") + " " + (r.role || "")) && !r.ninja_id) verifs.push({ r, t: "Hôte " + r.nom + " : matériel non surveillé (absent de NinjaOne) — l'ajouter dans NinjaOne ou configurer les alertes de son iLO" });
+      });
+
+      const tops = liste.filter(x => !x.vm).map(x => x.r).filter(r => r.type !== "VM");
+      const orphelines = invRows.filter(r => r.type === "VM" && !tops.some(t => t.id === r.parent_id));
+      const dotMaj = (r) => r.a_jour === "Oui" ? VERT : r.a_jour === "Non" ? ROUGE : GRIS;
+      const dotAv = (r) => r.antivirus === "Oui" && r.av_a_jour !== "Non" ? VERT : (r.antivirus === "Non" || r.av_a_jour === "Non" || (invEstWindows(r) && !r.antivirus)) ? ROUGE : GRIS;
+      const ligneMachine = (r) => {
+        const lien = lienNinja(r);
+        const info = [r.ip && r.ip !== r.nom ? r.ip : "", [r.os, r.version].filter(Boolean).join(" "), r.role].filter(Boolean).join(" · ") || (r.type === "VM" ? "aucune information" : "");
+        const corps = [
+          React.createElement('div', { key: "n", style: { flex: 1, minWidth: 0 } },
+            React.createElement('div', { style: { fontWeight: 600, fontSize: 13, color: "#1a1a3e" } }, r.nom, lien && React.createElement('span', { style: { fontWeight: 500, fontSize: 11, color: "#667085", marginLeft: 6 } }, "↗ NinjaOne")),
+            React.createElement('div', { style: { fontSize: 11.5, color: "#667085", marginTop: 1 } }, info)),
+          React.createElement('div', { key: "p", style: { display: "flex", gap: 5, alignItems: "center", fontSize: 11, color: "#475467", whiteSpace: "nowrap" } },
+            pastille(dotMaj(r)), "MAJ", React.createElement('span', { style: { width: 6 } }), pastille(dotAv(r)), "AV")];
+        const st = { display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #F2F4F7", textDecoration: "none", color: "inherit" };
+        return lien ? React.createElement('a', { key: r.id, href: lien, target: "_blank", rel: "noopener noreferrer", title: "Ouvrir la fiche NinjaOne", style: st }, corps)
+          : React.createElement('div', { key: r.id, style: st }, corps);
+      };
+      const blocHote = (t, vms) => {
+        const cp = t ? invCarePack(t) : {};
+        const lien = lienNinja(t);
+        return React.createElement('div', { key: t ? t.id : "orph", style: { minWidth: 0 } },
+          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", paddingBottom: 8, borderBottom: "1px solid #E4E7EC", flexWrap: "wrap" } },
+            t ? React.createElement(lien ? 'a' : 'span', lien ? { href: lien, target: "_blank", rel: "noopener noreferrer", style: { fontWeight: 700, fontSize: 14, color: "#1a1a3e", textDecoration: "none" } } : { style: { fontWeight: 700, fontSize: 14, color: "#1a1a3e" } },
+                t.nom + " · " + [t.os, t.version].filter(Boolean).join(" "), lien ? " ↗" : "")
+              : React.createElement('span', { style: { fontWeight: 700, fontSize: 14, color: "#1a1a3e" } }, "VM sans hôte"),
+            t && cp.l && React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: cp.c, background: cp.bg, padding: "2px 8px", borderRadius: 20 } }, "Care Pack : " + (cp.l === "OK" ? "jusqu'au " + fmtD(t.care_pack_fin) : cp.l))),
+          vms.length ? vms.map(ligneMachine) : React.createElement('div', { style: { fontSize: 12.5, color: "#999", padding: "8px 0" } }, t && t.type === "Physique" ? "Aucune VM" : ""));
+      };
+      const titre = (t, n, c) => React.createElement('h3', { style: { margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#1a1a3e" } }, t, React.createElement('span', { style: { color: c } }, " · " + n));
+
+      return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 16, marginBottom: 14 } },
+        React.createElement('div', null,
+          titre("À traiter", actions.length, actions.length ? "#B42318" : "#2F855A"),
+          actions.length === 0 && React.createElement('div', { style: { ...carte, padding: "14px 16px", fontSize: 13, color: "#2F855A" } }, "✓ Rien à traiter pour cet établissement."),
+          React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 8 } },
+            actions.map(a => React.createElement('div', { key: a.key, style: { ...carte, padding: "13px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" } },
+              React.createElement('span', { style: { padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, color: a.c, background: a.bg, whiteSpace: "nowrap" } }, a.type),
+              React.createElement('div', { style: { flex: "1 1 300px", minWidth: 0 } },
+                React.createElement('div', { style: { fontWeight: 700, fontSize: 14, color: "#1a1a3e" } }, a.titre),
+                a.detail && React.createElement('div', { style: { fontSize: 12.5, color: "#475467", marginTop: 2 } }, a.detail)),
+              React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, a.boutons.filter(Boolean)))))),
+        verifs.length > 0 && React.createElement('div', null,
+          titre("À vérifier sur place", verifs.length, "#B54708"),
+          React.createElement('div', { style: carte },
+            verifs.map((v, i) => React.createElement('div', { key: v.r.id + i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "10px 16px", borderTop: i ? "1px solid #F2F4F7" : "none", fontSize: 13, flexWrap: "wrap" } },
+              React.createElement('span', { style: { color: "#344054" } }, v.t),
+              React.createElement('button', { onClick: () => ajouterCommentaire(v.r, "vérifié le " + dateFr() + " par " + adminFromName().split(" ")[0]), style: { background: "none", border: "none", color: "#475467", fontWeight: 600, fontSize: 12.5, cursor: "pointer" } }, "Marquer vérifié"))))),
+        React.createElement('div', null,
+          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 } },
+            React.createElement('h3', { style: { margin: 0, fontSize: 15, fontWeight: 700, color: "#1a1a3e", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, "Tout le parc",
+              React.createElement('span', { style: { fontSize: 12, fontWeight: 500, color: "#475467", display: "inline-flex", alignItems: "center", gap: 5, marginLeft: 8 } },
+                pastille(VERT), "OK", React.createElement('span', { style: { width: 6 } }), pastille(ROUGE), "À corriger", React.createElement('span', { style: { width: 6 } }), pastille(GRIS), "Inconnu")),
+            React.createElement('button', { onClick: () => setInvDetail(!invDetail), style: btnC(false) }, invDetail ? "Masquer le détail" : "Afficher le détail et modifier")),
+          React.createElement('div', { style: { ...carte, padding: "14px 16px", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 18 } },
+            tops.map(t => blocHote(t, enfants(t.id).sort((a, b) => (a.ordre || 0) - (b.ordre || 0)))),
+            orphelines.length > 0 && blocHote(null, orphelines))));
+    };
+
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 14, lineHeight: 1.6 } },
         invHotel ? "Une ligne par serveur : hôtes physiques et, en dessous, leurs VM. Les jours restants et le statut du Care Pack sont calculés automatiquement. Une modification renseigne la date du contrôle et votre nom s'ils sont vides."
@@ -12447,6 +12651,9 @@ const nav = isAdmin
         React.createElement('select', { id: "inv-hotel", value: invHotel, onChange: e => invChoisirHotel(e.target.value), style: { ...inS, width: isMobile ? "100%" : 320, padding: "9px 10px", fontSize: 13.5, fontWeight: 600 } },
           React.createElement('option', { value: "" }, "— Choisir un établissement —"),
           [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
+        !invHotel && React.createElement('div', { style: { display: "flex", gap: 4, background: "white", border: "1px solid #DDD", borderRadius: 9, padding: 3 } },
+          [["actions", "Par action"], ["hotels", "Par établissement"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setInvVue(k),
+            style: { padding: "6px 12px", borderRadius: 7, border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: invVue === k ? SB : "white", color: invVue === k ? "white" : "#555" } }, l))),
         invHotel && React.createElement('button', { onClick: () => invAjouter(null), style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un hôte physique"),
         invHotel && React.createElement('button', { onClick: () => invChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels"),
         React.createElement('button', { onClick: () => invOuvrirImport(invHotel || null), title: "Lire les tableaux des fiches Infrastructure (hôtes ESXi, serveurs / VM) et proposer les serveurs à ajouter", style: { padding: "8px 14px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
@@ -12481,7 +12688,8 @@ const nav = isAdmin
       })(),
 
       // ===== Synthèse de tous les hôtels =====
-      !invHotel && (() => {
+      !invHotel && invVue === "actions" && invVueActions(),
+      !invHotel && invVue === "hotels" && (() => {
         const ETATS = {
           vide:     { l: "Non renseigné", c: "#718096", bg: "#EEF0F4", rang: 4 },
           corriger: { l: "À corriger", c: "#C53030", bg: "#FDE2E2", rang: 1 },
@@ -12575,8 +12783,9 @@ const nav = isAdmin
               : invRows.length > 0 && React.createElement('span', { style: { fontSize: 12.5, fontWeight: 700, color: "#2F855A", background: "#E6F6EA", padding: "5px 12px", borderRadius: 20 } }, "✅ Rien à corriger")),
           invRows.length === 0 && React.createElement('div', { style: { padding: 32, textAlign: "center", color: "#888", fontSize: 13, background: "white", borderRadius: 10, border: "1px solid #E8E8F0", marginBottom: 12 } },
             "Aucun serveur inventorié pour " + (hotel ? hotel.name : "cet hôtel") + ". Cliquez sur « + Ajouter un hôte physique », puis « + VM » sur la ligne de l'hôte."),
-          // Tableau (défilement horizontal, colonne Serveur figée)
-          invRows.length > 0 && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "auto", maxHeight: "70vh", marginBottom: 12 } },
+          invRows.length > 0 && invVueHotel(liste),
+          // Tableau (défilement horizontal, colonne Serveur figée) : affiché sur demande
+          invDetail && invRows.length > 0 && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 12, overflow: "auto", maxHeight: "70vh", marginBottom: 12 } },
             React.createElement('table', { style: { borderCollapse: "separate", borderSpacing: 0, width: "100%", fontSize: 12.5 } },
               React.createElement('thead', null,
                 React.createElement('tr', null, grp("SERVEUR", 7, "#2D3748"), grp("MISES À JOUR", 2, "#2B6CB0"), grp("CARE PACK", 5, "#6B46C1"), grp("ANTIVIRUS", 3, "#C05621"), grp("CONTRÔLE", 4, "#2F855A")),
