@@ -5266,6 +5266,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // ---- Remplissage depuis NinjaOne (Worker dsi-hotel-inventaire, route /importer) ----
   // { busy, progression, resultats: [{ hotel, ok, erreur, mis_a_jour, ajoutes, ecarts, absents_de_ninjaone }] }
   const [invNinja, setInvNinja] = useState(null);
+  const [invNinjaFiltre, setInvNinjaFiltre] = useState("");  // compte-rendu : filtre par indicateur
+  const [invNinjaOuvert, setInvNinjaOuvert] = useState(""); // compte-rendu : établissement déplié
   // Présentation « file d'actions » : vue de la synthèse, détail éditable de la fiche, groupe déplié
   const [invVue, setInvVue] = useState("actions");
   const [invDetail, setInvDetail] = useState(false);
@@ -5289,13 +5291,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         });
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw Object.assign(new Error(d.error || ("Erreur " + res.status + " (le Worker dsi-hotel-inventaire est-il déployé ?)")), { introuvable: res.status === 404 });
-        resultats.push({ hotel: h.name, ok: true, mis_a_jour: d.mis_a_jour || [], ajoutes: d.ajoutes || [], ecarts: d.ecarts || [], absents: d.absents_de_ninjaone || [], erreurs: d.erreurs || [] });
+        resultats.push({ hotel: h.name, hotelId: h.id, ok: true, mis_a_jour: d.mis_a_jour || [], ajoutes: d.ajoutes || [], ecarts: d.ecarts || [], absents: d.absents_de_ninjaone || [], erreurs: d.erreurs || [], doublons: d.doublons_possibles || [], rapprochements: d.rapprochements || [] });
       } catch (e) {
         resultats.push({ hotel: h.name, ok: false, introuvable: !!e.introuvable, erreur: e.message || String(e) });
         if (/401|403|Session|déployé/i.test(e.message || "")) break; // inutile de continuer
       }
     }
-    setInvNinja({ busy: false, resultats });
+    setInvNinja({ busy: false, resultats, fin: new Date() });
+    setInvNinjaFiltre(""); setInvNinjaOuvert(hotelId ? (cibles[0] && cibles[0].name) || "" : "");
     if (hotelId) loadInv(hotelId); else loadInvSynthese();
   };
   // Care Pack : jours restants + statut (même calcul que le fichier Excel)
@@ -12651,9 +12654,6 @@ const nav = isAdmin
         React.createElement('select', { id: "inv-hotel", value: invHotel, onChange: e => invChoisirHotel(e.target.value), style: { ...inS, width: isMobile ? "100%" : 320, padding: "9px 10px", fontSize: 13.5, fontWeight: 600 } },
           React.createElement('option', { value: "" }, "— Choisir un établissement —"),
           [...hotels].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
-        !invHotel && React.createElement('div', { style: { display: "flex", gap: 4, background: "white", border: "1px solid #DDD", borderRadius: 9, padding: 3 } },
-          [["actions", "Par action"], ["hotels", "Par établissement"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setInvVue(k),
-            style: { padding: "6px 12px", borderRadius: 7, border: "none", fontSize: 12.5, fontWeight: 600, cursor: "pointer", background: invVue === k ? SB : "white", color: invVue === k ? "white" : "#555" } }, l))),
         invHotel && React.createElement('button', { onClick: () => invAjouter(null), style: { padding: "8px 14px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Ajouter un hôte physique"),
         invHotel && React.createElement('button', { onClick: () => invChoisirHotel(""), style: { padding: "8px 14px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12.5, cursor: "pointer" } }, "← Synthèse de tous les hôtels"),
         React.createElement('button', { onClick: () => invOuvrirImport(invHotel || null), title: "Lire les tableaux des fiches Infrastructure (hôtes ESXi, serveurs / VM) et proposer les serveurs à ajouter", style: { padding: "8px 14px", background: "white", border: "1px solid " + G, color: G2, borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
@@ -12667,24 +12667,64 @@ const nav = isAdmin
       invNinja && !invNinja.busy && invNinja.resultats && invNinja.resultats.length > 0 && (() => {
         const rs = invNinja.resultats;
         const ok = rs.filter(r => r.ok), ko = rs.filter(r => !r.ok && !r.introuvable), introuvables = rs.filter(r => r.introuvable);
-        const nbMaj = ok.reduce((a, r) => a + r.mis_a_jour.length, 0), nbAjout = ok.reduce((a, r) => a + r.ajoutes.length, 0);
-        const li = (t, k, c) => React.createElement('li', { key: k, style: { margin: "2px 0", color: c || "#333" } }, t);
-        return React.createElement('div', { style: { background: "#F4F6FB", border: "1px solid #D5DBEA", borderRadius: 8, padding: "12px 14px", fontSize: 12.5, marginBottom: 12, lineHeight: 1.55 } },
-          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 6 } },
-            React.createElement('b', { style: { color: "#1A1A3E" } }, "🔄 NinjaOne : " + nbMaj + " ligne(s) mise(s) à jour, " + nbAjout + " machine(s) ajoutée(s)" + (rs.length > 1 ? " sur " + ok.length + " établissement(s)" : "")),
-            React.createElement('button', { onClick: () => setInvNinja(null), style: { background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 16 } }, "×")),
-          React.createElement('ul', { style: { margin: 0, paddingLeft: 18 } },
-            ok.filter(r => r.mis_a_jour.length || r.ajoutes.length || r.ecarts.length || r.absents.length || r.erreurs.length).map((r, i) => React.createElement('li', { key: "h" + i, style: { margin: "4px 0" } },
-              rs.length > 1 && React.createElement('b', null, r.hotel + " : "),
-              r.ajoutes.length ? "ajoutées : " + r.ajoutes.join(", ") + ". " : "",
-              r.mis_a_jour.length ? "mises à jour : " + r.mis_a_jour.map(m => m.nom).join(", ") + ". " : "",
-              React.createElement('ul', { style: { margin: "2px 0 0", paddingLeft: 16 } },
-                r.ecarts.map((t, j) => li("⚠ " + t, "e" + j, "#B7791F")),
-                r.absents.length ? li("Absentes de NinjaOne (à saisir ou superviser) : " + r.absents.join(", "), "a", "#718096") : null,
-                r.erreurs.map((t, j) => li("Donnée partielle — " + t, "x" + j, "#C53030"))))),
-            ok.length && !nbMaj && !nbAjout && !ok.some(r => r.ecarts.length || r.absents.length) ? li("Rien à changer : l'inventaire correspond déjà à NinjaOne.", "rien") : null,
-            ko.map((r, i) => li("✗ " + r.hotel + " : " + r.erreur, "k" + i, "#C53030")),
-            introuvables.length ? li("Sans organisation NinjaOne correspondante (renseignez « Nom NinjaOne » sur la fiche établissement) : " + introuvables.map(r => r.hotel).join(", "), "i", "#718096") : null));
+        const IND = [
+          { k: "doublons", l: "doublons possibles", c: "#B42318", bg: "#FEE4E2", n: r => (r.doublons || []).length },
+          { k: "ajoutes", l: "machines ajoutées", c: "#067647", bg: "#DCFAE6", n: r => r.ajoutes.length },
+          { k: "maj", l: "lignes mises à jour", c: "#1a1a3e", bg: "#EEF0F6", n: r => r.mis_a_jour.length },
+          { k: "ecarts", l: "rangées sous un autre hôte", c: "#B54708", bg: "#FEF0C7", n: r => r.ecarts.length },
+          { k: "absents", l: "absentes de NinjaOne", c: "#475467", bg: "#F2F4F7", n: r => r.absents.length },
+        ];
+        const total = (ind) => ok.reduce((s, r) => s + ind.n(r), 0);
+        const filtre = IND.find(i => i.k === invNinjaFiltre);
+        const avecQqch = ok.filter(r => IND.some(i => i.n(r)) || r.erreurs.length);
+        const lignesT = (filtre ? ok.filter(r => filtre.n(r)) : avecQqch)
+          .sort((a, b) => IND[0].n(b) - IND[0].n(a) || (IND[1].n(b) + IND[2].n(b)) - (IND[1].n(a) + IND[2].n(a)) || a.hotel.localeCompare(b.hotel));
+        const cols = isMobile ? "1fr" : "2fr repeat(5, minmax(0, 1fr)) 28px";
+        const pastilleN = (n, i) => n ? React.createElement('span', { style: { display: "inline-block", minWidth: 22, padding: "2px 9px", borderRadius: 20, fontSize: 12.5, fontWeight: 700, color: i.c, background: i.bg } }, n)
+          : React.createElement('span', { style: { color: "#98A2B3", fontSize: 13 } }, "—");
+        const bloc = (titre, c, items) => React.createElement('div', { key: titre },
+          React.createElement('div', { style: { fontWeight: 700, color: c, marginBottom: 4 } }, titre + " · " + items.length),
+          items.length ? React.createElement('div', { style: { color: "#344054", whiteSpace: "pre-line" } }, items.join("\n")) : React.createElement('div', { style: { color: "#98A2B3" } }, "—"));
+        const quand = invNinja.fin ? invNinja.fin.toLocaleDateString("fr-FR") + " à " + invNinja.fin.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "";
+        return React.createElement('div', { style: { background: "white", border: "1px solid #E4E7EC", borderRadius: 14, overflow: "hidden", marginBottom: 14 } },
+          React.createElement('div', { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "14px 18px", borderBottom: "1px solid #E4E7EC", flexWrap: "wrap" } },
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: "#1a1a3e" } }, "Remplissage depuis NinjaOne" + (quand ? " — " + quand : "")),
+              React.createElement('div', { style: { fontSize: 12.5, color: "#667085", marginTop: 3 } },
+                ok.length + " établissement(s) traité(s)" + (introuvables.length ? " · " + introuvables.length + " sans organisation NinjaOne" : "") + (ko.length ? " · " + ko.length + " en erreur" : ""))),
+            React.createElement('button', { onClick: () => setInvNinja(null), "aria-label": "Fermer", style: { background: "none", border: "none", color: "#475467", cursor: "pointer", fontSize: 20, padding: "2px 8px" } }, "×")),
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))", borderBottom: "1px solid #E4E7EC" } },
+            IND.map(i => React.createElement('button', { key: i.k, onClick: () => setInvNinjaFiltre(invNinjaFiltre === i.k ? "" : i.k), title: "Filtrer les établissements",
+                style: { textAlign: "left", padding: "12px 18px", border: "none", borderRight: "1px solid #EEF0F4", cursor: "pointer", fontFamily: "inherit",
+                  background: invNinjaFiltre === i.k ? "#F4F6FB" : "white", boxShadow: invNinjaFiltre === i.k ? "inset 0 -3px 0 " + SB : "none" } },
+              React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: total(i) ? i.c : "#98A2B3" } }, total(i)),
+              React.createElement('div', { style: { fontSize: 12, color: "#475467", fontWeight: 500, marginTop: 2 } }, i.l)))),
+          React.createElement('div', { style: { overflowX: "auto" } },
+            React.createElement('div', { style: { minWidth: isMobile ? 0 : 860 } },
+              !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 10, padding: "9px 18px", fontSize: 11, fontWeight: 700, color: "#475467", textTransform: "uppercase", letterSpacing: ".04em", background: "#F9FAFB", borderBottom: "1px solid #E4E7EC" } },
+                React.createElement('span', null, "Établissement"), IND.map(i => React.createElement('span', { key: i.k, style: { textAlign: "center" } }, i.l.replace("machines ", "").replace("lignes ", ""))), React.createElement('span', null)),
+              lignesT.length === 0 && React.createElement('div', { style: { padding: "16px 18px", fontSize: 13, color: "#2F855A" } }, "✓ Rien à signaler : l'inventaire correspond déjà à NinjaOne."),
+              lignesT.map(r => {
+                const ouvert = invNinjaOuvert === r.hotel;
+                return React.createElement('div', { key: r.hotel },
+                  React.createElement('div', { onClick: () => setInvNinjaOuvert(ouvert ? "" : r.hotel),
+                      style: { display: "grid", gridTemplateColumns: cols, gap: 10, padding: "10px 18px", alignItems: "center", fontSize: 13.5, borderBottom: "1px solid #F2F4F7", cursor: "pointer", background: ouvert ? "#F4F6FB" : "white" } },
+                    React.createElement('span', { style: { fontWeight: 600, color: "#1a1a3e" } }, r.hotel),
+                    IND.map(i => React.createElement('span', { key: i.k, style: { textAlign: isMobile ? "left" : "center" } }, isMobile && i.n(r) ? i.n(r) + " " + i.l : isMobile ? null : pastilleN(i.n(r), i))),
+                    React.createElement('span', { style: { color: "#667085", fontSize: 12, textAlign: "right" } }, ouvert ? "▲" : "▼")),
+                  ouvert && React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))", gap: 14, padding: "12px 18px 16px", background: "#FAFBFD", borderBottom: "1px solid #E4E7EC", fontSize: 12.5, lineHeight: 1.6 } },
+                    bloc("Doublons possibles", "#B42318", r.doublons || []),
+                    bloc("Ajoutées", "#067647", r.ajoutes),
+                    bloc("Mises à jour", "#1a1a3e", r.mis_a_jour.map(m => m.nom).concat((r.rapprochements || []).map(x => "rapprochée : " + x))),
+                    bloc("Autre hôte", "#B54708", r.ecarts),
+                    bloc("Absentes de NinjaOne", "#475467", r.absents.concat(r.erreurs.map(e => "⚠ donnée partielle : " + e)))),
+                  ouvert && r.hotelId && invHotel !== r.hotelId && React.createElement('div', { style: { padding: "0 18px 12px", background: "#FAFBFD" } },
+                    React.createElement('button', { onClick: () => invChoisirHotel(r.hotelId), style: { background: "none", border: "none", color: G2, fontWeight: 600, fontSize: 12.5, cursor: "pointer", padding: 0 } }, "Ouvrir l'inventaire de " + r.hotel + " →")));
+              }),
+              !filtre && ok.length > avecQqch.length && React.createElement('div', { style: { padding: "10px 18px", fontSize: 12.5, color: "#475467" } }, "+ " + (ok.length - avecQqch.length) + " établissement(s) sans changement"),
+              (ko.length > 0 || introuvables.length > 0) && React.createElement('div', { style: { padding: "10px 18px", fontSize: 12.5, borderTop: "1px solid #F2F4F7", lineHeight: 1.6 } },
+                ko.map((r, i) => React.createElement('div', { key: "k" + i, style: { color: "#B42318" } }, "✗ " + r.hotel + " : " + r.erreur)),
+                introuvables.length > 0 && React.createElement('div', { style: { color: "#667085" } }, "Sans organisation NinjaOne correspondante (renseignez « Nom NinjaOne » sur la fiche établissement) : " + introuvables.map(r => r.hotel).join(", "))))));
       })(),
 
       // ===== Synthèse de tous les hôtels =====
