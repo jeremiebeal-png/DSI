@@ -930,7 +930,7 @@ function App() {
     setTickets(prev => prev.map(x => x.id === ticket.id ? { ...x, assigned_to: val } : x));
   };
   const mfaRequired = isAdmin || isSupervisor; // MFA obligatoire pour admins et superviseurs
- const isSuperAdmin = isAdmin && (profile?.email || "").toLowerCase() === "support@dsihotel.com";
+ const isSuperAdmin = isAdmin && ["support@dsihotel.com", "pascal.sanglier@dsihotel.fr"].includes((profile?.email || "").toLowerCase());
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
   const ADMIN_SECTIONS = [
