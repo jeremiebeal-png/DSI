@@ -2938,13 +2938,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const lancerVerifsAgent = async () => {
     const t = agTicket, d = agEtat && agEtat.data;
     if (!t || !d) return;
-    const deviceId = agDevice || (d.ninja && d.ninja.identification && d.ninja.identification.deviceId);
+    const pcId = agDevice || (d.ninja && d.ninja.identification && d.ninja.identification.deviceId);
     const cles = (d.scripts || []).map(x => x.cle);
-    if (!deviceId || !cles.length) return;
+    // Scripts réservés à un serveur de l'hôtel (ex. serveur d'impression, Opera) : pas besoin de choisir un PC
+    const surServeur = (d.scripts || []).length > 0 && d.scripts.every(x => x.serveur);
+    if ((!pcId && !surServeur) || !cles.length) return;
+    const ou = surServeur ? "le serveur " + d.scripts[0].serveur : "le PC";
     const essai = ++agRef.current;
-    setAgEtat({ phase: "verif", msg: "Lancement des vérifications sur le PC…", data: d });
+    setAgEtat({ phase: "verif", msg: "Lancement sur " + ou + "…", data: d });
     try {
-      const r = await callAgentApi("/verifier", { ticketId: t.id, deviceId, scripts: cles });
+      const r = await callAgentApi("/verifier", { ticketId: t.id, deviceId: surServeur ? null : pcId, scripts: cles });
+      const deviceId = r.deviceId || pcId; // appareil réellement utilisé (le serveur pour un script serveur)
       const jetons = (r.lances || []).filter(x => x.ok).map(x => ({ cle: x.cle, jeton: x.jeton }));
       const echecs = (r.lances || []).filter(x => !x.ok);
       if (!jetons.length) throw new Error("Aucune vérification lancée" + (echecs.length ? " : " + echecs.map(x => x.cle + " — " + x.erreur).join(" ; ") : ""));
@@ -2953,15 +2957,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       while (Date.now() - debut < 150000) {
         await new Promise(ok => setTimeout(ok, 5000));
         if (agRef.current !== essai) return;
-        setAgEtat({ phase: "verif", msg: "Vérifications en cours sur le PC (" + Math.round((Date.now() - debut) / 1000) + " s)…", data: d });
+        setAgEtat({ phase: "verif", msg: "En cours sur " + ou + " (" + Math.round((Date.now() - debut) / 1000) + " s)…", data: d });
         res = await callAgentApi("/verifier-resultat", { deviceId, jetons }).catch(() => null);
         if (res && res.tous_prets) break;
       }
       const obtenus = ((res && res.resultats) || []).filter(x => x.pret).map(x => ({ cle: x.cle, deviceId, resultat: x.resultat }));
-      if (!obtenus.length) throw new Error("Pas de résultat des scripts après 2 min 30 (PC lent ou script en échec : voir les activités du PC dans NinjaOne).");
+      if (!obtenus.length) throw new Error("Pas de résultat des scripts après 2 min 30 (" + ou + " lent ou script en échec : voir ses activités dans NinjaOne).");
       const tous = agScripts.filter(a => !obtenus.some(o => o.cle === a.cle)).concat(obtenus);
       setAgScripts(tous);
-      await lancerAgent(t, deviceId, tous);
+      await lancerAgent(t, pcId || null, tous);
     } catch (e) {
       if (agRef.current === essai) setAgEtat({ phase: "erreur", msg: (e && e.message) || String(e), data: d });
     }
@@ -8471,8 +8475,10 @@ const nav = isAdmin
               React.createElement('span', null, React.createElement('b', null, v.point), " — " + v.resultat))),
 
             (d.scripts || []).length > 0 && React.createElement('div', { style: { marginTop: 10, background: "#F3EEFF", borderRadius: 8, padding: "9px 12px", fontSize: 12.5 } },
-              React.createElement('div', { style: { marginBottom: 6, color: "#44337A" } }, "L'agent propose de lancer sur le PC (lecture seule) : " + d.scripts.map(x => x.libelle).join(", ")),
-              React.createElement('button', { onClick: lancerVerifsAgent, disabled: occupe || !(agDevice || (nj && nj.identification && nj.identification.deviceId)), style: { padding: "7px 13px", background: "#6B46C1", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: occupe ? 0.6 : 1 } }, "▶ Lancer les vérifications")),
+              React.createElement('div', { style: { marginBottom: 6, color: "#44337A" } },
+                "L'agent propose de lancer " + (d.scripts.every(x => x.serveur) ? "sur le serveur " + d.scripts[0].serveur : "sur le PC") +
+                (d.scripts.some(x => x.modifie) ? " (modifie l'appareil)" : " (lecture seule)") + " : " + d.scripts.map(x => x.libelle).join(", ")),
+              React.createElement('button', { onClick: lancerVerifsAgent, disabled: occupe || !(d.scripts.every(x => x.serveur) || agDevice || (nj && nj.identification && nj.identification.deviceId)), style: { padding: "7px 13px", background: "#6B46C1", border: "none", color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: occupe ? 0.6 : 1 } }, d.scripts.some(x => x.modifie) ? "▶ Lancer" : "▶ Lancer les vérifications")),
             agScripts.length > 0 && React.createElement('div', { style: { fontSize: 11.5, color: "#6B46C1", marginTop: 6 } }, "Résultats pris en compte : " + agScripts.map(x => x.cle).join(", ")),
 
             titreBloc("Analyse (interne, jamais envoyée)"),
