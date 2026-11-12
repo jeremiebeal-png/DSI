@@ -70,15 +70,17 @@ function Page_sophos(ctx) {
       return ea.rank - eb.rank || String(a.name).localeCompare(String(b.name));
     });
 
-    const tuile = (lbl, val, coul) => React.createElement('div', { style: { flex: "1 1 140px", background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "12px 15px" } },
+    const tuile = (lbl, val, coul, onClick) => React.createElement('div', { onClick, title: onClick ? "Voir le détail" : undefined, style: { flex: "1 1 140px", background: "white", border: "1px solid " + (onClick && (soTab === "alertes" && lbl.startsWith("Alertes") || soTab === "licences" && lbl.startsWith("Licences")) ? G : "#E8E8F0"), borderRadius: 10, padding: "12px 15px", cursor: onClick ? "pointer" : "default" } },
       React.createElement('div', { style: { fontSize: 11, color: "#888", marginBottom: 5 } }, lbl),
       React.createElement('div', { style: { fontSize: 22, fontWeight: 700, color: coul } }, String(val)));
     const btn = (lbl, onClick, extra) => React.createElement('button', { onClick, disabled: extra && extra.disabled, style: Object.assign({ padding: "6px 12px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" }, (extra && extra.style) || {}) }, lbl);
     const inputS = { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 7, fontSize: 13, boxSizing: "border-box", fontFamily: "inherit" };
     // ===== Protection de l'hôtel : antivirus + SOC externe (colonnes hotels.antivirus / soc / antivirus_futur / antivirus_bascule) =====
-    const AV = { sophos: { l: "Sophos", img: "img/logos/sophos.png" }, sentinelone: { l: "SentinelOne", img: "img/logos/sentinelone.png" },
-      crowdstrike: { l: "CrowdStrike", img: "img/logos/crowdstrike.png" }, autre: { l: "Autre antivirus", img: null } };
+    const AV = { sophos: { l: "Sophos", img: "img/logos/sophos.png", url: "https://central.sophos.com" },
+      sentinelone: { l: "SentinelOne", img: "img/logos/sentinelone.png", url: "https://www.sentinelone.com/" },
+      crowdstrike: { l: "CrowdStrike", img: "img/logos/crowdstrike.png", url: "https://www.crowdstrike.com/fr-fr/login/" }, autre: { l: "Autre antivirus", img: null } };
     const SOC = { stoik: { l: "Stoïk SOC", img: "img/logos/stoik.png" } };
+    const GRILLE = "minmax(0, 2.2fr) 180px 64px minmax(0, 2fr) 112px";
     const jourIso = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
     const dateCourte = (iso) => iso ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(0, 4) : "";
     const protectionDe = (h, c) => {
@@ -90,9 +92,12 @@ function Page_sophos(ctx) {
     const logo = (m, key, opts) => {
       if (!m) return null;
       const o = opts || {};
-      if (!m.img) return React.createElement('span', { key, title: o.title || m.l, style: { fontSize: 10.5, fontWeight: 600, color: "#555", background: "#F0F0F4", borderRadius: 4, padding: "2px 6px" } }, m.l);
-      return React.createElement('img', { key, src: m.img, alt: m.l, title: o.title || m.l,
-        style: { height: 18, borderRadius: 3, verticalAlign: "middle", flexShrink: 0, filter: o.gris ? "grayscale(1)" : "none", opacity: o.gris ? 0.45 : 1 } });
+      const el = !m.img
+        ? React.createElement('span', { key: m.url ? undefined : key, title: o.title || m.l, style: { fontSize: 10.5, fontWeight: 600, color: "#555", background: "#F0F0F4", borderRadius: 4, padding: "2px 6px" } }, m.l)
+        : React.createElement('img', { key: m.url ? undefined : key, src: m.img, alt: m.l, title: (o.title || m.l) + (m.url ? " — ouvrir la console" : ""),
+            style: { height: 18, borderRadius: 3, verticalAlign: "middle", flexShrink: 0, display: "block", filter: o.gris ? "grayscale(1)" : "none", opacity: o.gris ? 0.45 : 1 } });
+      if (!m.url) return el;
+      return React.createElement('a', { key, href: m.url, target: "_blank", rel: "noopener noreferrer", onClick: e => e.stopPropagation(), style: { display: "inline-flex", flexShrink: 0 } }, el);
     };
     const logosProtection = (pr) => [
       pr.actuel && logo(AV[pr.actuel], "av", { title: "Antivirus : " + (AV[pr.actuel] || {}).l }),
@@ -108,18 +113,20 @@ function Page_sophos(ctx) {
 
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        "Supervision centralisée des comptes Sophos Central de chaque établissement : alertes de sécurité et santé des postes. Les données sont actualisées automatiquement environ toutes les 20 minutes ; les nouvelles alertes de sécurité de sévérité haute sont envoyées par email à l'équipe. Les alertes de licence sont regroupées dans l'onglet « Licences »."),
+        "Supervision centralisée des comptes Sophos Central de chaque établissement : alertes de sécurité et santé des postes. Les données sont actualisées automatiquement environ toutes les 20 minutes ; les nouvelles alertes de sécurité de sévérité haute sont envoyées par email à l'équipe. Cliquez sur une tuile ou sur le badge d'un hôtel pour voir le détail des alertes ou des licences."),
       React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
         tuile("Établissements suivis", soComptes.filter(c => c.actif).length + " / " + hotels.length, "#0F0F24"),
         tuile("Alertes hautes", hautes, hautes > 0 ? "#C53030" : "#2F855A"),
-        tuile("Alertes ouvertes", ouvertes, ouvertes > 0 ? "#DD6B20" : "#2F855A"),
+        tuile("Alertes ouvertes", ouvertes, ouvertes > 0 ? "#DD6B20" : "#2F855A", () => { setSoHotelFiltre(""); setSoTab("alertes"); }),
         tuile("Postes en mauvaise santé", ko, ko > 0 ? "#C53030" : "#2F855A"),
         tuile("Postes muets (+7 j)", muets, muets > 0 ? "#DD6B20" : "#2F855A"),
         tuile("Comptes en erreur", nbErreurs, nbErreurs > 0 ? "#C53030" : "#2F855A"),
-        tuile("Licences à traiter", nbLic, nbLic > 0 ? "#B7791F" : "#2F855A")
+        tuile("Licences à traiter", nbLic, nbLic > 0 ? "#B7791F" : "#2F855A", () => { setSoHotelFiltre(""); setSoTab("licences"); })
       ),
       React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 } },
-        [["alertes", "🚨 Alertes" + (ouvertes ? " (" + ouvertes + ")" : "")], ["licences", "📜 Licences" + (nbLic ? " (" + nbLic + ")" : "")], ["hotels", "🏨 Établissements"], ["suppr", "🗑 À supprimer" + (soASupprimer.length ? " (" + soASupprimer.length + ")" : "")]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
+        (soTab === "alertes" || soTab === "licences") && React.createElement('button', { onClick: () => { setSoHotelFiltre(""); setSoTab("hotels"); }, style: { padding: "7px 15px", border: "1px solid " + G, background: G + "18", color: G2, borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: 600 } },
+          "← " + (soTab === "alertes" ? "Alertes" : "Licences") + (soHotelFiltre ? " · " + nomHotel(soHotelFiltre) : "") + " — retour aux établissements"),
+        [["hotels", "🏨 Établissements"], ["suppr", "🗑 À supprimer" + (soASupprimer.length ? " (" + soASupprimer.length + ")" : "")]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
         React.createElement('button', { onClick: () => loadSophos(), disabled: soLoading, style: { marginLeft: "auto", padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, soLoading ? "…" : "🔄 Actualiser")
       ),
       soMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: soMsg.startsWith("❌") ? "#FDECEC" : "#F0F7F2", border: "1px solid " + (soMsg.startsWith("❌") ? "#F5B5B5" : "#C6E6D0"), color: soMsg.startsWith("❌") ? "#C53030" : "#2F855A" } }, soMsg),
@@ -279,6 +286,10 @@ function Page_sophos(ctx) {
             );
           });
         })(),
+        React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, overflow: "hidden" } },
+          !isMobile && React.createElement('div', { style: { display: "grid", gridTemplateColumns: GRILLE, gap: 12, padding: "8px 15px", fontSize: 10.5, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: ".03em", background: "#FAFAFC", borderBottom: "1px solid #E8E8F0" } },
+            React.createElement('span', null, "Hôtel"), React.createElement('span', null, "Antivirus"), React.createElement('span', null, "SOC"),
+            React.createElement('span', null, "Postes et problèmes"), React.createElement('span', { style: { textAlign: "right" } }, "Actions")),
         hotelsTries.map(h => {
           const c = compteDe(h.id);
           const et = etatHotel(c);
@@ -287,38 +298,62 @@ function Page_sophos(ctx) {
           const aProbleme = (p) => p.health !== "good" || (p.last_seen_at && new Date(p.last_seen_at).getTime() < seuilMuet);
           const pr = protectionDe(h, c);
           const horsSophos = !c && pr.actuel && pr.actuel !== "sophos";
-          return React.createElement('div', { key: h.id, style: { background: "white", border: "1px solid #E8E8F0", borderLeft: "5px solid " + et.c, borderRadius: 10, overflow: "hidden" } },
-            React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 12, padding: "11px 15px", flexWrap: "wrap" } },
-              React.createElement('div', { onClick: () => { if (!c) return; const v = ouvert ? null : h.id; setSoOpenHotel(v); if (v) loadSoPostes(h.id); }, style: { flex: "1 1 220px", minWidth: 0, cursor: c ? "pointer" : "default" } },
-                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#1a1a3e", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
-                  React.createElement('span', null, (c ? (ouvert ? "▼ " : "▶ ") : "") + h.name), ...logosProtection(pr)),
-                React.createElement('div', { style: { fontSize: 11.5, color: horsSophos ? "#718096" : et.c, fontWeight: 600, marginTop: 2 } },
-                  horsSophos ? "Protégé par " + (AV[pr.actuel] || {}).l + " (hors Sophos)" : et.l,
-                  c && c.dernier_controle && React.createElement('span', { style: { color: "#999", fontWeight: 400 } }, " · contrôlé " + fmtDateHeureFr2(c.dernier_controle)),
-                  pr.futur && React.createElement('span', { style: { color: "#C05621", fontWeight: 600 } }, " · bascule vers " + (AV[pr.futur] || {}).l + " le " + dateCourte(pr.bascule)))
+          const pastille = (txt, bg, col, extra) => React.createElement('span', Object.assign({ style: Object.assign({ background: bg, color: col, padding: "2px 8px", borderRadius: 20, whiteSpace: "nowrap" }, (extra && extra.style) || {}) }, extra && extra.props), txt);
+          const iconeBtn = (ico, titre, onClick, extra) => React.createElement('button', { onClick, title: titre, "aria-label": titre, disabled: extra && extra.disabled,
+            style: Object.assign({ width: 30, height: 28, padding: 0, background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 13, cursor: "pointer" }, (extra && extra.style) || {}) }, ico);
+          const ouvrirConfig = () => {
+            const rg = (c && c.regles) || {};
+            const j = (k) => (Array.isArray(rg[k]) ? rg[k] : []).join(", ");
+            setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "",
+              copierDe: "", principal: c ? c.principal !== false : true, libelle: (c && c.libelle) || "",
+              rGroupes: j("groupes"), rPrefixes: j("prefixes"), rDomaines: j("domaines"), rIps: j("ips"),
+              partageOuvert: !!(c && c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1) });
+          };
+          const coulPoint = horsSophos ? "#A0AEC0" : et.c;
+          const voirAlertes = (tab) => (e) => { e.stopPropagation(); setSoHotelFiltre(h.id); setSoTab(tab); };
+          const cellule = (style, ...kids) => React.createElement('div', { style: Object.assign({ minWidth: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, style || {}) }, ...kids);
+          return React.createElement('div', { key: h.id, style: { borderTop: "1px solid #F0F0F5" } },
+            React.createElement('div', { style: isMobile
+                ? { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap" }
+                : { display: "grid", gridTemplateColumns: GRILLE, gap: 12, alignItems: "center", padding: "9px 15px" } },
+              // Hôtel
+              React.createElement('div', { onClick: () => { if (!c) return; const v = ouvert ? null : h.id; setSoOpenHotel(v); if (v) loadSoPostes(h.id); }, style: { minWidth: 0, flex: isMobile ? "1 1 100%" : undefined, cursor: c ? "pointer" : "default" } },
+                React.createElement('div', { style: { fontSize: 13.5, fontWeight: 700, color: "#1a1a3e", display: "flex", alignItems: "center", gap: 7 } },
+                  React.createElement('span', { title: horsSophos ? "Hors supervision Sophos" : et.l, style: { width: 9, height: 9, borderRadius: "50%", background: coulPoint, flexShrink: 0 } }),
+                  React.createElement('span', { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (c ? (ouvert ? "▼ " : "▶ ") : "") + h.name)),
+                React.createElement('div', { style: { fontSize: 11, color: horsSophos ? "#718096" : et.c, fontWeight: 600, marginTop: 1, paddingLeft: 16 } },
+                  horsSophos ? "Hors supervision Sophos" : et.l,
+                  c && c.dernier_controle && React.createElement('span', { style: { color: "#999", fontWeight: 400 } }, " · " + fmtDateHeureFr2(c.dernier_controle)))
               ),
-              c && c.actif && c.dernier_statut !== "erreur" && React.createElement('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11 } },
-                React.createElement('span', { style: { background: "#F0F0F8", color: "#555", padding: "3px 9px", borderRadius: 20 } }, "💻 " + (c.nb_postes || 0) + " postes"),
-                c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1 && React.createElement('span', { title: "Compte Sophos partagé avec : " + soComptes.filter(x => x.tenant_id === c.tenant_id && x.hotel_id !== c.hotel_id).map(x => nomHotel(x.hotel_id)).join(", "), style: { background: "#FFFBEB", color: "#8A6D1F", padding: "3px 9px", borderRadius: 20 } }, "🔗 partagé" + (c.principal ? " · principal" : "")),
-                (c.nb_postes_ko || 0) > 0 && React.createElement('span', { style: { background: "#FDECEC", color: "#C53030", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_ko + " mauvais"),
-                (c.nb_postes_suspects || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_suspects + " suspects"),
-                (c.nb_postes_muets || 0) > 0 && React.createElement('span', { style: { background: "#FFF6E5", color: "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, c.nb_postes_muets + " muets"),
-                nbAlertesH(c) > 0 && React.createElement('span', { style: { background: nbHautesH(c) > 0 ? "#FDECEC" : "#FFF6E5", color: nbHautesH(c) > 0 ? "#C53030" : "#B7791F", padding: "3px 9px", borderRadius: 20, fontWeight: 600 } }, "🚨 " + nbAlertesH(c) + " alerte" + (nbAlertesH(c) > 1 ? "s" : "")),
-                nbLicH(c) > 0 && React.createElement('span', { style: { background: "#FFFBEB", color: "#8A6D1F", padding: "3px 9px", borderRadius: 20 } }, "📜 " + nbLicH(c) + " licence" + (nbLicH(c) > 1 ? "s" : ""))
-              ),
-              React.createElement('div', { style: { display: "flex", gap: 6 } },
-                btn("🛡 Protection", () => setSoProtModal({ hotelId: h.id, nom: h.name, antivirus: h.antivirus || (c ? "sophos" : ""), soc: h.soc || "",
-                  antivirus_futur: h.antivirus_futur || "", antivirus_bascule: h.antivirus_bascule || "", err: "" }), { style: { padding: "6px 10px" } }),
-                c && btn(soBusy === h.id ? "Synchro…" : "🔄 Synchroniser", () => soSynchroniser(h.id), { disabled: !!soBusy }),
-                btn(c ? "⚙️ Configurer" : "+ Configurer Sophos", () => {
-                  const rg = (c && c.regles) || {};
-                  const j = (k) => (Array.isArray(rg[k]) ? rg[k] : []).join(", ");
-                  setSoModal({ hotelId: h.id, nom: h.name, clientId: c ? c.client_id : "", clientSecret: "", actif: c ? c.actif : true, existe: !!c, err: "",
-                    copierDe: "", principal: c ? c.principal !== false : true, libelle: (c && c.libelle) || "",
-                    rGroupes: j("groupes"), rPrefixes: j("prefixes"), rDomaines: j("domaines"), rIps: j("ips"),
-                    partageOuvert: !!(c && c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1) });
-                },
-                  c ? null : { style: { border: "1px solid " + G, color: G2, fontWeight: 600 } })
+              // Antivirus (logo cliquable vers la console) + bascule programmée
+              cellule({ flexWrap: "nowrap" },
+                pr.actuel ? logo(AV[pr.actuel], "av", { title: "Antivirus : " + (AV[pr.actuel] || {}).l }) : React.createElement('span', { style: { fontSize: 11, color: "#BBB" } }, "Non renseigné"),
+                pr.futur && React.createElement('span', { key: "fl", style: { color: "#999", fontSize: 12 } }, "→"),
+                pr.futur && logo(AV[pr.futur], "avf", { gris: true, title: "Bascule vers " + (AV[pr.futur] || {}).l + " le " + dateCourte(pr.bascule) })),
+              // SOC
+              cellule(null, pr.soc ? logo(SOC[pr.soc], "soc", { title: "Supervisé par " + (SOC[pr.soc] || {}).l }) : React.createElement('span', { style: { color: "#CCC", fontSize: 12 } }, "—")),
+              // Postes et problèmes
+              cellule({ fontSize: 11 },
+                pr.futur && pastille("bascule le " + dateCourte(pr.bascule).slice(0, 5), "#FFF6E5", "#C05621", { style: { fontWeight: 600 } }),
+                c && c.actif && c.dernier_statut !== "erreur" && [
+                  pastille("💻 " + (c.nb_postes || 0), "#F0F0F8", "#555", { props: { key: "np", title: (c.nb_postes || 0) + " postes" } }),
+                  c.tenant_id && soComptes.filter(x => x.tenant_id === c.tenant_id).length > 1 && pastille("🔗", "#FFFBEB", "#8A6D1F", { props: { key: "pa", title: "Compte Sophos partagé avec : " + soComptes.filter(x => x.tenant_id === c.tenant_id && x.hotel_id !== c.hotel_id).map(x => nomHotel(x.hotel_id)).join(", ") + (c.principal ? " (principal)" : "") } }),
+                  (c.nb_postes_ko || 0) > 0 && pastille(c.nb_postes_ko + " mauvais", "#FDECEC", "#C53030", { style: { fontWeight: 600 }, props: { key: "ko" } }),
+                  (c.nb_postes_suspects || 0) > 0 && pastille(c.nb_postes_suspects + " suspects", "#FFF6E5", "#B7791F", { style: { fontWeight: 600 }, props: { key: "su" } }),
+                  (c.nb_postes_muets || 0) > 0 && pastille(c.nb_postes_muets + " muets", "#FFF6E5", "#B7791F", { style: { fontWeight: 600 }, props: { key: "mu" } }),
+                  nbAlertesH(c) > 0 && pastille("🚨 " + nbAlertesH(c) + " alerte" + (nbAlertesH(c) > 1 ? "s" : ""), nbHautesH(c) > 0 ? "#FDECEC" : "#FFF6E5", nbHautesH(c) > 0 ? "#C53030" : "#B7791F",
+                    { style: { fontWeight: 600, cursor: "pointer", textDecoration: "underline dotted" }, props: { key: "al", onClick: voirAlertes("alertes"), title: "Voir les alertes de cet hôtel" } }),
+                  nbLicH(c) > 0 && pastille("📜 " + nbLicH(c) + " licence" + (nbLicH(c) > 1 ? "s" : ""), "#FFFBEB", "#8A6D1F",
+                    { style: { cursor: "pointer", textDecoration: "underline dotted" }, props: { key: "li", onClick: voirAlertes("licences"), title: "Voir les alertes de licence" } })
+                ].filter(Boolean),
+                c && c.dernier_statut === "erreur" && pastille("Erreur de connexion", "#FDECEC", "#C53030", { style: { fontWeight: 600 } })),
+              // Actions
+              React.createElement('div', { style: { display: "flex", gap: 5, justifyContent: "flex-end", marginLeft: isMobile ? "auto" : 0 } },
+                iconeBtn("🛡", "Protection : antivirus, SOC, bascule", () => setSoProtModal({ hotelId: h.id, nom: h.name, antivirus: h.antivirus || (c ? "sophos" : ""), soc: h.soc || "",
+                  antivirus_futur: h.antivirus_futur || "", antivirus_bascule: h.antivirus_bascule || "", err: "" })),
+                c && iconeBtn(soBusy === h.id ? "…" : "🔄", "Synchroniser Sophos", () => soSynchroniser(h.id), { disabled: !!soBusy }),
+                iconeBtn(c ? "⚙️" : "+", c ? "Configurer le compte Sophos" : "Configurer Sophos", ouvrirConfig,
+                  c || horsSophos ? null : { style: { border: "1px solid " + G, color: G2, fontWeight: 700 } })
               )
             ),
             c && c.dernier_statut === "erreur" && c.derniere_erreur && React.createElement('div', { style: { margin: "0 15px 11px", fontSize: 12, color: "#C53030", background: "#FDECEC", borderRadius: 7, padding: "7px 10px" } }, "⚠️ " + c.derniere_erreur),
@@ -529,7 +564,7 @@ function Page_sophos(ctx) {
                 })()
             )
           );
-        })
+        }))
       ),
 
       // ----- Fenêtre de configuration d'un compte Sophos -----

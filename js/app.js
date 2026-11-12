@@ -3704,7 +3704,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [soLoading, setSoLoading] = useState(false);
   const [soErr, setSoErr] = useState("");
   const [soMsg, setSoMsg] = useState("");
-  const [soTab, setSoTab] = useState("alertes");
+  const [soTab, setSoTab] = useState("hotels");
   const [soVoirResolues, setSoVoirResolues] = useState(false);
   const [soHotelFiltre, setSoHotelFiltre] = useState("");
   const [soOpenHotel, setSoOpenHotel] = useState(null);
