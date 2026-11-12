@@ -897,6 +897,17 @@ function App() {
   const [cxForm, setCxForm] = useState(null);
   const [cxNewFiles, setCxNewFiles] = useState([]);
   const [cxSaving, setCxSaving] = useState(false);
+  // Lignes automatiques (inventaire NinjaOne) : listes de machines dépliées + panneau de réglages admin
+  const [cxOuverts, setCxOuverts] = useState({});
+  const [cxAuto, setCxAuto] = useState({ ouvert: false, config: null, etats: [], busy: "", msg: "", apercu: null });
+  const loadCxAuto = async () => {
+    const [c, e] = await Promise.all([
+      sb.from("capex_auto_config").select("*").eq("id", 1).maybeSingle(),
+      sb.from("capex_auto_etat").select("*"),
+    ]);
+    if (c.error || e.error) { setCxAuto(prev => ({ ...prev, msg: "❌ " + ((c.error || e.error).message) + " (script capex_auto.sql exécuté ?)" })); return; }
+    setCxAuto(prev => ({ ...prev, config: c.data || { prix_poste: 900, prix_portable: 1100, prix_serveur: 6500, actif: true }, etats: e.data || [] }));
+  };
   const loadCapex = async () => {
     setCxLoading(true); setCxErr("");
     const { data, error } = await sb.from("capex").select("*").order("annee", { ascending: true }).order("created_at", { ascending: true });
@@ -7648,7 +7659,8 @@ const nav = isAdmin
     content, CAPEX_CATS, CAPEX_PRIOS, CAPEX_PRIO_COUL, CAPEX_STATUTS, CAPEX_STATUT_COUL, cxAnnee, cxAuteur,
     cxErr, cxForm, cxHotel, cxLoading, cxMaj, cxModal, cxNewFiles, cxRows, cxSaving, cxStatut, hotels,
     isAdmin, isMobile, loadCapex, mesHotels, session, setCxAnnee, setCxForm, setCxHotel, setCxModal,
-    setCxNewFiles, setCxRows, setCxSaving, setCxStatut
+    setCxNewFiles, setCxRows, setCxSaving, setCxStatut,
+    cxOuverts, setCxOuverts, cxAuto, setCxAuto, loadCxAuto, callSophosApi
   });
 
   // ---------- SUPPRESSION DÉFINITIVE D'UN TICKET (super-admin uniquement) ----------
