@@ -3710,6 +3710,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [soOpenHotel, setSoOpenHotel] = useState(null);
   const [soPostes, setSoPostes] = useState({});
   const [soModal, setSoModal] = useState(null);
+  const [soProtModal, setSoProtModal] = useState(null); // fenêtre « Protection » (antivirus / SOC / bascule)
   const [soBusy, setSoBusy] = useState("");
   const [soNoteEdit, setSoNoteEdit] = useState(null);
 
@@ -4582,6 +4583,42 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       await loadSophos(true);
     } catch (e) {
       setSoModal({ ...f, busy: false, err: e.message || String(e) });
+    }
+  };
+
+  // Protection d'un hôtel : antivirus, SOC externe, bascule programmée.
+  // Une date de bascule crée / met à jour une fiche Infrastructure avec rappel (worker dsi-hotel-rappels : J-1 et J-0).
+  const soEnregistrerProtection = async () => {
+    const f = soProtModal;
+    if (!f) return;
+    if (!!f.antivirus_futur !== !!f.antivirus_bascule) { setSoProtModal({ ...f, err: "Pour un changement programmé, indiquez le nouvel antivirus ET la date." }); return; }
+    setSoProtModal({ ...f, busy: true, err: "" });
+    try {
+      const upd = { antivirus: f.antivirus || null, soc: f.soc || null, antivirus_futur: f.antivirus_futur || null, antivirus_bascule: f.antivirus_bascule || null };
+      const { error } = await sb.from("hotels").update(upd).eq("id", f.hotelId);
+      if (error) throw error;
+      const NOMS = { sophos: "Sophos", sentinelone: "SentinelOne", crowdstrike: "CrowdStrike" };
+      const { data: ex } = await sb.from("hotel_docs").select("id, rappel_date").eq("hotel_id", f.hotelId).like("titre", "Bascule antivirus%");
+      if (upd.antivirus_futur) {
+        const titre = "Bascule antivirus → " + (NOMS[upd.antivirus_futur] || upd.antivirus_futur) + (upd.soc === "stoik" ? " (Stoïk SOC)" : "");
+        const fiche = { titre, categorie: "Infrastructure", rappel_date: upd.antivirus_bascule, rappel_note: titre, rappel_jalons: [1, 0],
+          description: "Passage de l'antivirus à " + (NOMS[upd.antivirus_futur] || upd.antivirus_futur) + ". Vérifier le déploiement sur tous les postes et retirer l'ancien antivirus." };
+        if (ex && ex.length) {
+          const chg = ex[0].rappel_date !== upd.antivirus_bascule;
+          const { error: e2 } = await sb.from("hotel_docs").update({ ...fiche, ...(chg ? { rappel_jalons_envoyes: null } : {}), updated_at: new Date().toISOString() }).eq("id", ex[0].id);
+          if (e2) throw e2;
+        } else {
+          const { error: e2 } = await sb.from("hotel_docs").insert({ hotel_id: f.hotelId, ...fiche });
+          if (e2) throw e2;
+        }
+      } else if (ex && ex.length) {
+        await sb.from("hotel_docs").update({ rappel_date: null }).eq("id", ex[0].id); // plus de bascule : on coupe le rappel
+      }
+      setHotels(prev => prev.map(h => h.id === f.hotelId ? { ...h, ...upd } : h));
+      setSoProtModal(null);
+      setSoMsg("✅ Protection enregistrée pour « " + f.nom + " »." + (upd.antivirus_futur ? " Rappel programmé la veille et le jour de la bascule." : ""));
+    } catch (e) {
+      setSoProtModal({ ...f, busy: false, err: e.message || String(e) });
     }
   };
 
@@ -7996,7 +8033,8 @@ const nav = isAdmin
     soMarquerSuppression, soModal, soMsg, soNaOuvert, soNinja, soNinjaOrg, soNonAffectes, soNoteEdit,
     soOpenHotel, soPostes, soPrendreEnCharge, soScanner, soSecOuvertes, soSuggererNinja, soSuggest,
     soSupprimerCompte, soSupprimerSophos, soSynchroniser, soTab, soTamper, soTamperMdp, soTpBasculer,
-    soTpBusy, soTpMsg, soTpSel, soViderTelechargements, soVoirIgnores, soVoirResolues
+    soTpBusy, soTpMsg, soTpSel, soViderTelechargements, soVoirIgnores, soVoirResolues,
+    soProtModal, setSoProtModal, soEnregistrerProtection
   });
 
   if (page === "m365" && isAdmin) content = Page_m365({
