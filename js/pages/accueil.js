@@ -18,7 +18,11 @@ function Page_accueil(ctx) {
 
     if (isAdmin) {
       // ---- Proposition 2 : accueil orienté action ----
-      const ouverts = (tickets || []).filter(t => t.status !== "closed");
+      // Support = exactement l'onglet « Ouverts » de la page Tickets :
+      // sans les alertes automatiques (sauvegarde, Sophos, Microsoft), sans les tickets
+      // « En cours » (en attente) et sans le Sheraton (onglet dédié). Chaque domaine a ses propres chiffres.
+      const sheratonIdsAcc = new Set((hotels || []).filter(h => /sheraton/i.test(h.name || "")).map(h => h.id));
+      const ouverts = (tickets || []).filter(t => t.status !== "closed" && !t.en_attente && !sheratonIdsAcc.has(t.hotel_id) && !estAlerteAuto(t));
       const enRetard = ouverts.filter(t => {
         const st = ticketState[t.id];
         return st && st.kind && st.since && (Date.now() - new Date(st.since).getTime() > SLA_MS_ACC);
