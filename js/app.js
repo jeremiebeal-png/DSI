@@ -4760,7 +4760,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   }, [page, profile, lmHotel]);
   useEffect(() => {
     if (page !== "licences-m365" || !isAdmin) return;
-    sb.from("m365_tenants").select("tenant_id,hotel_id,actif,nom").then(({ data }) => setLmTenants(Array.isArray(data) ? data : []));
+    // Tenants rattachés directement + établissements d'un tenant partagé (m365_tenant_hotels, filtre par domaine)
+    Promise.all([
+      sb.from("m365_tenants").select("tenant_id,hotel_id,actif,nom"),
+      sb.from("m365_tenant_hotels").select("tenant_id,hotel_id,domaines"),
+    ]).then(([a, b]) => setLmTenants([...(Array.isArray(a.data) ? a.data : []), ...(Array.isArray(b.data) ? b.data.map(x => ({ ...x, actif: true, partage: true })) : [])]));
   }, [page, isAdmin]);
 
   // Export PDF du rapport de licences
@@ -4797,6 +4801,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     doc.text(propre("Établissement : " + (nomHotel || "—")), mL, y); y += 6;
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(110, 110, 120);
     doc.text(propre("Extraction du " + (rap && rap.genere_le ? new Date(rap.genere_le).toLocaleString("fr-FR", { timeZone: "Europe/Paris" }) : "—") + " — source : Microsoft 365 (tenant " + ((rap && rap.tenant_id) || "?") + ")"), mL, y); y += 9;
+    if (d.partage && (d.partage.domaines || []).length) { y -= 4; doc.text(propre("Abonnement partagé avec d'autres établissements : seuls les comptes " + d.partage.domaines.map(x => "@" + x).join(", ") + " sont comptés."), mL, y); y += 7; }
 
     // Tuiles
     const t = d.totaux || {};

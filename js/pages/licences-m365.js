@@ -82,6 +82,9 @@ function Page_licences_m365(ctx) {
         (dLm.avertissements || []).length > 0 && React.createElement('div', { style: { fontSize: 12, marginBottom: 14, padding: "9px 12px", borderRadius: 8, background: "#F7F7FA", border: "1px solid #E8E8F0", color: "#666", lineHeight: 1.55 } },
           (dLm.avertissements || []).map((a, i) => React.createElement('div', { key: i }, "ℹ️ " + a))),
 
+        dLm.partage && React.createElement('div', { style: { fontSize: 12, marginBottom: 14, padding: "9px 12px", borderRadius: 8, background: "#EBF4FF", border: "1px solid #BEE3F8", color: "#2B6CB0", lineHeight: 1.55 } },
+          "🏢 Abonnement Microsoft 365 partagé avec d'autres établissements : seuls les comptes " + (dLm.partage.domaines || []).map(d => "@" + d).join(", ") + " sont comptés ici. « Achetées » correspond aux licences attribuées à ces comptes ; les licences libres de l'abonnement sont communes à tous les établissements."),
+
         // Licences
         carte("📦 Licences de l'établissement",
           React.createElement('div', { style: { overflowX: "auto" } },
@@ -107,7 +110,8 @@ function Page_licences_m365(ctx) {
                         l.depassement > 0 && pastLm("+" + l.depassement + " au-delà de l'achat", "#C53030", "#FDECEC"))),
                     React.createElement('td', { style: { ...td, textAlign: "right" } }, l.total),
                     React.createElement('td', { style: { ...td, textAlign: "right" } }, l.attribuees),
-                    React.createElement('td', { style: { ...td, textAlign: "right", fontWeight: 700, color: l.disponibles > 0 ? "#2B6CB0" : "#999" } }, l.disponibles),
+                    React.createElement('td', { style: { ...td, textAlign: "right", fontWeight: 700, color: l.disponibles > 0 ? "#2B6CB0" : "#999" } }, l.disponibles,
+                      l.tenant && l.tenant.disponibles > 0 && React.createElement('div', { style: { fontSize: 10.5, fontWeight: 400, color: "#2B6CB0" } }, "+" + l.tenant.disponibles + " libre" + (l.tenant.disponibles > 1 ? "s" : "") + " (partagé)")),
                     React.createElement('td', { style: td },
                       React.createElement('div', { style: { height: 7, background: "#F0F0F4", borderRadius: 4, overflow: "hidden", marginTop: 5 } },
                         React.createElement('div', { style: { width: pct + "%", height: "100%", background: pct >= 100 ? "#2F855A" : G } })),
