@@ -167,9 +167,9 @@ function Page_accueil(ctx) {
           panneau("Sauvegardes", "💾", nivBackup,
             [chiffre(bkEchec, "en échec", 2), chiffre(bkStats ? bkStats.groupesEnEchec : 0, "site" + (bkStats && bkStats.groupesEnEchec > 1 ? "s" : "") + " touché" + (bkStats && bkStats.groupesEnEchec > 1 ? "s" : "") + (bkStats ? " / " + bkStats.nbGroupes : ""), 2), chiffre(bkMuets, "muet" + (bkMuets > 1 ? "s" : ""), 1)],
             lignesBackup, "Toutes les sauvegardes sont OK", "Ouvrir les sauvegardes", "backups"),
-          panneau("Sécurité Sophos", "🔒", nivSophos,
+          panneau("Sécurité Anti Virus", "🔒", nivSophos,
             [chiffre(soHautes, "alerte" + (soHautes > 1 ? "s" : "") + " haute" + (soHautes > 1 ? "s" : ""), 2), chiffre(soKo, "poste" + (soKo > 1 ? "s" : "") + " dégradé" + (soKo > 1 ? "s" : ""), 2), chiffre(soErrs, "compte" + (soErrs > 1 ? "s" : "") + " en erreur", 1)],
-            lignesSophos, "Aucune menace ni poste dégradé", "Ouvrir Sécurité Sophos", "sophos"),
+            lignesSophos, "Aucune menace ni poste dégradé", "Ouvrir Sécurité Anti Virus", "sophos"),
           panneau("Microsoft 365 & échéances", "🛡️", nivMs,
             [chiffre(msHautesAcc, "alerte" + (msHautesAcc > 1 ? "s" : "") + " haute" + (msHautesAcc > 1 ? "s" : ""), 2), chiffre(msErrsAcc, "tenant" + (msErrsAcc > 1 ? "s" : "") + " en erreur", 1), chiffre(rappelsEchus.length, "rappel" + (rappelsEchus.length > 1 ? "s" : "") + " échu" + (rappelsEchus.length > 1 ? "s" : ""), 2)],
             lignesMs, "Aucune alerte ni échéance proche", "Ouvrir Microsoft 365", "m365")
