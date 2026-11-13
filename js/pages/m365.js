@@ -88,7 +88,7 @@ function Page_m365(ctx) {
             return React.createElement('div', { key: a.id, style: { background: ouverte ? "white" : "#FAFAFC", border: "1px solid " + (ouverte && a.severite === "high" ? "#F5B5B5" : "#E8E8F0"), borderLeft: "5px solid " + (ouverte ? sm.c : "#CBD5E0"), borderRadius: 10, padding: "12px 15px", opacity: ouverte ? 1 : 0.75 } },
               React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 } },
                 pastille(sm.l, sm.c, sm.bg),
-                React.createElement('span', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e" } }, nomTenant(a.tenant_id)),
+                React.createElement('span', { style: { fontSize: 13, fontWeight: 700, color: "#1a1a3e" } }, (a.hotel_id && nomHotelM(a.hotel_id)) || nomTenant(a.tenant_id)),
                 a.service_source && React.createElement('span', { style: { fontSize: 11, color: "#888" } }, SRCM[a.service_source] || a.service_source),
                 a.categorie && React.createElement('span', { style: { fontSize: 11, color: "#AAA" } }, "· " + a.categorie),
                 React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, fmtDateHeureFr2(a.cree_le)),
