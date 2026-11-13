@@ -79,7 +79,7 @@ function Page_sophos(ctx) {
     const AV = { sophos: { l: "Sophos", img: "img/logos/sophos.png", url: "https://central.sophos.com" },
       sentinelone: { l: "SentinelOne", img: "img/logos/sentinelone.png", url: "https://www.sentinelone.com/" },
       crowdstrike: { l: "CrowdStrike", img: "img/logos/crowdstrike.png", url: "https://www.crowdstrike.com/fr-fr/login/" },
-      watchguard: { l: "WatchGuard", img: null }, defender: { l: "Microsoft Defender", img: null }, autre: { l: "Autre antivirus", img: null } };
+      watchguard: { l: "WatchGuard", img: "img/logos/watchguard.png" }, defender: { l: "Microsoft Defender", img: null }, autre: { l: "Autre antivirus", img: null } };
     const SOC = { stoik: { l: "Stoïk SOC", img: "img/logos/stoik.png", url: "https://app.stoik.io/protect/2ea5ea8f-f559-4180-a17d-b3809d6d1f07" } };
     const GRILLE = "minmax(0, 2.2fr) 180px 64px minmax(0, 2fr) 112px";
     const jourIso = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
