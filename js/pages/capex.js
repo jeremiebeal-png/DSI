@@ -67,7 +67,7 @@ function Page_capex(ctx) {
     const exporterCsv = () => {
       const esc = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
       const ent = ["Hôtel", "Année", "Trimestre", "Catégorie", "Équipement / projet", "Description", "Quantité", "Montant HT (€)", "Priorité", "Justification", "Statut", "Commentaire", "Dernière modif. par", "Le", "Machines (inventaire NinjaOne)"];
-      const rows = lignes.map(r => [nomHotelCx(r.hotel_id), r.annee, r.trimestre, r.categorie, r.equipement, r.description, r.quantite, (Number(r.montant_ht) || 0).toFixed(2).replace(".", ","), r.priorite, r.justification, r.statut, r.commentaire, r.updated_by_nom, r.updated_at ? new Date(r.updated_at).toLocaleDateString("fr-FR") : "", Array.isArray(r.machines) ? r.machines.map(m => m.nom + " (" + m.type + (m.modele ? ", " + m.modele : "") + (m.age != null ? ", " + String(m.age).replace(".", ",") + " ans" : "") + ")").join(" | ") : ""].map(esc).join(";"));
+      const rows = lignes.map(r => [nomHotelCx(r.hotel_id), r.annee, r.trimestre, r.categorie, r.equipement, r.description, r.quantite, (Number(r.montant_ht) || 0).toFixed(2).replace(".", ","), r.priorite, r.justification, r.statut, r.commentaire, r.updated_by_nom, r.updated_at ? new Date(r.updated_at).toLocaleDateString("fr-FR") : "", Array.isArray(r.machines) ? r.machines.map(m => m.nom + " (" + m.type + (m.modele ? ", " + m.modele : "") + (m.age != null || m.date ? ", " + ageTexte(m) : "") + ")").join(" | ") : ""].map(esc).join(";"));
       const blob = new Blob(["﻿" + [ent.map(esc).join(";"), ...rows].join("\r\n")], { type: "text/csv;charset=utf-8" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "CAPEX_" + (cxHotel !== "all" ? nomHotelCx(cxHotel).replace(/[^\w]+/g, "_") : "groupe") + "_" + new Date().toISOString().slice(0, 10) + ".csv";
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -87,6 +87,16 @@ function Page_capex(ctx) {
 
     // ---------- Lignes automatiques : inventaire NinjaOne (machines de 3 à 5 ans / plus de 5 ans) ----------
     const TYPE_LIB = { poste: "Poste fixe", portable: "Portable", serveur: "Serveur" };
+    // Âge lisible « 5 ans et 10 mois » (calculé depuis la date d'achat estimée, sinon depuis l'âge décimal)
+    const ageTexte = (m) => {
+      let mois = null;
+      if (m && m.date) { const d = new Date(m.date), n = new Date(); if (!isNaN(d)) { mois = (n.getFullYear() - d.getFullYear()) * 12 + (n.getMonth() - d.getMonth()); if (n.getDate() < d.getDate()) mois--; } }
+      if (mois == null && m && m.age != null) mois = Math.round(Number(m.age) * 12);
+      if (mois == null || mois < 0) return "—";
+      const a = Math.floor(mois / 12), r = mois % 12;
+      const ta = a ? a + " an" + (a > 1 ? "s" : "") : "", tr = r ? r + " mois" : "";
+      return ta && tr ? ta + " et " + tr : (ta || tr || "0 mois");
+    };
     const tableMachines = (liste) => React.createElement('div', { style: { overflowX: "auto" } },
       React.createElement('table', { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
         React.createElement('thead', null, React.createElement('tr', null,
@@ -97,7 +107,7 @@ function Page_capex(ctx) {
           React.createElement('td', { style: { padding: "4px 8px", color: "#555" } }, m.modele || "—"),
           React.createElement('td', { style: { padding: "4px 8px", color: "#555" } }, m.serie || "—"),
           React.createElement('td', { style: { padding: "4px 8px", whiteSpace: "nowrap" } }, m.date ? new Date(m.date).toLocaleDateString("fr-FR") : "—", m.source ? React.createElement('span', { style: { color: "#AAA" } }, " · " + m.source) : null),
-          React.createElement('td', { style: { padding: "4px 8px", fontWeight: 700, color: m.age >= 5 ? "#C53030" : "#DD6B20", whiteSpace: "nowrap" } }, m.age != null ? String(m.age).replace(".", ",") + " ans" : "—"),
+          React.createElement('td', { style: { padding: "4px 8px", fontWeight: 700, color: m.age >= 5 ? "#C53030" : "#DD6B20", whiteSpace: "nowrap" } }, ageTexte(m)),
           React.createElement('td', { style: { padding: "4px 8px", color: "#555" } }, m.utilisateur || "—")
         )))
       ));
