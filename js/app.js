@@ -4879,6 +4879,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   const [msTenants, setMsTenants] = useState([]);
+  const [msPartages, setMsPartages] = useState([]); // m365_tenant_hotels : établissements d'un tenant partagé (filtre par domaine)
   const [msAlertes, setMsAlertes] = useState([]);
   const [msLoading, setMsLoading] = useState(false);
   const [msErr, setMsErr] = useState("");
@@ -4910,6 +4911,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (t.error) throw t.error;
       if (a.error) throw a.error;
       setMsTenants(t.data || []);
+      const p = await sb.from("m365_tenant_hotels").select("tenant_id,hotel_id,domaines");
+      setMsPartages(p.error ? [] : (p.data || []));
       setMsAlertes(a.data || []);
     } catch (e) {
       setMsErr("Erreur de chargement : " + (e.message || e) + " — les scripts m365_schema.sql et m365_portail.sql ont-ils été exécutés ?");
@@ -4934,6 +4937,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setMsNoteEdit(null);
   };
 
+  const msRetirerPartage = async (hotelId, nomH) => {
+    if (!window.confirm("Retirer « " + nomH + " » de ce tenant partagé ?")) return;
+    const { error } = await sb.from("m365_tenant_hotels").delete().eq("hotel_id", hotelId);
+    if (error) { setMsMsg("❌ " + error.message); return; }
+    setMsPartages(prev => prev.filter(x => x.hotel_id !== hotelId));
+    setMsMsg("✅ « " + nomH + " » retiré du tenant partagé.");
+  };
+
   const msMajTenant = async (tenantId, maj, libelle) => {
     const { error } = await sb.from("m365_tenants").update(maj).eq("tenant_id", tenantId);
     if (error) { setMsMsg("❌ " + error.message); return; }
@@ -4947,6 +4958,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const h = hotels.find(x => x.id === msAjout.hotel_id);
     const nom = (msAjout.nom || "").trim() || (h ? h.name : "");
     if (!nom) { setMsMsg("❌ Indiquez un nom ou choisissez un établissement."); return; }
+    // Tenant déjà suivi : on rattache l'établissement en plus (tenant partagé), filtré sur le domaine saisi
+    if (msTenants.some(x => x.tenant_id === tid)) {
+      if (!msAjout.hotel_id) { setMsMsg("❌ Ce tenant est déjà suivi : choisissez l'établissement à y rattacher."); return; }
+      const doms = (msDomaine || "").split(/[\s,;]+/).map(x => x.trim().toLowerCase().replace(/^@/, "")).filter(x => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(x));
+      if (!doms.length) { setMsMsg("❌ Ce tenant est déjà suivi (partagé entre plusieurs hôtels) : saisissez dans « Domaine de l'hôtel » le ou les domaines mail de cet établissement (ex. elema-hotels-arras.com) — seuls ces comptes lui seront attribués."); return; }
+      const { error: e2 } = await sb.from("m365_tenant_hotels").upsert({ hotel_id: msAjout.hotel_id, tenant_id: tid, domaines: doms }, { onConflict: "hotel_id" });
+      if (e2) { setMsMsg("❌ " + e2.message); return; }
+      setMsAjout({ tenant_id: "", nom: "", hotel_id: "" });
+      setMsDomaine("");
+      setMsMsg("✅ « " + (h ? h.name : nom) + " » rattaché au tenant partagé (comptes @" + doms.join(", @") + ").");
+      await loadM365(true);
+      return;
+    }
     const { error } = await sb.from("m365_tenants").insert({ tenant_id: tid, nom, hotel_id: msAjout.hotel_id || null, actif: true });
     if (error) { setMsMsg("❌ " + (/duplicate|unique/i.test(error.message) ? "Ce tenant est déjà suivi." : error.message)); return; }
     setMsAjout({ tenant_id: "", nom: "", hotel_id: "" });
@@ -8078,7 +8102,7 @@ const nav = isAdmin
   if (page === "m365" && isAdmin) content = Page_m365({
     content, M365_APP_ID, fmtDateHeureFr2, hotels, loadM365, msAjout, msAjouterTenant, msAlertes, msDomaine,
     msEnregistrerNote, msErr, msFiltre, msLoading, msMajTenant, msMsg, msNoteEdit, msPrendreEnCharge, msTab,
-    msTenants, msVoirInfo, msVoirResolues, setMsAjout, setMsDomaine, setMsFiltre, setMsMsg, setMsNoteEdit,
+    msTenants, msVoirInfo, msVoirResolues, msPartages, msRetirerPartage, setMsAjout, setMsDomaine, setMsFiltre, setMsMsg, setMsNoteEdit,
     setMsTab, setMsVoirInfo, setMsVoirResolues, setPendingTicketRef
   });
 

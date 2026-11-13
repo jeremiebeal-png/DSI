@@ -6,7 +6,7 @@ function Page_m365(ctx) {
   const {
     M365_APP_ID, fmtDateHeureFr2, hotels, loadM365, msAjout, msAjouterTenant, msAlertes, msDomaine,
     msEnregistrerNote, msErr, msFiltre, msLoading, msMajTenant, msMsg, msNoteEdit, msPrendreEnCharge, msTab,
-    msTenants, msVoirInfo, msVoirResolues, setMsAjout, setMsDomaine, setMsFiltre, setMsMsg, setMsNoteEdit,
+    msTenants, msVoirInfo, msVoirResolues, msPartages, msRetirerPartage, setMsAjout, setMsDomaine, setMsFiltre, setMsMsg, setMsNoteEdit,
     setMsTab, setMsVoirInfo, setMsVoirResolues, setPendingTicketRef
   } = ctx;
     const SEVM = { high: { l: "Haute", c: "#C53030", bg: "#FDECEC" }, medium: { l: "Moyenne", c: "#B7791F", bg: "#FFF6E5" }, low: { l: "Faible", c: "#718096", bg: "#F0F0F4" }, informational: { l: "Info", c: "#2B6CB0", bg: "#EBF4FF" } };
@@ -158,6 +158,12 @@ function Page_m365(ctx) {
                 ouvT.length > 0 && pastille(ouvT.length + " ouverte" + (ouvT.length > 1 ? "s" : "") + (hautesT ? " · " + hautesT + " haute" + (hautesT > 1 ? "s" : "") : ""), hautesT ? "#C53030" : "#B7791F", hautesT ? "#FDECEC" : "#FFF6E5"),
                 React.createElement('span', { style: { marginLeft: "auto", fontSize: 11, color: "#999" } }, t.derniere_synchro ? "Synchro : " + fmtDateHeureFr2(t.derniere_synchro) : "En attente de première synchro")),
               React.createElement('div', { style: { fontSize: 11, color: "#AAA", marginTop: 4, fontFamily: "monospace", wordBreak: "break-all" } }, t.tenant_id + (lic.length ? "  ·  " + lic.join(", ") : "")),
+              (msPartages || []).some(p => p.tenant_id === t.tenant_id) && React.createElement('div', { style: { marginTop: 7, fontSize: 12, color: "#2B6CB0", background: "#EBF4FF", border: "1px solid #BEE3F8", borderRadius: 7, padding: "6px 9px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+                React.createElement('span', { style: { fontWeight: 600 } }, "🏢 Tenant partagé :"),
+                (msPartages || []).filter(p => p.tenant_id === t.tenant_id).sort((a, b) => String(nomHotelM(a.hotel_id)).localeCompare(String(nomHotelM(b.hotel_id)))).map(p =>
+                  React.createElement('span', { key: p.hotel_id, style: { background: "white", border: "1px solid #BEE3F8", borderRadius: 20, padding: "2px 4px 2px 9px", whiteSpace: "nowrap" } },
+                    (nomHotelM(p.hotel_id) || "?") + " (@" + (p.domaines || []).join(", @") + ") ",
+                    React.createElement('button', { onClick: () => msRetirerPartage(p.hotel_id, nomHotelM(p.hotel_id) || "?"), title: "Retirer cet établissement du tenant", style: { border: "none", background: "none", cursor: "pointer", color: "#999", fontSize: 12 } }, "×")))),
               err && React.createElement('div', { style: { marginTop: 7, fontSize: 12, color: "#C53030", background: "#FDECEC", border: "1px solid #F5B5B5", borderRadius: 7, padding: "6px 9px", wordBreak: "break-word" } }, "⚠️ " + t.derniere_erreur),
               t.defender === false && React.createElement('div', { style: { marginTop: 7, fontSize: 12, color: "#8A6D1F", background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 7, padding: "6px 9px" } }, "Pas de licence Defender pour Office 365 (Business Premium ou Defender P1/P2) : seules les alertes de base remontent."),
               React.createElement('div', { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 } },
