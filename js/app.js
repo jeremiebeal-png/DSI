@@ -3722,6 +3722,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const [soPostes, setSoPostes] = useState({});
   const [soModal, setSoModal] = useState(null);
   const [soProtModal, setSoProtModal] = useState(null); // fenêtre « Protection » (antivirus / SOC / bascule)
+  const [soDetectAV, setSoDetectAV] = useState(null);   // détection des antivirus des PC via NinjaOne
   const [soBusy, setSoBusy] = useState("");
   const [soNoteEdit, setSoNoteEdit] = useState(null);
 
@@ -4630,6 +4631,26 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setSoMsg("✅ Protection enregistrée pour « " + f.nom + " »." + (upd.antivirus_futur ? " Rappel programmé la veille et le jour de la bascule." : ""));
     } catch (e) {
       setSoProtModal({ ...f, busy: false, err: e.message || String(e) });
+    }
+  };
+
+  // Lit dans NinjaOne l'antivirus de tous les PC Windows (Worker dsi-hotel-inventaire, route /antivirus-postes)
+  const soDetecterAntivirus = async () => {
+    setSoDetectAV({ busy: true });
+    setSoMsg("");
+    try {
+      const { data: sessionData } = await sb.auth.getSession();
+      const token = (sessionData.session && sessionData.session.access_token) || "";
+      const res = await fetch(INVENTAIRE_API_URL + "/antivirus-postes", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: "{}" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || ("Erreur " + res.status + (res.status === 404 ? " : route absente, le Worker dsi-hotel-inventaire est-il à jour ?" : "")));
+      const { data: hs } = await sb.from("hotels").select("*").order("name");
+      if (hs) setHotels(hs);
+      setSoDetectAV({ busy: false, resultat: d });
+      setSoMsg("✅ NinjaOne : " + d.postes + " PC analysés sur " + d.hotels + " hôtels. L'antivirus détecté s'affiche sous le logo de chaque hôtel (⚠ = différent de celui renseigné).");
+    } catch (e) {
+      setSoDetectAV({ busy: false });
+      setSoMsg("❌ Détection des antivirus : " + (e.message || String(e)));
     }
   };
 
@@ -8046,7 +8067,7 @@ const nav = isAdmin
     soOpenHotel, soPostes, soPrendreEnCharge, soScanner, soSecOuvertes, soSuggererNinja, soSuggest,
     soSupprimerCompte, soSupprimerSophos, soSynchroniser, soTab, soTamper, soTamperMdp, soTpBasculer,
     soTpBusy, soTpMsg, soTpSel, soViderTelechargements, soVoirIgnores, soVoirResolues,
-    soProtModal, setSoProtModal, soEnregistrerProtection
+    soProtModal, setSoProtModal, soEnregistrerProtection, soDetectAV, soDetecterAntivirus
   });
 
   if (page === "m365" && isAdmin) content = Page_m365({

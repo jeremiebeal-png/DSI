@@ -12,7 +12,7 @@ function Page_sophos(ctx) {
     soPrendreEnCharge, soScanner, soSecOuvertes, soSuggererNinja, soSuggest, soSupprimerCompte,
     soSupprimerSophos, soSynchroniser, soTab, soTamper, soTamperMdp, soTpBasculer, soTpBusy, soTpMsg,
     soTpSel, soViderTelechargements, soVoirIgnores, soVoirResolues,
-    soProtModal, setSoProtModal, soEnregistrerProtection
+    soProtModal, setSoProtModal, soEnregistrerProtection, soDetectAV, soDetecterAntivirus
   } = ctx;
     const SEV = { high: { l: "Haute", c: "#C53030", bg: "#FDECEC" }, medium: { l: "Moyenne", c: "#B7791F", bg: "#FFF6E5" }, low: { l: "Faible", c: "#718096", bg: "#F0F0F4" } };
     const sevMeta = (s) => SEV[s] || { l: s || "—", c: "#718096", bg: "#F0F0F4" };
@@ -78,7 +78,8 @@ function Page_sophos(ctx) {
     // ===== Protection de l'hôtel : antivirus + SOC externe (colonnes hotels.antivirus / soc / antivirus_futur / antivirus_bascule) =====
     const AV = { sophos: { l: "Sophos", img: "img/logos/sophos.png", url: "https://central.sophos.com" },
       sentinelone: { l: "SentinelOne", img: "img/logos/sentinelone.png", url: "https://www.sentinelone.com/" },
-      crowdstrike: { l: "CrowdStrike", img: "img/logos/crowdstrike.png", url: "https://www.crowdstrike.com/fr-fr/login/" }, autre: { l: "Autre antivirus", img: null } };
+      crowdstrike: { l: "CrowdStrike", img: "img/logos/crowdstrike.png", url: "https://www.crowdstrike.com/fr-fr/login/" },
+      watchguard: { l: "WatchGuard", img: null }, defender: { l: "Microsoft Defender", img: null }, autre: { l: "Autre antivirus", img: null } };
     const SOC = { stoik: { l: "Stoïk SOC", img: "img/logos/stoik.png", url: "https://app.stoik.io/protect/2ea5ea8f-f559-4180-a17d-b3809d6d1f07" } };
     const GRILLE = "minmax(0, 2.2fr) 180px 64px minmax(0, 2fr) 112px";
     const jourIso = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
@@ -127,7 +128,9 @@ function Page_sophos(ctx) {
         (soTab === "alertes" || soTab === "licences") && React.createElement('button', { onClick: () => { setSoHotelFiltre(""); setSoTab("hotels"); }, style: { padding: "7px 15px", border: "1px solid " + G, background: G + "18", color: G2, borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: 600 } },
           "← " + (soTab === "alertes" ? "Alertes" : "Licences") + (soHotelFiltre ? " · " + nomHotel(soHotelFiltre) : "") + " — retour aux établissements"),
         [["hotels", "🏨 Établissements"], ["suppr", "🗑 À supprimer" + (soASupprimer.length ? " (" + soASupprimer.length + ")" : "")]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setSoTab(k), style: { padding: "7px 15px", border: "1px solid " + (soTab === k ? G : "#DDD"), background: soTab === k ? G + "18" : "white", color: soTab === k ? G2 : "#555", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: soTab === k ? 600 : 400 } }, l)),
-        React.createElement('button', { onClick: () => loadSophos(), disabled: soLoading, style: { marginLeft: "auto", padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, soLoading ? "…" : "🔄 Actualiser")
+        React.createElement('button', { onClick: soDetecterAntivirus, disabled: !!(soDetectAV && soDetectAV.busy), title: "Lit dans NinjaOne l'antivirus actif de tous les PC Windows et en fait la synthèse par hôtel", style: { marginLeft: "auto", padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } },
+          soDetectAV && soDetectAV.busy ? "Lecture NinjaOne…" : "🔎 Détecter les antivirus (NinjaOne)"),
+        React.createElement('button', { onClick: () => loadSophos(), disabled: soLoading, style: { padding: "7px 13px", background: "white", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, soLoading ? "…" : "🔄 Actualiser")
       ),
       soMsg && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: soMsg.startsWith("❌") ? "#FDECEC" : "#F0F7F2", border: "1px solid " + (soMsg.startsWith("❌") ? "#F5B5B5" : "#C6E6D0"), color: soMsg.startsWith("❌") ? "#C53030" : "#2F855A" } }, soMsg),
       soErr && React.createElement('div', { style: { fontSize: 12.5, marginBottom: 12, padding: "9px 12px", borderRadius: 8, background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030" } }, soErr),
@@ -326,10 +329,19 @@ function Page_sophos(ctx) {
                   c && c.dernier_controle && React.createElement('span', { style: { color: "#999", fontWeight: 400 } }, " · " + fmtDateHeureFr2(c.dernier_controle)))
               ),
               // Antivirus (logo cliquable vers la console) + bascule programmée
-              cellule({ flexWrap: "nowrap" },
+              cellule({ flexWrap: "wrap", rowGap: 2 },
                 pr.actuel ? logo(AV[pr.actuel], "av", { title: "Antivirus : " + (AV[pr.actuel] || {}).l }) : React.createElement('span', { style: { fontSize: 11, color: "#BBB" } }, "Non renseigné"),
                 pr.futur && React.createElement('span', { key: "fl", style: { color: "#999", fontSize: 12 } }, "→"),
-                pr.futur && logo(AV[pr.futur], "avf", { gris: true, title: "Bascule vers " + (AV[pr.futur] || {}).l + " le " + dateCourte(pr.bascule) })),
+                pr.futur && logo(AV[pr.futur], "avf", { gris: true, title: "Bascule vers " + (AV[pr.futur] || {}).l + " le " + dateCourte(pr.bascule) }),
+                (() => {
+                  const d = h.antivirus_detecte;
+                  if (!d || !d.principal) return null;
+                  const ecart = d.principal !== "defender" && d.principal !== pr.actuel && d.principal !== pr.futur;
+                  const detail = Object.entries(d.noms || {}).sort((a, b) => b[1] - a[1]).map(([n, k]) => n + " : " + k + " PC").join("\n");
+                  return React.createElement('span', { key: "det", title: "Détecté par NinjaOne le " + String(d.le || "").slice(0, 10).split("-").reverse().join("/") + " sur " + d.postes + " PC\n" + detail + (d.sans_info ? "\nSans information : " + d.sans_info + " PC" : ""),
+                    style: { flexBasis: "100%", fontSize: 10.5, color: ecart ? "#C05621" : "#999", fontWeight: ecart ? 600 : 400, whiteSpace: "nowrap" } },
+                    "NinjaOne : " + ((AV[d.principal] || {}).l || d.principal) + " · " + ((d.produits || {})[d.principal] || 0) + "/" + d.postes + " PC" + (ecart ? " ⚠" : ""));
+                })()),
               // SOC
               cellule(null, pr.soc ? logo(SOC[pr.soc], "soc", { title: "Supervisé par " + (SOC[pr.soc] || {}).l }) : React.createElement('span', { style: { color: "#CCC", fontSize: 12 } }, "—")),
               // Postes et problèmes
