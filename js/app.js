@@ -8314,7 +8314,7 @@ const nav = isAdmin
   const navSimples = nav.filter(it => !enGroupe(it));
   const groupeDePage = (navGroupes.find(g => g.items.some(i => i.p === page)) || {}).id || null;
   const badgeGroupe = (g) => g.items.reduce((n, i) => n + badgeDe(i.p), 0);
-  const nbTicketsOuvertsMenu = isAdmin ? tickets.filter(t => t.status !== "closed").length : 0;
+  const nbTicketsOuvertsMenu = isAdmin ? tickets.filter(t => t.status !== "closed" && !estNotification(t)).length : 0;
   const encartGroupe = (gid) => {
     if (!isAdmin) return null;
     if (gid === "sup" && nbTicketsOuvertsMenu > 0 && nav.some(i => i.p === "tickets-admin")) return { n: nbTicketsOuvertsMenu, txt: nbTicketsOuvertsMenu > 1 ? "tickets ouverts" + (nbAlertesMenu > 0 ? ", dont " + nbAlertesMenu + " alerte" + (nbAlertesMenu > 1 ? "s" : "") + " à traiter" : "") : "ticket ouvert", cta: "Voir les tickets", p: "tickets-admin" };

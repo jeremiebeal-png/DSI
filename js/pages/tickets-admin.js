@@ -53,6 +53,7 @@ function Page_tickets_admin(ctx) {
     const nbSophosTk = tickets.filter(t => estAlerteSophos(t) && t.status !== "closed").length;
     const nbBackupTk = tickets.filter(t => estAlerteBackup(t) && t.status !== "closed").length;
     const nbTelOuv = tickets.filter(t => estTicketTelephone(t) && t.status !== "closed").length;
+    const nbNotif = tickets.filter(t => estNotification(t) && t.status !== "closed").length;
     const ALERTE_ONGLETS = { defender: { nb: nbDefender, titre: "alerte(s) Microsoft à traiter" }, sophos: { nb: nbSophosTk, titre: "alerte(s) Sophos à traiter" }, backup: { nb: nbBackupTk, titre: "alerte(s) de sauvegarde à traiter" } };
     let list = tickets;
     if (ticketFilter === "open") list = tickets.filter(t => t.status !== "closed" && !t.en_attente && !estSheraton(t) && !estAlerteAuto(t));
@@ -60,11 +61,13 @@ function Page_tickets_admin(ctx) {
     if (ticketFilter === "sophos") list = tickets.filter(t => estAlerteSophos(t) && t.status !== "closed");
     if (ticketFilter === "backup") list = tickets.filter(t => estAlerteBackup(t) && t.status !== "closed");
     if (ticketFilter === "sheraton") list = tickets.filter(t => estSheraton(t) && t.status !== "closed");
+    // Notifications : les dernières 24 h (ouvertes ou déjà fermées par le cron horaire)
+    if (ticketFilter === "notifications") { const il24h = Date.now() - 24 * 3600000; list = tickets.filter(t => estNotification(t) && (t.status !== "closed" || new Date(t.created_at).getTime() > il24h)); }
     if (ticketFilter === "closed") list = tickets.filter(t => t.status === "closed");
-    if (ticketFilter === "waiting") list = tickets.filter(t => t.en_attente && t.status !== "closed");
+    if (ticketFilter === "waiting") list = tickets.filter(t => t.en_attente && t.status !== "closed" && !estNotification(t));
     const monId = session && session.user ? session.user.id : null;
-    if (ticketFilter === "mine") list = tickets.filter(t => t.assigned_to && t.assigned_to === monId && t.status !== "closed");
-    if (ticketFilter === "unassigned") list = tickets.filter(t => !t.assigned_to && t.status !== "closed");
+    if (ticketFilter === "mine") list = tickets.filter(t => t.assigned_to && t.assigned_to === monId && t.status !== "closed" && !estNotification(t));
+    if (ticketFilter === "unassigned") list = tickets.filter(t => !t.assigned_to && t.status !== "closed" && !estNotification(t));
     // Onglet Téléphone : tous les appels (ouverts et fermés), pour les comptabiliser
     if (ticketFilter === "telephone") list = tickets.filter(t => estTicketTelephone(t));
 
@@ -98,6 +101,7 @@ function Page_tickets_admin(ctx) {
           { v: "sophos", nb: nbSophosTk, lib: "Alertes Sophos", alerte: true, d: "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z" },
           { v: "defender", nb: nbDefender, lib: "Alertes Microsoft", alerte: true, d: "M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" },
           { v: "sheraton", nb: nbSheraton, lib: "Sheraton", alerte: false, d: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" },
+          { v: "notifications", nb: nbNotif, lib: "Notifications (fermées chaque heure)", alerte: false, d: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" },
         ];
         const filtres = [["open", "Ouverts"], ["mine", "Mes tickets"], ["unassigned", "Non assignés"], ["waiting", "En cours"], ["telephone", "Téléphone" + (nbTelOuv ? " (" + nbTelOuv + ")" : "")], ["closed", "Fermés"], ["all", "Tous"]];
         const rtOk = rtStatus === "SUBSCRIBED";
@@ -107,7 +111,7 @@ function Page_tickets_admin(ctx) {
         const sepMenu = (k) => React.createElement('div', { key: k, style: { height: 1, background: "#EEF0F5", margin: "4px 2px" } });
         return React.createElement('div', { style: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 } },
           // Cartes d'alertes
-          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))", gap: 12 } },
+          React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(5, minmax(0, 1fr))", gap: 12 } },
             cartes.map(c => {
               const rouge = c.alerte && c.nb > 0;
               const actif = ticketFilter === c.v;

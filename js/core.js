@@ -66,7 +66,10 @@ const nomTechDepuis = (t) => {
   return mots.join(" ") || "?";
 };
 const ROLES_CONTACT = ["Front Office", "Réservation", "Room Service", "Économat", "Directeur Général", "Directeur des opérations", "Finance", "Technique", "Sales", "Revenue", "HK", "Autre"];
-const estAlerteAuto = (t) => estAlerteMicrosoft(t) || estAlerteSophos(t) || estAlerteBackup(t);
+// Notifications automatiques (Meraki, Minibar…) : source « notification » posée par la base, onglet à part,
+// hors compteurs, fermées automatiquement toutes les heures (cron Supabase)
+const estNotification = (t) => !!t && t.source === "notification";
+const estAlerteAuto = (t) => estAlerteMicrosoft(t) || estAlerteSophos(t) || estAlerteBackup(t) || estNotification(t);
 const RDV_CRENEAUX = ["09h30 - 10h30", "10h30 - 11h30", "12h30 - 13h30", "14h30 - 15h30", "15h30 - 16h30", "16h30 - 17h30"];
 const semaineOuvree = (dateStr) => { const d = new Date(dateStr + "T00:00:00"); if (isNaN(d.getTime())) return []; const dow = (d.getDay() + 6) % 7; const monday = new Date(d); monday.setDate(d.getDate() - dow); const noms = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"]; const out = []; for (let i = 0; i < 5; i++) { const x = new Date(monday); x.setDate(monday.getDate() + i); const iso = x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); out.push({ iso: iso, label: noms[i] + " " + String(x.getDate()).padStart(2, "0") + "/" + String(x.getMonth() + 1).padStart(2, "0") }); } return out; };
 const formatJourRdv = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d.getTime()) ? iso : d.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "2-digit" }); };
