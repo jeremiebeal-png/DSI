@@ -2966,7 +2966,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (!jetons.length) throw new Error("Aucune vérification lancée" + (echecs.length ? " : " + echecs.map(x => x.cle + " — " + x.erreur).join(" ; ") : ""));
       const debut = Date.now();
       let res = null;
-      while (Date.now() - debut < 150000) {
+      // Attente adaptée aux scripts (installations : plusieurs minutes), entre 2 min 30 et 10 min
+      const attenteMs = Math.min(600000, Math.max(150000, ...(r.lances || []).filter(x => x.ok).map(x => (parseInt(x.attente_min, 10) || 0) * 60000)));
+      while (Date.now() - debut < attenteMs) {
         await new Promise(ok => setTimeout(ok, 5000));
         if (agRef.current !== essai) return;
         setAgEtat({ phase: "verif", msg: "En cours sur " + ou + " (" + Math.round((Date.now() - debut) / 1000) + " s)…", data: d });
@@ -2974,7 +2976,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         if (res && res.tous_prets) break;
       }
       const obtenus = ((res && res.resultats) || []).filter(x => x.pret).map(x => ({ cle: x.cle, deviceId: x.deviceId || deviceId, resultat: x.resultat }));
-      if (!obtenus.length) throw new Error("Pas de résultat des scripts après 2 min 30 (" + ou + " lent ou script en échec : voir ses activités dans NinjaOne).");
+      if (!obtenus.length) throw new Error("Pas de résultat des scripts après " + Math.round(attenteMs / 60000 * 10) / 10 + " min (" + ou + " lent ou script en échec : voir ses activités dans NinjaOne).");
       const tous = agScripts.filter(a => !obtenus.some(o => o.cle === a.cle)).concat(obtenus);
       setAgScripts(tous);
       await lancerAgent(t, pcId || null, tous);
