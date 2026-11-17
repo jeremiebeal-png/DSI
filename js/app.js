@@ -1100,6 +1100,27 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   }, [session, profile, mfaState]);
 
   // ---------- MFA : contrôle d'accès obligatoire pour les admins ----------
+  // Un même compte (ex. Superviseur d'un hôtel) peut avoir plusieurs téléphones
+  // enregistrés, un par personne. Le code saisi est donc essayé sur TOUS les
+  // appareils vérifiés du compte (le plus récemment utilisé d'abord), et pas
+  // seulement sur le premier. Renvoie true dès qu'un appareil accepte le code.
+  const verifierCodeTousAppareils = async (code) => {
+    const { data, error } = await sb.auth.mfa.listFactors();
+    if (error) throw error;
+    const facteurs = ((data && data.totp) || [])
+      .filter(f => f.status === "verified")
+      .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+    for (const f of facteurs) {
+      try {
+        const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: f.id });
+        if (chErr) continue;
+        const { error: vErr } = await sb.auth.mfa.verify({ factorId: f.id, challengeId: ch.id, code });
+        if (!vErr) return true;
+      } catch (e) {}
+    }
+    return false;
+  };
+
   // Démarre l'enrôlement TOTP : génère le QR code à scanner
   const startEnroll = async (existingFactors) => {
     try {
@@ -1164,12 +1185,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setMfaBusy(true);
     setMfaErr("");
     try {
-      const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: mfaFactorId });
-      if (chErr) throw chErr;
-      const { error: vErr } = await sb.auth.mfa.verify({
-        factorId: mfaFactorId, challengeId: ch.id, code
-      });
-      if (vErr) throw vErr;
+      if (mfaState === "challenge") {
+        // Connexion : le code peut venir de n'importe quel téléphone du compte
+        const ok = await verifierCodeTousAppareils(code);
+        if (!ok) throw new Error("code");
+      } else {
+        // Enrôlement : on valide le nouvel appareil qui vient d'être scanné
+        const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: mfaFactorId });
+        if (chErr) throw chErr;
+        const { error: vErr } = await sb.auth.mfa.verify({
+          factorId: mfaFactorId, challengeId: ch.id, code
+        });
+        if (vErr) throw vErr;
+      }
       setMfaCode("");
       setMfaQr(null);
       setMfaSecret("");
@@ -1347,10 +1375,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (code.length !== 6 || !recoveryMfaFactorId) { setRecoveryErr("Entrez le code à 6 chiffres."); return; }
     setRecoveryBusy(true);
     try {
-      const { data: ch, error: chErr } = await sb.auth.mfa.challenge({ factorId: recoveryMfaFactorId });
-      if (chErr) throw chErr;
-      const { error: vErr } = await sb.auth.mfa.verify({ factorId: recoveryMfaFactorId, challengeId: ch.id, code });
-      if (vErr) { setRecoveryErr("Code incorrect ou expiré. Vérifiez l'heure de votre téléphone et réessayez."); return; }
+      const ok = await verifierCodeTousAppareils(code);
+      if (!ok) { setRecoveryErr("Code incorrect ou expiré. Vérifiez l'heure de votre téléphone et réessayez."); return; }
       await applyRecoveryPassword();
     } catch (e) {
       setRecoveryErr("Code incorrect ou expiré. Vérifiez l'heure de votre téléphone et réessayez.");
