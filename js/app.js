@@ -307,7 +307,7 @@ function App() {
         { k: "nom", label: "Nom et prénom du collaborateur", req: true },
         { k: "poste", label: "Poste / service", req: true },
         { k: "dateArrivee", label: "Date d'arrivée", type: "date", req: true },
-        { k: "services", label: "Accès souhaités au Réseau Admin", type: "checkboxes", options: ["FO", "CONCIERGERIE", "HK", "FINANCE", "RH", "COMMERCIAL", "MARKETING", "GC&E", "RESERVATION", "F&B", "CUISINE", "TECH", "DIRECTION"], req: true },
+        { k: "services", label: "Accès souhaités au Réseau Admin", type: "checkboxes", options: ["FO", "CONCIERGERIE", "HK", "FINANCE", "RH", "COMMERCIAL", "MARKETING", "REVENUE MANAGEMENT", "GC&E", "RESERVATION", "F&B", "CUISINE", "TECH", "DIRECTION"], req: true },
         { k: "apps", label: "Accès applicatifs (PMS / logiciels)", type: "checkboxes", options: ["Opera", "PEP", "ONQ", "Protel", "Micros", "Agilysys"] },
         // Nouveau compte : création d'adresse mail
         { k: "creerMail", label: "Créer une adresse mail", type: "checkbox", showIfNotEquals: { typeDemande: "Modification" } },
@@ -1148,6 +1148,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (!session || !profile) return;
     if (profile.role !== "admin" && profile.role !== "supervisor") { setMfaState("ok"); return; }
+    // Aperçu Espace Client : session ouverte par un admin déjà authentifié en MFA,
+    // sur le seul compte de démonstration — pas de second code demandé.
+    if (APERCU_CLIENT && (session.user?.email || "").toLowerCase() === APERCU_DEMO_EMAIL) { setMfaState("ok"); return; }
 
     let cancelled = false;
     (async () => {
@@ -1277,7 +1280,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const doLogin = async () => {
     setLoggingIn(true);
     setLoginErr("");
-    try { localStorage.setItem("dsi-last-activity", String(Date.now())); } catch (e) {}
+    try { localStorage.setItem(ACTIVITE_KEY, String(Date.now())); } catch (e) {}
     const { error } = await sb.auth.signInWithPassword({ email, password: pw });
     if (error) setLoginErr("Email ou mot de passe incorrect.");
     setLoggingIn(false);
@@ -1457,10 +1460,43 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     }
   };
 
+  // ---------- APERÇU « ESPACE CLIENT » (admin) ----------
+  // Ouvre un nouvel onglet connecté au compte Superviseur de démonstration, via la
+  // fonction Supabase « apercu-client » (admin + MFA vérifiés côté serveur).
+  // La session admin de cet onglet n'est pas touchée.
+  const [apercuBusy, setApercuBusy] = useState(false);
+  const ouvrirEspaceClient = async () => {
+    const w = window.open("about:blank", "_blank"); // ouvert tout de suite pour éviter le bloqueur de popups
+    setApercuBusy(true);
+    try {
+      const { data: { session: s } } = await sb.auth.getSession();
+      if (!s) throw new Error("session expirée");
+      const r = await fetch(SUPABASE_URL + "/functions/v1/apercu-client", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + s.access_token, apikey: SUPABASE_KEY },
+        body: "{}"
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.token_hash) throw new Error(j.error || ("HTTP " + r.status));
+      const url = window.location.pathname + "?apercu=1#th=" + encodeURIComponent(j.token_hash);
+      if (w) w.location.href = url; else window.open(url, "_blank");
+    } catch (e) {
+      if (w) try { w.close(); } catch (x) {}
+      alert("Impossible d'ouvrir l'Espace Client : " + (e.message || e));
+    } finally {
+      setApercuBusy(false);
+    }
+  };
+  const fermerApercuClient = async () => {
+    try { await sb.auth.signOut({ scope: "local" }); } catch (e) {}
+    try { window.close(); } catch (e) {}
+    window.location.href = window.location.pathname; // si l'onglet ne peut pas se fermer
+  };
+
   const doLogout = async (opts) => {
     window.__dsiLoggedToken = null;
     window.__dsiPageInit = false;
-    try { localStorage.removeItem("dsi-last-activity"); } catch (e) {}
+    try { localStorage.removeItem(ACTIVITE_KEY); } catch (e) {}
     try { sessionStorage.removeItem("dsi-hotel-choisi"); } catch (e) {}
     // Déconnexion automatique : on ne ferme QUE la session de ce navigateur
     // (scope "local"). Sinon, sur un compte hôtel partagé, l'inactivité d'un
@@ -1490,7 +1526,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     // contrôlé avec le délai court (15 min) et pourrait être déconnecté à tort.
     if (!profile) return;
 
-    const KEY = "dsi-last-activity";
+    const KEY = ACTIVITE_KEY;
     const LOGOUT_AFTER = isAdmin ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000;
     const WARN_BEFORE = isAdmin ? 2 * 60 * 1000 : 60 * 1000;
     let lastWrite = 0;
@@ -1544,7 +1580,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   // Bouton "Je suis toujours là" : relance simplement l'activité
   const stayConnected = () => {
     setIdleWarning(false);
-    try { localStorage.setItem("dsi-last-activity", String(Date.now())); } catch (e) {}
+    try { localStorage.setItem(ACTIVITE_KEY, String(Date.now())); } catch (e) {}
   };
 
   // ---------- HOTEL (CLIENT) CRUD ----------
@@ -6514,8 +6550,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   }, [page, profile]);
 
   // ================= RAPPORTS D'ACTIVITÉ =================
-  const SERVICES_LIST = ["FO", "CONCIERGERIE", "HK", "FINANCE", "RH", "COMMERCIAL", "MARKETING", "GC&E", "RESERVATION", "F&B", "CUISINE", "TECH", "DIRECTION"];
-  const SERVICES_ALIAS = { "F/O": "FO", "FB": "F&B", "Cuisine": "CUISINE", "Finance": "FINANCE", "Technique": "TECH", "Direction": "DIRECTION", "Sales": "COMMERCIAL", "Revenue": "REVENUE" };
+  const SERVICES_LIST = ["FO", "CONCIERGERIE", "HK", "FINANCE", "RH", "COMMERCIAL", "MARKETING", "REVENUE MANAGEMENT", "GC&E", "RESERVATION", "F&B", "CUISINE", "TECH", "DIRECTION"];
+  const SERVICES_ALIAS = { "F/O": "FO", "FB": "F&B", "Cuisine": "CUISINE", "Finance": "FINANCE", "Technique": "TECH", "Direction": "DIRECTION", "Sales": "COMMERCIAL", "Revenue": "REVENUE MANAGEMENT", "REVENUE": "REVENUE MANAGEMENT" };
   const svcLabel = (s) => SERVICES_ALIAS[s] || s;
   const [rapports, setRapports] = useState([]);
   const [rapDemandes, setRapDemandes] = useState({});   // { rapportId: [demandes] }
@@ -8367,7 +8403,10 @@ const nav = isAdmin
         }),
         navSimples.filter(it => it.p !== "accueil").map(it => React.createElement('button', { key: it.p, className: "dsi-top" + (page === it.p ? " cur" : ""), onClick: () => goNav(it.p) }, it.label))
       ),
-      React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap", flexShrink: 0 } }, isAdmin ? "Espace Admin" : "Intranet Client"),
+      isAdmin && React.createElement('button', { onClick: ouvrirEspaceClient, disabled: apercuBusy, title: "Voir le portail comme un client (établissement de démonstration)",
+        style: { fontSize: 11, fontWeight: 700, color: "white", background: "rgba(255,255,255,.08)", border: "1px solid " + G + "66", borderRadius: 20, padding: "5px 12px", whiteSpace: "nowrap", flexShrink: 0, cursor: apercuBusy ? "wait" : "pointer", opacity: apercuBusy ? 0.6 : 1 } },
+        apercuBusy ? "Ouverture…" : "👁 Espace Client"),
+      React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap", flexShrink: 0 } }, isAdmin ? "Espace Admin" : (APERCU_CLIENT ? "Aperçu client" : "Intranet Client")),
       React.createElement('button', { className: "dsi-iconbtn", onClick: toggleTheme, title: theme === "dark" ? "Passer en mode jour" : "Passer en mode nuit", "aria-label": theme === "dark" ? "Mode jour" : "Mode nuit" }, theme === "dark" ? "☀️" : "🌙"),
       isAdmin && React.createElement('button', { className: "dsi-iconbtn", onClick: toggleSound, title: soundOn ? "Couper les notifications sonores" : "Activer les notifications sonores", "aria-label": soundOn ? "Son activé" : "Son coupé", style: { opacity: soundOn ? 1 : 0.55 } }, soundOn ? "🔔" : "🔕")
     ),
@@ -8759,6 +8798,9 @@ const nav = isAdmin
     // Menu : barre horizontale (ordinateur) / onglets en bas (mobile). L'ancienne barre latérale n'est plus affichée.
     mobileNav,
     React.createElement('div', { style: { flex: 1, padding: isMobile ? "0 0 calc(92px + env(safe-area-inset-bottom))" : "0 0 24px", overflowX: "clip", width: "100%", minWidth: 0 } },
+      APERCU_CLIENT && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 45, background: "#7A5C12", color: "white", display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap", padding: "7px 16px", fontSize: 12.5 } },
+        React.createElement('span', null, "👁 Aperçu de l'Espace Client — compte Superviseur de démonstration (DSI - Hôtel Démo). Les demandes envoyées ici arrivent réellement au support."),
+        React.createElement('button', { onClick: fermerApercuClient, style: { background: "white", color: "#7A5C12", border: "none", borderRadius: 14, padding: "4px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" } }, "Fermer l'aperçu")),
       topNav,
       // Barre supérieure mobile : logo + profil
       isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 16px", marginBottom: 16 } },
