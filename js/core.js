@@ -386,7 +386,28 @@ function RichEditor(props) {
 // ====== CONFIGURATION SUPABASE ======
 const SUPABASE_URL = "https://vkamubvlbezhpbunvdai.supabase.co";
 const SUPABASE_KEY = "sb_publishable_0bUT3AjMaWBI9qQa9ZKmrA_3BRqNvbL";
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// Aperçu « Espace Client » (bouton de l'espace admin) : onglet ouvert avec ?apercu=1,
+// connecté au compte Superviseur de démonstration. Sa session est rangée à part
+// (sessionStorage, clé dédiée) : elle ne remplace jamais la session admin des autres onglets.
+const APERCU_CLIENT = (() => { try { return new URLSearchParams(window.location.search).get("apercu") === "1"; } catch (e) { return false; } })();
+const ACTIVITE_KEY = APERCU_CLIENT ? "dsi-apercu-activity" : "dsi-last-activity";
+const sb = APERCU_CLIENT
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storage: window.sessionStorage, storageKey: "dsi-apercu-client", detectSessionInUrl: false } })
+  : window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const APERCU_DEMO_EMAIL = "demo.client@dsihotel.fr";
+// Onglet d'aperçu : connexion au compte de démonstration avec le jeton à usage unique
+// transmis dans l'URL (#th=…), puis effacement du jeton de la barre d'adresse.
+if (APERCU_CLIENT) {
+  try {
+    const th = new URLSearchParams((window.location.hash || "").replace(/^#/, "")).get("th");
+    if (th) {
+      window.history.replaceState(null, "", window.location.pathname + "?apercu=1");
+      sb.auth.verifyOtp({ token_hash: th, type: "magiclink" }).then(({ error }) => {
+        if (error) alert("Aperçu client : jeton refusé ou expiré (" + error.message + "). Relancez depuis l'espace admin.");
+      });
+    }
+  } catch (e) {}
+}
 
 // Appel de la route /send du Worker AVEC la session de l'utilisateur connecté.
 // Le Worker refuse désormais tout envoi sans session valide (anti-relais de spam/phishing).
