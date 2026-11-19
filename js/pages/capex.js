@@ -1,4 +1,4 @@
-// ===== Page « capex » — condition dans App : page === "capex" && (isAdmin || multiHotel) =====
+// ===== Page « capex » — condition dans App : page === "capex" && (isAdmin || isSupervisor) =====
 // Extrait de App (index.html). Les variables de App utilisées ici sont reçues dans ctx.
 // Si vous utilisez une NOUVELLE variable de App dans cette page, ajoutez-la ici ET dans l'appel Page_capex({...}) de app.js.
 function Page_capex(ctx) {
@@ -6,10 +6,11 @@ function Page_capex(ctx) {
   const {
     CAPEX_CATS, CAPEX_PRIOS, CAPEX_PRIO_COUL, CAPEX_STATUTS, CAPEX_STATUT_COUL, cxAnnee, cxAuteur, cxErr,
     cxForm, cxHotel, cxLoading, cxMaj, cxModal, cxNewFiles, cxRows, cxSaving, cxStatut, hotels, isAdmin,
-    isMobile, loadCapex, mesHotels, session, setCxAnnee, setCxForm, setCxHotel, setCxModal, setCxNewFiles,
+    isMobile, loadCapex, mesHotels, myHotelId, session, setCxAnnee, setCxForm, setCxHotel, setCxModal, setCxNewFiles,
     setCxRows, setCxSaving, setCxStatut, cxOuverts, setCxOuverts, cxAuto, setCxAuto, loadCxAuto, callSophosApi
   } = ctx;
-    const hotelsCx = isAdmin ? hotels : mesHotels;
+    // Superviseur multi-hôtels : ses hôtels ; superviseur d'un seul hôtel : son hôtel
+    const hotelsCx = isAdmin ? hotels : (mesHotels.length ? mesHotels : hotels.filter(h => h.id === myHotelId));
     const nomHotelCx = (id) => { const h = hotelsCx.find(x => x.id === id) || hotels.find(x => x.id === id); return h ? h.name : "?"; };
     const eur = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(Number(v) || 0);
     const totalLigne = (r) => (Number(r.montant_ht) || 0);
@@ -183,10 +184,10 @@ function Page_capex(ctx) {
 
     content = React.createElement('div', null,
       React.createElement('div', { style: { fontSize: 12.5, color: "#888", marginBottom: 16, lineHeight: 1.6 } },
-        isAdmin ? "Plan d'investissement informatique (CAPEX) par établissement. Les lignes saisies ici sont visibles et modifiables par les comptes de groupe rattachés à ces hôtels."
+        isAdmin ? "Plan d'investissement informatique (CAPEX) par établissement. Les lignes saisies ici sont visibles et modifiables par les superviseurs de ces hôtels."
                 : "Plan d'investissement informatique de vos établissements, préparé par DSI Hotel. Vous pouvez valider, refuser ou ajuster chaque ligne ; chaque modification est tracée."),
       React.createElement('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 } },
-        React.createElement('select', { value: cxHotel, onChange: e => setCxHotel(e.target.value), style: { ...selS, maxWidth: 240 } },
+        (isAdmin || hotelsCx.length > 1) && React.createElement('select', { value: cxHotel, onChange: e => setCxHotel(e.target.value), style: { ...selS, maxWidth: 240 } },
           React.createElement('option', { value: "all" }, isAdmin ? "Tous les hôtels" : "Tous mes hôtels"),
           hotelsCx.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "fr")).map(h => React.createElement('option', { key: h.id, value: h.id }, h.name))),
         React.createElement('select', { value: cxAnnee, onChange: e => setCxAnnee(e.target.value), style: selS },
