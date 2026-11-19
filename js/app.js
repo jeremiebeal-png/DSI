@@ -1406,7 +1406,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setSecMsg("");
     setSecAddCode("");
     try {
-      const nom = (secAddName || "").trim() || ("Appareil " + new Date().toLocaleDateString("fr-FR"));
+      // Nettoie les ajouts abandonnés (QR affiché mais code jamais validé) : sinon ils
+      // restent « non vérifiés » et bloquent un nouvel essai avec le même nom.
+      const { data: lf } = await sb.auth.mfa.listFactors();
+      const facteursTous = (lf && lf.all) || (lf && lf.totp) || [];
+      for (const f of facteursTous.filter(x => x.status !== "verified")) {
+        try { await sb.auth.mfa.unenroll({ factorId: f.id }); } catch (e) {}
+      }
+      // Nom unique obligatoire côté Supabase : on ajoute l'heure si besoin
+      let nom = (secAddName || "").trim() || ("Appareil " + new Date().toLocaleDateString("fr-FR"));
+      const nomsPris = facteursTous.filter(x => x.status === "verified").map(x => (x.friendly_name || "").toLowerCase());
+      if (nomsPris.includes(nom.toLowerCase())) nom += " " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
       const { data, error } = await sb.auth.mfa.enroll({ factorType: "totp", friendlyName: nom });
       if (error) throw error;
       setSecAddFactorId(data.id);
