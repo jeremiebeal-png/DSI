@@ -863,7 +863,7 @@ function App() {
     sb.rpc("mes_hotels").then(({ data, error }) => { setMesHotels((!error && Array.isArray(data)) ? data : []); });
   }, [profile, mfaState]);
   const multiHotel = isSupervisor && mesHotels.length > 1;
-  useEffect(() => { if (page === "capex" && (isAdmin || multiHotel)) loadCapex(); }, [page, profile, multiHotel]);
+  useEffect(() => { if (page === "capex" && (isAdmin || isSupervisor)) loadCapex(); }, [page, profile, isSupervisor]);
   const changerHotelActif = async (hid) => {
     if (!hid) return;
     setHotelSwitchBusy(true);
@@ -7775,15 +7775,15 @@ const nav = isAdmin
         ...(isSupervisor ? [{ p: "rapport-securite", icon: "🖥️", label: "Rapports de sécurité", grp: "rap" }] : []),
         ...(isSupervisor ? [{ p: "rapport-intervention", icon: "🔧", label: "Rapports d'intervention", grp: "rap" }] : []),
         ...(isSupervisor ? [{ p: "licences-m365", icon: "🪪", label: "Licences Microsoft 365", grp: "rap" }] : []),
-        ...(multiHotel ? [{ p: "capex", icon: "💰", label: "CAPEX", grp: "rap" }] : [])
+        ...(isSupervisor ? [{ p: "capex", icon: "💰", label: "CAPEX", grp: "rap" }] : [])
       ];
   let content = null;
 
   // ---------- CAPEX (admin : saisie ; compte de groupe : consultation + modification) ----------
-  if (page === "capex" && (isAdmin || multiHotel)) content = Page_capex({
+  if (page === "capex" && (isAdmin || isSupervisor)) content = Page_capex({
     content, CAPEX_CATS, CAPEX_PRIOS, CAPEX_PRIO_COUL, CAPEX_STATUTS, CAPEX_STATUT_COUL, cxAnnee, cxAuteur,
     cxErr, cxForm, cxHotel, cxLoading, cxMaj, cxModal, cxNewFiles, cxRows, cxSaving, cxStatut, hotels,
-    isAdmin, isMobile, loadCapex, mesHotels, session, setCxAnnee, setCxForm, setCxHotel, setCxModal,
+    isAdmin, isMobile, loadCapex, mesHotels, myHotelId, session, setCxAnnee, setCxForm, setCxHotel, setCxModal,
     setCxNewFiles, setCxRows, setCxSaving, setCxStatut,
     cxOuverts, setCxOuverts, cxAuto, setCxAuto, loadCxAuto, callSophosApi
   });
