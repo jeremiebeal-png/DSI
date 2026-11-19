@@ -1313,10 +1313,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
 
   // Contrôle de robustesse aligné sur la politique Supabase (niveau strict) :
-  // minuscule + majuscule + chiffre + caractère spécial, 8 caractères minimum.
+  // minuscule + majuscule + chiffre + caractère spécial, 10 caractères minimum.
   // Renvoie un message d'erreur en français, ou null si le mot de passe est valide.
   const validerMotDePasse = (pw) => {
-    if (!pw || pw.length < 8) return "Le mot de passe doit contenir au moins 8 caractères.";
+    if (!pw || pw.length < 10) return "Le mot de passe doit contenir au moins 10 caractères.";
     if (!/[a-z]/.test(pw)) return "Le mot de passe doit contenir au moins une minuscule.";
     if (!/[A-Z]/.test(pw)) return "Le mot de passe doit contenir au moins une majuscule.";
     if (!/[0-9]/.test(pw)) return "Le mot de passe doit contenir au moins un chiffre.";
@@ -7604,7 +7604,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
                 React.createElement('button', { onClick: () => { setRecoveryStep("pw"); setRecoveryMfaCode(""); setRecoveryErr(""); }, style: { width: "100%", marginTop: 10, padding: 9, background: "none", border: "1px solid rgba(255,255,255,.15)", color: "rgba(255,255,255,.5)", borderRadius: 7, fontSize: 12, cursor: "pointer" } }, "← Retour")
               )
             : React.createElement('div', null,
-                React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Choisissez un nouveau mot de passe : 8 caractères minimum, avec au moins une minuscule, une majuscule, un chiffre et un caractère spécial."),
+                React.createElement('div', { style: { color: "rgba(255,255,255,.55)", fontSize: 12.5, lineHeight: 1.5, marginBottom: 16 } }, "Choisissez un nouveau mot de passe : 10 caractères minimum, avec au moins une minuscule, une majuscule, un chiffre et un caractère spécial."),
                 React.createElement('div', { style: { marginBottom: 12 } },
                   React.createElement('input', { type: "password", value: recoveryPw, onChange: e => { setRecoveryPw(e.target.value); setRecoveryErr(""); }, placeholder: "Nouveau mot de passe", style: { width: "100%", padding: "10px 13px", background: "rgba(255,255,255,.08)", border: `1px solid ${G}35`, borderRadius: 8, color: "white", fontSize: 14, outline: "none", boxSizing: "border-box" } })
                 ),
