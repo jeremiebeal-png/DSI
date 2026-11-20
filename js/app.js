@@ -29,7 +29,7 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   // Config des menus deroulants de la sidebar (ordre = position du 1er sous-item)
-  const NAV_GROUPS = { assist: { icon: "🎧", label: "Assistance" }, hotel: { icon: "🏨", label: "Mon établissement" }, cli: { icon: "🏨", label: "Clients" }, sup: { icon: "🎧", label: "Support" }, sec: { icon: "🛡️", label: "Sécurité" }, org: { icon: "📅", label: "Organisation" }, rap: { icon: "📁", label: "Rapports" }, adm: { icon: "🛡️", label: "Administration" } };
+  const NAV_GROUPS = { assist: { icon: "🎧", label: "Mes demandes" }, hotel: { icon: "🏨", label: "Mon établissement" }, cli: { icon: "🏨", label: "Clients" }, sup: { icon: "🎧", label: "Support" }, sec: { icon: "🛡️", label: "Sécurité" }, org: { icon: "📅", label: "Organisation" }, rap: { icon: "📁", label: "Rapports" }, adm: { icon: "🛡️", label: "Administration" } };
   const toggleTheme = () => { const m = theme === "dark" ? "light" : "dark"; dsiApplyTheme(m); setTheme(m); };
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
