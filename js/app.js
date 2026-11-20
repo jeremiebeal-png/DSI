@@ -1757,6 +1757,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const estEdition = addAccountForm.mode === "edit";
     if (!addAccountForm.email.trim()) { setAddAccountErr("Email requis."); return; }
     if (!estEdition && !addAccountForm.pw.trim()) { setAddAccountErr("Email et mot de passe requis."); return; }
+    // Même règle que Supabase (10 caractères, minuscule, majuscule, chiffre, caractère spécial) : message clair avant l'envoi
+    if (addAccountForm.pw) { const errPw = validerMotDePasse(addAccountForm.pw); if (errPw) { setAddAccountErr(errPw); return; } }
     setSavingAccount(true);
     try {
       if (estEdition) {
