@@ -111,28 +111,37 @@ const SIGN_LOGO_URL = "https://www.dsihotel.com/dsi-logo-gold.png";
 const SIGN_ADDRESS = "60 Rue François 1er, 75008 Paris";
 const SIGN_PHONE = "+33 1 84 18 02 23";
 const SIGN_PHONE_TEL = "+33184180223";
+const SIGN_PORTAIL_URL = "https://portail.dsihotel.com";
+const SIGN_PORTAIL_LABEL = "portail.dsihotel.com";
+const SIGN_PORTAIL_TEXTE = "Créez et suivez vos tickets, consultez vos guides et l'état de vos services.";
 
 // Signature au format texte brut (repli si le client mail n'affiche pas le HTML)
 const SIGNATURE_TEXT =
   "\n\n--\n" +
   "DSI Hotel\n" +
   SIGN_ADDRESS + "\n" +
-  "Vous pouvez maintenant nous joindre au " + SIGN_PHONE + "\n" +
-  SUPPORT_EMAIL;
+  SIGN_PHONE + " · www.dsihotel.com\n" +
+  "Votre portail client : " + SIGN_PORTAIL_URL + "\n" +
+  SIGN_PORTAIL_TEXTE;
 
 // Signature au format HTML (styles inline : obligatoire pour les clients mail)
 const SIGNATURE_HTML =
   '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;border-top:1px solid #E2E2E8;padding-top:16px;font-family:Arial,Helvetica,sans-serif;">' +
     '<tr><td style="font-size:15px;font-weight:bold;color:#1a1a3e;padding-bottom:5px;">DSI Hotel</td></tr>' +
     '<tr><td style="font-size:13px;color:#555555;padding-bottom:4px;">' + SIGN_ADDRESS + '</td></tr>' +
-    '<tr><td style="font-size:13px;color:#555555;padding-bottom:4px;">' +
-      'Vous pouvez maintenant nous joindre au ' +
-      '<a href="tel:' + SIGN_PHONE_TEL + '" style="color:#1155CC;text-decoration:none;">' + SIGN_PHONE + '</a>' +
-    '</td></tr>' +
-    '<tr><td style="font-size:13px;">' +
-      '<a href="mailto:' + SUPPORT_EMAIL + '" style="color:#1155CC;text-decoration:none;">' + SUPPORT_EMAIL + '</a>' +
+    '<tr><td style="font-size:13px;color:#555555;">' +
+      '<a href="tel:' + SIGN_PHONE_TEL + '" style="color:#555555;text-decoration:none;">' + SIGN_PHONE + '</a>' +
       '<span style="color:#999999;"> &nbsp;·&nbsp; </span>' +
       '<a href="https://www.dsihotel.com" style="color:#1155CC;text-decoration:none;">www.dsihotel.com</a>' +
+    '</td></tr>' +
+    '<tr><td style="padding-top:10px;">' +
+      '<table cellpadding="0" cellspacing="0" border="0"><tr>' +
+        '<td style="border-left:3px solid #1155CC;background:#F1F5FD;padding:7px 12px;font-family:Arial,Helvetica,sans-serif;">' +
+          '<span style="font-size:13px;font-weight:bold;color:#1a1a3e;">Votre portail client : </span>' +
+          '<a href="' + SIGN_PORTAIL_URL + '" style="font-size:13px;font-weight:bold;color:#1155CC;text-decoration:none;">' + SIGN_PORTAIL_LABEL + '</a><br>' +
+          '<span style="font-size:12px;color:#555555;">' + SIGN_PORTAIL_TEXTE.replace(/'/g, "&#39;") + '</span>' +
+        '</td>' +
+      '</tr></table>' +
     '</td></tr>' +
   '</table>';
 
@@ -199,7 +208,7 @@ const stripSignature = (s) => {
   // Repli : coupe à partir d'une ligne "DSI Hotel" suivie de l'adresse
   out = out.replace(/\n?\s*DSI Hotel\s*\n\s*60 Rue Fran[cç]ois 1er[\s\S]*$/i, "");
   // Nettoie d'éventuelles lignes de signature résiduelles collées seules
-  out = out.replace(/\n?\s*(60 Rue Fran[cç]ois 1er[^\n]*|Vous pouvez maintenant nous joindre[^\n]*|support@dsihotel\.com[^\n]*|www\.dsihotel\.com[^\n]*)\s*$/gi, "");
+  out = out.replace(/\n?\s*(60 Rue Fran[cç]ois 1er[^\n]*|Vous pouvez maintenant nous joindre[^\n]*|support@dsihotel\.com[^\n]*|www\.dsihotel\.com[^\n]*|\+33 1 84 18 02 23[^\n]*|Votre portail client[^\n]*|Créez et suivez vos tickets[^\n]*)\s*$/gi, "");
   return out.replace(/\s+$/, "");
 };
 
@@ -209,11 +218,14 @@ const SignatureBlock = () => React.createElement('div', {
 },
   React.createElement('div', { style: { fontWeight: 700, color: "#1a1a3e", marginBottom: 2 } }, "DSI Hotel"),
   React.createElement('div', null, SIGN_ADDRESS),
-  React.createElement('div', null, "Vous pouvez maintenant nous joindre au " + SIGN_PHONE),
   React.createElement('div', null,
-    React.createElement('a', { href: "mailto:" + SUPPORT_EMAIL, style: { color: "#1155CC", textDecoration: "none" } }, SUPPORT_EMAIL),
-    " · ",
+    SIGN_PHONE, " · ",
     React.createElement('a', { href: "https://www.dsihotel.com", target: "_blank", rel: "noreferrer", style: { color: "#1155CC", textDecoration: "none" } }, "www.dsihotel.com")
+  ),
+  React.createElement('div', { style: { marginTop: 6, padding: "5px 10px", borderLeft: "3px solid #1155CC", background: "#F1F5FD" } },
+    React.createElement('span', { style: { fontWeight: 700, color: "#1a1a3e" } }, "Votre portail client : "),
+    React.createElement('a', { href: SIGN_PORTAIL_URL, target: "_blank", rel: "noreferrer", style: { color: "#1155CC", fontWeight: 700, textDecoration: "none" } }, SIGN_PORTAIL_LABEL),
+    React.createElement('div', { style: { fontSize: 11, color: "#555" } }, SIGN_PORTAIL_TEXTE)
   )
 );
 const ADMIN_API_URL = "https://dsi-hotel-api-v2.jeremie-beal.workers.dev";
