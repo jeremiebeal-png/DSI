@@ -24,7 +24,7 @@ const avLogo = (nom, taille) => {
   const ini = lib.replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).map(w => w[0]).join("").slice(0, 2).toUpperCase() || "?";
   return React.createElement('span', { title: lib, style: { width: t, height: t, borderRadius: 5, background: "#EEF0F4", color: "#4A5568", fontSize: Math.round(t * 0.42), fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, letterSpacing: "-.02em" } }, ini);
 };
-const PRESTATAIRES = ["Axians","Bartech","CK Print","Colt","Dormakaba","FreedomPay","Hoist","Hospitality","ITM","Medialog","Micros","Novicom","Oracle","Shiji","Support Hilton","Support IHG","Techotels","Wifirst"];
+const PRESTATAIRES = ["Axians","Bartech","CK Print","Colt","Dormakaba","FreedomPay","Hoist","Hospitality","ITM","Medialog","Micros","Novicom","Oracle","Shiji","Support Hilton","Support IHG","Support Radisson","Techotels","Wifirst"];
 const PRESTA_COLOR = { "Oracle":"#185FA5","Micros":"#0F6E56","Support Hilton":"#BA7517","Dormakaba":"#534AB7","Support IHG":"#3B6D11","Hospitality":"#993C1D","FreedomPay":"#993556","Shiji":"#0C447C","Bartech":"#5F5E5A","Axians":"#A32D2D" };
 const prestaColor = (p) => "#534AB7"; // couleur unique pour tous les prestataires
 // Alerte Microsoft Defender reçue par email (expéditeur defender-noreply@microsoft.com)
