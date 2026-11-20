@@ -742,6 +742,11 @@ function App() {
   const [tickets, setTickets] = useState([]);
   const [validations, setValidations] = useState({}); // { reference: {status, validated_at, validateur_email} }
   const [ticketsLoading, setTicketsLoading] = useState(false);
+  // Admin : au démarrage, seuls les tickets ouverts + ceux des 30 derniers jours sont chargés (allège la base).
+  // L'historique complet est chargé à la demande : filtre « Fermés » / « Tous » ou recherche.
+  const [ticketsHistorique, setTicketsHistorique] = useState(false);
+  const ticketsHistoriqueRef = useRef(false);
+  const JOURS_TICKETS_RECENTS = 30;
   const [ticketFilter, setTicketFilter] = useState("open"); // open | closed | all | waiting | sheraton
   const [tkSortPresta, setTkSortPresta] = useState(false);
   const [techniciens, setTechniciens] = useState([]); // [{ id, nom, email }] — comptes admin assignables
@@ -2157,6 +2162,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const loadTickets = () => {
     if (!profile) return;
     setTicketsLoading(true);
+    const limiteRecente = (isAdmin && !ticketsHistoriqueRef.current) ? new Date(Date.now() - JOURS_TICKETS_RECENTS * 86400000).toISOString() : null;
     // Récupère TOUS les tickets par pages de 1000 (PostgREST plafonne chaque
     // requête à 1000 lignes ; sans pagination on n'en verrait qu'un millier).
     const PAGE = 1000;
@@ -2166,6 +2172,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       for (;;) {
         let q = sb.from("tickets").select(cols).order("created_at", { ascending: false }).range(from, from + PAGE - 1);
         if (!isAdmin && myHotelId) q = q.eq("hotel_id", myHotelId);
+        if (limiteRecente) q = q.or("status.neq.closed,created_at.gte." + limiteRecente);
         const { data, error } = await q;
         if (error) return { error };
         rows = rows.concat(data || []);
@@ -5819,6 +5826,17 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   useEffect(() => {
     if (page === "tickets-admin" || page === "tickets-client" || page === "rapport-jour" || page === "accueil") loadTickets();
   }, [page, profile]);
+
+  // Historique complet des tickets (admin) chargé une seule fois, quand on en a besoin :
+  // filtre « Fermés » ou « Tous », ou recherche dans les tickets.
+  useEffect(() => {
+    if (!isAdmin || ticketsHistoriqueRef.current || page !== "tickets-admin") return;
+    if (ticketFilter === "closed" || ticketFilter === "all" || (ticketSearch || "").trim().length >= 2) {
+      ticketsHistoriqueRef.current = true;
+      setTicketsHistorique(true);
+      loadTickets();
+    }
+  }, [ticketFilter, ticketSearch, page, isAdmin]);
 
   // Dès que l'admin saisit un terme de recherche, charge (une seule fois) le
   // corps des messages pour permettre la recherche plein texte.
