@@ -96,7 +96,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   // Import NinjaOne de l'inventaire serveurs pour TOUS les hôtels (Worker dsi-hotel-inventaire, route /importer,
   // un hôtel par appel : limite de sous-requêtes du plan gratuit). Ne supprime jamais rien, n'écrase ni rôle ni Care Pack.
   const importerTout = async () => {
-    const sansServeur = new Set((data ? data.saisies : []).filter(x => x.sans_serveur).map(x => x.hotel_id));
+    const sansServeur = new Set((data ? data.saisies : []).filter(x => x.sans_serveur || x.exclu).map(x => x.hotel_id));
     const cibles = hotels.filter(h => !/d[ée]mo|client test/i.test(h.name || "") && !sansServeur.has(h.id)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
     if (!confirm("Importer l'inventaire serveurs depuis NinjaOne pour les " + cibles.length + " hôtels ?\n\nLes machines manquantes sont ajoutées, l'OS, les mises à jour et l'antivirus sont mis à jour. Rien n'est supprimé ; rôles, Care Pack et notes ne sont jamais modifiés.\n\nCompter 2 à 4 minutes.")) return;
     const { data: sd } = await sb.auth.getSession();
@@ -299,6 +299,20 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
               e('input', { type: "checkbox", checked: !!c.actif, title: "Critère actif", "aria-label": "Actif " + c.libelle, onChange: ev => maj(c, "actif", ev.target.checked) })))))
         ], {});
       }),
+      (() => {
+        const exclus = data.saisies.filter(x => x.exclu).map(x => ({ ...x, nom: (hotels.find(h => h.id === x.hotel_id) || {}).name || "?" })).sort((a, b) => a.nom.localeCompare(b.nom));
+        const reintegrer = async (x) => {
+          const { error } = await sb.from("hotel_completude").update({ exclu: false, maj_le: new Date().toISOString(), maj_par: adminFromName ? adminFromName() : null }).eq("hotel_id", x.hotel_id);
+          if (error) { alert("Erreur : " + error.message); return; }
+          charger();
+        };
+        return carte([
+          e('div', { key: "t", style: { fontSize: 15, fontWeight: 700, marginBottom: 6 } }, "Hôtels non suivis par le tableau de bord (" + exclus.length + ")"),
+          exclus.length === 0 ? e('div', { key: "v", style: { fontSize: 13, color: "#5A6172" } }, "Aucun.") :
+            e('div', { key: "l", style: { display: "flex", gap: 8, flexWrap: "wrap" } }, exclus.map(x => e('span', { key: x.hotel_id, style: { display: "inline-flex", gap: 8, alignItems: "center", padding: "4px 6px 4px 12px", borderRadius: 999, background: "#EEF0F4", fontSize: 13 } },
+              x.nom, e('button', { onClick: () => reintegrer(x), style: { border: "1px solid #C9CED8", background: "white", borderRadius: 999, padding: "3px 10px", fontSize: 12, cursor: "pointer" } }, "Réintégrer"))))
+        ], { gridColumn: isMobile ? "auto" : "1 / -1" });
+      })(),
       e('div', { style: { gridColumn: isMobile ? "auto" : "1 / -1", fontSize: 12.5, color: "#5A6172", lineHeight: 1.6 } },
         "Score = points obtenus ÷ points des critères applicables. Un critère « sans objet » (pas de serveur, messagerie non gérée, pas de projet…) sort du calcul. Modifier un poids recalcule tous les hôtels. Une photo des scores est enregistrée le 1er de chaque mois."));
   };
@@ -463,6 +477,12 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
           coche("Messagerie non gérée par DSI Hotel (Microsoft 365 = sans objet)", "m365_non_gere"),
           coche("Antivirus géré par la chaîne, ex. Hilton (Antivirus = sans objet)", "av_non_gere"))),
       e('div', { key: "b", style: { display: "flex", gap: 10, alignItems: "center", marginTop: 12 } },
+        e('button', { onClick: async () => {
+            if (!confirm("Ne plus suivre « " + x.nom + " » dans le tableau de bord ?\n(Réintégrable depuis l'onglet Barème.)")) return;
+            const { error } = await sb.from("hotel_completude").upsert({ hotel_id: x.id, exclu: true, maj_le: new Date().toISOString(), maj_par: adminFromName ? adminFromName() : null }, { onConflict: "hotel_id" });
+            if (error) { alert("Erreur : " + error.message); return; }
+            onHotel(""); onChange();
+          }, style: { order: 2, marginLeft: "auto", padding: "9px 14px", background: "white", border: "1px solid #DDD", color: "#8A2E10", borderRadius: 8, fontSize: 12.5, cursor: "pointer" } }, "Ne plus suivre cet hôtel"),
         e('button', { onClick: enregistrer, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "Enregistrer"),
         e('span', { style: { fontSize: 12.5 } }, enreg))]),
 
