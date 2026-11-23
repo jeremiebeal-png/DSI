@@ -213,8 +213,8 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
       e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } },
         bascule(),
         e('div', { style: { fontSize: 12.5, color: "#5A6172", maxWidth: 640, lineHeight: 1.5 } }, mode === "comp"
-          ? "Complétude = informations renseignées ÷ informations attendues. Référence" + (ref ? " : " + ref.nom + " (hôtel modèle)." : ".") + " Les hôtels au-dessus de la référence sont en écart positif."
-          : "Conformité = contrôles au vert ÷ contrôles mesurables. Objectif fixe : " + CPL_OBJECTIF_CONF + " %. « — » = moins de " + CPL_CONF_MIN_POINTS + " points mesurables : renseigner d'abord l'hôtel.")),
+          ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. " + (ref ? ref.nom + " sert de modèle : le trait noir sur chaque barre montre son niveau." : "")
+          : "Ce score indique si ce qu'on surveille est en bon état : mises à jour, sauvegardes, antivirus, alertes… Le trait noir marque l'objectif de " + CPL_OBJECTIF_CONF + " %. « — » veut dire qu'on n'a pas encore assez d'informations sur l'hôtel pour le calculer.")),
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
         tuile(mode === "comp" ? "Référence · hôtel modèle" : "Objectif de conformité", refVal == null ? "—" : refVal + " %", mode === "comp" ? (ref ? ref.nom : "") : "identique pour tous les hôtels", "#1E4FA8"),
         tuile("Moyenne du parc", moy == null ? "—" : moy + " %", moy != null && refVal != null ? (moy - refVal) + " pts sous " + (mode === "comp" ? "la référence" : "l'objectif") : ""),
@@ -259,7 +259,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
     const cols = "minmax(180px, 260px) repeat(" + domaines.length + ", minmax(64px, 1fr)) 80px 90px";
     return e('div', null,
       e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } }, bascule(), choixSoc(),
-        e('div', { style: { fontSize: 12.5, color: "#5A6172" } }, "Hôtels les plus en retard en premier. Une colonne pâle = chantier à lancer sur tout le parc ; un clic sur une case ouvre la fiche de l'hôtel.")),
+        e('div', { style: { fontSize: 12.5, color: "#5A6172" } }, "Les hôtels les plus en retard sont en haut. Une colonne presque entièrement orange montre un chantier à lancer sur tous les hôtels. Cliquez sur une case pour ouvrir la fiche de l'hôtel.")),
       carte(e('div', { style: { overflowX: "auto" } }, e('div', { style: { minWidth: 900 } },
         e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 5, fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", padding: "4px 0 8px" } },
           e('div', null, "Établissement"), domaines.map(([k, l]) => e('div', { key: k, style: { textAlign: "center" } }, l)),
