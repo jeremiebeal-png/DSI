@@ -16,6 +16,9 @@ const CPL_DOMAINES = {
   conf: [["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["mat", "Matériel"]],
 };
 const CPL_OBJECTIF_CONF = 90;
+// Hôtel de référence pour la complétude : VOCO - Clichy (choix du 23/11/2026). Si cet hôtel n'existe plus,
+// la référence redevient automatiquement l'hôtel le plus renseigné.
+const CPL_REFERENCE_ID = "c1e4b815-e842-41fc-ab8b-e57d00d7705b";
 const CPL_CONF_MIN_POINTS = 30;
 const CPL_AV_NOMS = { sophos: "Sophos", crowdstrike: "CrowdStrike", sentinelone: "SentinelOne", watchguard: "WatchGuard", defender: "Microsoft Defender", autre: "Autre" };
 
@@ -98,7 +101,8 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
         aCorriger: h.lignes.filter(l => l.score === "conf" && l.ratio != null && l.ratio < 1).length,
       };
     });
-    const ref = liste.filter(x => x.comp != null).sort((a, b) => b.comp - a.comp)[0] || null;
+    const ref = liste.find(x => x.id === CPL_REFERENCE_ID && x.comp != null)
+      || liste.filter(x => x.comp != null).sort((a, b) => b.comp - a.comp)[0] || null;
     return { liste, ref };
   }, [data, hotels]);
 
@@ -140,10 +144,10 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
       e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } },
         bascule(),
         e('div', { style: { fontSize: 12.5, color: "#5A6172", maxWidth: 640, lineHeight: 1.5 } }, mode === "comp"
-          ? "Complétude = informations renseignées ÷ informations attendues. Référence = l'hôtel le plus renseigné, désigné automatiquement" + (ref ? " (aujourd'hui " + ref.nom + ")." : ".")
+          ? "Complétude = informations renseignées ÷ informations attendues. Référence" + (ref ? " : " + ref.nom + " (hôtel modèle)." : ".") + " Les hôtels au-dessus de la référence sont en écart positif."
           : "Conformité = contrôles au vert ÷ contrôles mesurables. Objectif fixe : " + CPL_OBJECTIF_CONF + " %. « — » = moins de " + CPL_CONF_MIN_POINTS + " points mesurables : renseigner d'abord l'hôtel.")),
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
-        tuile(mode === "comp" ? "Référence · hôtel le plus renseigné" : "Objectif de conformité", refVal == null ? "—" : refVal + " %", mode === "comp" ? (ref ? ref.nom : "") : "identique pour tous les hôtels", "#1E4FA8"),
+        tuile(mode === "comp" ? "Référence · hôtel modèle" : "Objectif de conformité", refVal == null ? "—" : refVal + " %", mode === "comp" ? (ref ? ref.nom : "") : "identique pour tous les hôtels", "#1E4FA8"),
         tuile("Moyenne du parc", moy == null ? "—" : moy + " %", moy != null && refVal != null ? (moy - refVal) + " pts sous " + (mode === "comp" ? "la référence" : "l'objectif") : ""),
         tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + liste.length + " hôtels suivis"),
         tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : liste.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", "#A8401F")),
@@ -351,7 +355,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     // Deux scores
     e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 } },
       anneau(x.comp, ref ? ref.comp : null, "Complétude des informations",
-        ref && ref.id === x.id ? "Hôtel le plus renseigné du parc : il sert de référence." : ecartRef == null ? "" : (ecartRef >= 0 ? "+" : "") + ecartRef + " pts par rapport à " + (ref ? ref.nom + " (" + ref.comp + " %)" : "la référence") + " · " + resteC.length + " info(s) à compléter"),
+        ref && ref.id === x.id ? "Hôtel modèle : il sert de référence aux autres." : ecartRef == null ? "" : (ecartRef >= 0 ? "+" : "") + ecartRef + " pts par rapport à " + (ref ? ref.nom + " (" + ref.comp + " %)" : "la référence") + " · " + resteC.length + " info(s) à compléter"),
       anneau(x.conf, CPL_OBJECTIF_CONF, "Conformité",
         x.conf == null ? "Pas assez d'informations pour mesurer (" + x.confPoints + " pts mesurables sur 100). Renseigner d'abord l'hôtel." : (x.conf - CPL_OBJECTIF_CONF >= 0 ? "Objectif de " + CPL_OBJECTIF_CONF + " % atteint." : (x.conf - CPL_OBJECTIF_CONF) + " pts par rapport à l'objectif de " + CPL_OBJECTIF_CONF + " %") + " · mesurée sur " + x.confPoints + " pts")),
     histo.length > 0 && carte([titre("Évolution (photo du 1er de chaque mois)"),
