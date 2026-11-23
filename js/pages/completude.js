@@ -172,19 +172,21 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
   // ---------- Petits éléments communs ----------
   const carte = (enfants, style) => e('div', { style: { background: "white", border: "1px solid #E1E4EA", borderRadius: 12, padding: "16px 18px", ...(style || {}) } }, enfants);
   const pastille = (v, style) => { const b = cplBande(v); return e('span', { style: { display: "inline-block", minWidth: 44, textAlign: "center", padding: "3px 8px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: b.bg, color: b.fg, ...(style || {}) } }, v == null ? "—" : v + " %"); };
+  // Onglet souligné (même style que les tableaux de bord Claude : texte, trait sous l'onglet actif)
+  const onglet = (lbl, on, onClick, petit) => e('button', { onClick, "aria-pressed": on, style: { background: "none", border: "none", borderBottom: "3px solid " + (on ? "#14171F" : "transparent"), padding: petit ? "8px 2px 9px" : "10px 2px 11px", marginBottom: -1, fontSize: petit ? 13.5 : 15, fontWeight: on ? 700 : 500, color: on ? "#14171F" : "#5A6172", cursor: "pointer", whiteSpace: "nowrap" } }, lbl);
   const bouton = (lbl, on, onClick, extra) => e('button', { onClick, style: { padding: "8px 14px", borderRadius: 999, border: "1px solid " + (on ? "#14171F" : "#C9CED8"), background: on ? "#14171F" : "white", color: on ? "white" : "#14171F", fontSize: 13, fontWeight: 600, cursor: "pointer", ...(extra || {}) } }, lbl);
   const bascule = () => e('div', { role: "group", "aria-label": "Score affiché", style: { display: "inline-flex", padding: 3, gap: 3, background: "#E6E9EF", borderRadius: 9 } },
     [["comp", "Complétude des infos"], ["conf", "Conformité"]].map(([k, l]) => e('button', { key: k, onClick: () => { setMode(k); setDom("all"); }, style: { padding: "8px 14px", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: "pointer", background: mode === k ? "white" : "transparent", color: mode === k ? "#14171F" : "#4A5060", boxShadow: mode === k ? "0 1px 2px rgba(20,23,31,.15)" : "none" } }, l)));
   const ouvrirFiche = (id) => { setHotelId(id); setVue("fiche"); window.scrollTo && window.scrollTo(0, 0); };
 
-  const onglets = e('div', { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 } },
-    bouton("Classement", vue === "classement", () => setVue("classement")),
-    bouton("Fiche hôtel", vue === "fiche", () => { if (!hotelId && calc && calc.ref) setHotelId(calc.ref.id); setVue("fiche"); }),
-    bouton("Tournées", vue === "tournees", () => setVue("tournees")),
-    bouton("Barème", vue === "bareme", () => setVue("bareme")),
-    e('button', { onClick: importerTout, disabled: !!(imp && !imp.fini), title: "Remplit l'inventaire serveurs de tous les hôtels depuis NinjaOne", style: { marginLeft: "auto", padding: "8px 14px", borderRadius: 8, border: "1px solid #1E4FA8", background: "white", color: "#1E4FA8", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
+  const onglets = e('div', { style: { display: "flex", gap: isMobile ? 18 : 32, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 18, borderBottom: "1px solid #E1E4EA" } },
+    onglet("Classement", vue === "classement", () => setVue("classement")),
+    onglet("Fiche hôtel", vue === "fiche", () => { if (!hotelId && calc && calc.ref) setHotelId(calc.ref.id); setVue("fiche"); }),
+    onglet("Tournées", vue === "tournees", () => setVue("tournees")),
+    onglet("Barème", vue === "bareme", () => setVue("bareme")),
+    e('button', { onClick: importerTout, disabled: !!(imp && !imp.fini), title: "Remplit l'inventaire serveurs de tous les hôtels depuis NinjaOne", style: { marginLeft: "auto", marginBottom: 8, padding: "8px 14px", borderRadius: 8, border: "1px solid #1E4FA8", background: "white", color: "#1E4FA8", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
       imp && !imp.fini ? "Import NinjaOne " + imp.fait + " / " + imp.total + "…" : "⇣ Importer NinjaOne (tous les hôtels)"),
-    e('button', { onClick: charger, disabled: busy, style: { padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD", background: "white", color: "#555", fontSize: 12.5, cursor: "pointer" } }, busy ? "Calcul…" : "↻ Recalculer"));
+    e('button', { onClick: charger, disabled: busy, style: { marginBottom: 8, padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD", background: "white", color: "#555", fontSize: 12.5, cursor: "pointer" } }, busy ? "Calcul…" : "↻ Recalculer"));
 
   const bandeauImport = imp && e('div', { style: { background: imp.fini ? (imp.erreurs.length ? "#FFF8E6" : "#EAF3FF") : "#F0F4FC", border: "1px solid #D5DEEF", borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 14, lineHeight: 1.6 } },
     e('div', { style: { display: "flex", justifyContent: "space-between", gap: 10 } },
@@ -233,11 +235,11 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
       e('div', { style: { display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: "#4A5060", margin: "-4px 0 12px" } },
         [[90, "85 à 100 % : très bon"], [75, "70 à 84 % : avancé"], [60, "50 à 69 % : en cours"], [30, "moins de 50 % : à lancer"]].map(([v, t]) =>
           e('span', { key: v, style: { display: "inline-flex", gap: 6, alignItems: "center" } }, e('span', { style: { width: 12, height: 12, borderRadius: 3, background: cplBande(v).c } }), t))),
-      e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" } },
-        e('span', { style: { fontSize: 12.5, color: "#5A6172", marginRight: 4 } }, "Classer selon :"),
-        bouton(mode === "comp" ? "Score global" : "Conformité globale", dom === "all", () => setDom("all")),
-        domaines.map(([k, l]) => e('span', { key: k }, bouton(l, dom === k, () => setDom(k)))),
-        e('span', { style: { marginLeft: "auto" } }, choixSoc())),
+      e('div', { style: { display: "flex", gap: isMobile ? 14 : 24, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end", borderBottom: "1px solid #E1E4EA" } },
+        e('span', { style: { fontSize: 12.5, color: "#5A6172", paddingBottom: 11 } }, "Classer selon :"),
+        onglet(mode === "comp" ? "Score global" : "Conformité globale", dom === "all", () => setDom("all"), true),
+        domaines.map(([k, l]) => e('span', { key: k, style: { display: "inline-flex" } }, onglet(l, dom === k, () => setDom(k), true))),
+        e('span', { style: { marginLeft: "auto", paddingBottom: 6 } }, choixSoc())),
       carte(e('div', { style: { overflowX: "auto" } },
         e('div', { style: { minWidth: isMobile ? 0 : 980 } },
           !isMobile && e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "4px 0 10px", borderBottom: "1px solid #E1E4EA", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em" } },
