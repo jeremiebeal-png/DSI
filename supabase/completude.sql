@@ -176,6 +176,11 @@ capx as (
   select distinct on (e.hotel_id) e.hotel_id, e.nb_machines, e.nb_5, e.nb_inconnu
   from capex_auto_etat e order by e.hotel_id, e.mois desc
 ),
+-- Dernier import NinjaOne de l'inventaire serveurs (Worker dsi-hotel-inventaire, route /importer)
+imp as (
+  select distinct on (a.hotel_id) a.hotel_id, a.recu_le
+  from inventaire_ninja_apercu a where a.donnees ? 'import' order by a.hotel_id, a.recu_le desc
+),
 base as (
   select h.id, h.ss, h.mng, h.supervision_raid, h.retention_hors_site, h.av_console, h.av_contact_escalade, h.blocage_consentement,
     h.adresse_rue, h.phone, h.gm_email, h.tech_email, h.ninjaone_nom, h.soc,
@@ -194,7 +199,9 @@ base as (
     coalesce(p.n_ouverts,0) pj_n, coalesce(p.n_suivis,0) pj_suivis,
     (x.hotel_id is not null or exists (select 1 from capex k where k.hotel_id = h.id)) capex_ok,
     x.nb_machines, x.nb_5, x.nb_inconnu,
-    nullif((h.antivirus_detecte->>'postes')::int, 0) av_postes
+    nullif((h.antivirus_detecte->>'postes')::int, 0) av_postes,
+    -- Import NinjaOne fait et aucun serveur trouvé : l'hôtel n'a pas de serveur supervisé (serveurs = sans objet)
+    (coalesce(i.n,0) = 0 and ip.hotel_id is not null) vide_ninja
   from h
   left join inv i on i.hotel_id = h.id
   left join vj v on v.hotel_id = h.id::text
@@ -205,6 +212,7 @@ base as (
   left join m365 m on m.hotel_id = h.id
   left join prj p on p.hotel_id = h.id
   left join capx x on x.hotel_id = h.id
+  left join imp ip on ip.hotel_id = h.id
 )
 select b.id, r.code, round(r.ratio::numeric, 4) as ratio, r.detail
 from base b
@@ -216,17 +224,17 @@ cross join lateral (values
   ('F_COORD',   ((coalesce(b.adresse_rue,'') <> '')::int + (coalesce(b.phone,'') <> '')::int) / 2.0, null::text),
   ('F_CONTACTS',((coalesce(b.gm_email,'') <> '')::int + (coalesce(b.tech_email,'') <> '')::int + (coalesce(b.ninjaone_nom,'') <> '')::int) / 3.0, null),
   -- Serveurs
-  ('S_INV',   case when b.ss then null else (b.n_ninja > 0)::int end, b.n_ninja || ' / ' || b.n || ' lignes liées à NinjaOne'),
-  ('S_OS',    case when b.ss then null when b.n = 0 then 0 else b.n_os::numeric / b.n end, b.n_os || ' / ' || b.n),
-  ('S_ROLE',  case when b.ss then null when b.n = 0 then 0 else b.n_role::numeric / b.n end, b.n_role || ' / ' || b.n),
-  ('S_CP',    case when b.ss then null when b.n_phys = 0 then (case when b.n = 0 then 0 end) else b.n_phys_cp::numeric / b.n_phys end, b.n_phys_cp || ' / ' || b.n_phys || ' physiques'),
-  ('S_RAID',  case when b.ss then null else (b.supervision_raid is not null)::int end, null),
-  ('S_DOC',   case when b.ss then null else coalesce(b.doc_ok, false)::int end, null),
+  ('S_INV',   case when b.ss or b.vide_ninja then null else (b.n_ninja > 0)::int end, b.n_ninja || ' / ' || b.n || ' lignes liées à NinjaOne'),
+  ('S_OS',    case when b.ss or b.vide_ninja then null when b.n = 0 then 0 else b.n_os::numeric / b.n end, b.n_os || ' / ' || b.n),
+  ('S_ROLE',  case when b.ss or b.vide_ninja then null when b.n = 0 then 0 else b.n_role::numeric / b.n end, b.n_role || ' / ' || b.n),
+  ('S_CP',    case when b.ss or b.vide_ninja then null when b.n_phys = 0 then (case when b.n = 0 then 0 end) else b.n_phys_cp::numeric / b.n_phys end, b.n_phys_cp || ' / ' || b.n_phys || ' physiques'),
+  ('S_RAID',  case when b.ss or b.vide_ninja then null else (b.supervision_raid is not null)::int end, null),
+  ('S_DOC',   case when b.ss or b.vide_ninja then null else coalesce(b.doc_ok, false)::int end, null),
   -- Sauvegardes
-  ('B_JOBS',  case when b.ss then null else (b.vj_n > 0)::int end, b.vj_n || ' job(s) actif(s)'),
-  ('B_PLANIF',case when b.ss then null when b.vj_n = 0 then 0 else b.vj_planif::numeric / b.vj_n end, b.vj_planif || ' / ' || b.vj_n),
-  ('B_LIC',   case when b.ss then null else (b.n_lic > 0)::int end, null),
-  ('B_RET',   case when b.ss then null else (coalesce(trim(b.retention_hors_site),'') <> '')::int end, null),
+  ('B_JOBS',  case when b.ss or (b.vide_ninja and b.vj_n = 0) then null else (b.vj_n > 0)::int end, b.vj_n || ' job(s) actif(s)'),
+  ('B_PLANIF',case when b.ss or (b.vide_ninja and b.vj_n = 0) then null when b.vj_n = 0 then 0 else b.vj_planif::numeric / b.vj_n end, b.vj_planif || ' / ' || b.vj_n),
+  ('B_LIC',   case when b.ss or (b.vide_ninja and b.vj_n = 0) then null else (b.n_lic > 0)::int end, null),
+  ('B_RET',   case when b.ss or (b.vide_ninja and b.vj_n = 0) then null else (coalesce(trim(b.retention_hors_site),'') <> '')::int end, null),
   -- Antivirus (tous éditeurs)
   ('A_PROD',   (b.av_prevu <> '')::int, nullif(b.av_prevu,'')),
   ('A_DETECT', (coalesce((b.ad->>'le')::timestamptz > now() - interval '30 days', false))::int, b.ad->>'le'),
@@ -245,10 +253,10 @@ cross join lateral (values
   ('P_PROJ',   case when b.pj_n = 0 then null else b.pj_suivis::numeric / b.pj_n end, b.pj_suivis || ' / ' || b.pj_n || ' projet(s) en cours'),
   ('P_CAPEX',  b.capex_ok::int, null),
   -- ===== Conformité =====
-  ('X_MAJ',   case when b.ss or b.n_aj = 0 then null else b.n_aj_ok::numeric / b.n_aj end, b.n_aj_ok || ' / ' || b.n_aj),
-  ('X_OSSUP', case when b.ss or b.n_win = 0 then null else b.n_win_ok::numeric / b.n_win end, b.n_win_ok || ' / ' || b.n_win),
-  ('X_GAR',   case when b.ss or b.n_gar = 0 then null else b.n_gar_ok::numeric / b.n_gar end, b.n_gar_ok || ' / ' || b.n_gar),
-  ('X_AVSRV', case when b.ss or b.n_av = 0 then null else b.n_av_ok::numeric / b.n_av end, b.n_av_ok || ' / ' || b.n_av),
+  ('X_MAJ',   case when b.ss or b.vide_ninja or b.n_aj = 0 then null else b.n_aj_ok::numeric / b.n_aj end, b.n_aj_ok || ' / ' || b.n_aj),
+  ('X_OSSUP', case when b.ss or b.vide_ninja or b.n_win = 0 then null else b.n_win_ok::numeric / b.n_win end, b.n_win_ok || ' / ' || b.n_win),
+  ('X_GAR',   case when b.ss or b.vide_ninja or b.n_gar = 0 then null else b.n_gar_ok::numeric / b.n_gar end, b.n_gar_ok || ' / ' || b.n_gar),
+  ('X_AVSRV', case when b.ss or b.vide_ninja or b.n_av = 0 then null else b.n_av_ok::numeric / b.n_av end, b.n_av_ok || ' / ' || b.n_av),
   ('X_BOK',   case when b.ss or b.vj_n = 0 then null else b.vj_ok::numeric / b.vj_n end, b.vj_ok || ' / ' || b.vj_n),
   ('X_BINC',  case when b.ss or b.vj_n = 0 then null else (b.binc = 0)::int end, b.binc || ' incident(s)'),
   ('X_BLIC',  case when b.ss or b.n_lic = 0 then null else b.n_lic_ok::numeric / b.n_lic end, null),
