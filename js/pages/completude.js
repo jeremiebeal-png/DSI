@@ -215,9 +215,8 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
         e('div', { style: { fontSize: 12.5, color: "#5A6172", maxWidth: 640, lineHeight: 1.5 } }, mode === "comp"
           ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. " + (ref ? ref.nom + " sert de modèle : le trait noir sur chaque barre montre son niveau." : "")
           : "Ce score indique si ce qu'on surveille est en bon état : mises à jour, sauvegardes, antivirus, alertes… Le trait noir marque l'objectif de " + CPL_OBJECTIF_CONF + " %. « — » veut dire qu'on n'a pas encore assez d'informations sur l'hôtel pour le calculer.")),
-      e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
-        tuile(mode === "comp" ? "Référence · hôtel modèle" : "Objectif de conformité", refVal == null ? "—" : refVal + " %", mode === "comp" ? (ref ? ref.nom : "") : "identique pour tous les hôtels", "#1E4FA8"),
-        tuile("Moyenne du parc", moy == null ? "—" : moy + " %", moy != null && refVal != null ? (moy - refVal) + " pts sous " + (mode === "comp" ? "la référence" : "l'objectif") : ""),
+      e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
+        tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), "#1E4FA8"),
         tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés"),
         tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : tri.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", "#A8401F")),
       e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" } },
