@@ -51,6 +51,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   const [dom, setDom] = React.useState("all");
   const [hotelId, setHotelId] = React.useState("");
   const [socFiltre, setSocFiltre] = React.useState("");     // "" = tous, "_sans" = sans SOC, sinon code du SOC
+  const [imp, setImp] = React.useState(null);               // import NinjaOne de tous les hôtels : { fait, total, ajoutes, majs, erreurs, fini }
   const [data, setData] = React.useState(null);              // { criteres, mesures, historique, saisies }
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -82,6 +83,32 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
     setBusy(false);
   };
   React.useEffect(() => { charger(); }, []);
+
+  // Import NinjaOne de l'inventaire serveurs pour TOUS les hôtels (Worker dsi-hotel-inventaire, route /importer,
+  // un hôtel par appel : limite de sous-requêtes du plan gratuit). Ne supprime jamais rien, n'écrase ni rôle ni Care Pack.
+  const importerTout = async () => {
+    const cibles = hotels.filter(h => !/d[ée]mo|client test/i.test(h.name || "")).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!confirm("Importer l'inventaire serveurs depuis NinjaOne pour les " + cibles.length + " hôtels ?\n\nLes machines manquantes sont ajoutées, l'OS, les mises à jour et l'antivirus sont mis à jour. Rien n'est supprimé ; rôles, Care Pack et notes ne sont jamais modifiés.\n\nCompter 2 à 4 minutes.")) return;
+    const { data: sd } = await sb.auth.getSession();
+    const token = (sd.session && sd.session.access_token) || "";
+    const r = { fait: 0, total: cibles.length, ajoutes: 0, majs: 0, sansServeur: [], erreurs: [], fini: false };
+    setImp({ ...r });
+    for (const h of cibles) {
+      try {
+        const res = await fetch(INVENTAIRE_API_URL + "/importer", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ hotelId: h.id }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) r.erreurs.push(h.name + " : " + (d.error || "erreur " + res.status));
+        else {
+          r.ajoutes += d.ajoutes || 0; r.majs += d.mis_a_jour || 0;
+          if (!(d.ajoutes || 0) && !(d.mis_a_jour || 0) && !(d.absents_de_ninjaone || []).length && !(d.rapprochements || []).length) r.sansServeur.push(h.name);
+        }
+      } catch (x) { r.erreurs.push(h.name + " : " + ((x && x.message) || x)); }
+      r.fait++;
+      setImp({ ...r });
+    }
+    r.fini = true; setImp({ ...r });
+    charger();
+  };
 
   // ---------- Calcul des scores ----------
   const calc = React.useMemo(() => {
@@ -134,7 +161,17 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
     bouton("Fiche hôtel", vue === "fiche", () => { if (!hotelId && calc && calc.ref) setHotelId(calc.ref.id); setVue("fiche"); }),
     bouton("Tournées", vue === "tournees", () => setVue("tournees")),
     bouton("Barème", vue === "bareme", () => setVue("bareme")),
-    e('button', { onClick: charger, disabled: busy, style: { marginLeft: "auto", padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD", background: "white", color: "#555", fontSize: 12.5, cursor: "pointer" } }, busy ? "Calcul…" : "↻ Recalculer"));
+    e('button', { onClick: importerTout, disabled: !!(imp && !imp.fini), title: "Remplit l'inventaire serveurs de tous les hôtels depuis NinjaOne", style: { marginLeft: "auto", padding: "8px 14px", borderRadius: 8, border: "1px solid #1E4FA8", background: "white", color: "#1E4FA8", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
+      imp && !imp.fini ? "Import NinjaOne " + imp.fait + " / " + imp.total + "…" : "⇣ Importer NinjaOne (tous les hôtels)"),
+    e('button', { onClick: charger, disabled: busy, style: { padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD", background: "white", color: "#555", fontSize: 12.5, cursor: "pointer" } }, busy ? "Calcul…" : "↻ Recalculer"));
+
+  const bandeauImport = imp && e('div', { style: { background: imp.fini ? (imp.erreurs.length ? "#FFF8E6" : "#EAF3FF") : "#F0F4FC", border: "1px solid #D5DEEF", borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 14, lineHeight: 1.6 } },
+    e('div', { style: { display: "flex", justifyContent: "space-between", gap: 10 } },
+      e('b', null, imp.fini ? "Import NinjaOne terminé" : "Import NinjaOne en cours : " + imp.fait + " / " + imp.total + " hôtels…"),
+      imp.fini && e('button', { onClick: () => setImp(null), "aria-label": "Fermer", style: { border: "none", background: "none", cursor: "pointer", color: "#666" } }, "✕")),
+    e('div', null, imp.ajoutes + " machine(s) ajoutée(s), " + imp.majs + " ligne(s) mise(s) à jour."),
+    imp.fini && imp.sansServeur.length > 0 && e('div', { style: { color: "#4A5060" } }, "Aucun serveur trouvé dans NinjaOne (domaine Serveurs = sans objet) : " + imp.sansServeur.join(", ")),
+    imp.erreurs.length > 0 && e('div', { style: { color: "#8A2E10" } }, imp.erreurs.length + " hôtel(s) non importé(s) : " + imp.erreurs.join(" · ")));
 
   if (err) return e('div', null, onglets, e('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "12px 14px", fontSize: 13 } }, err));
   if (!calc) return e('div', null, onglets, e('div', { style: { color: "#888", fontSize: 13, padding: 20 } }, "Calcul des scores…"));
@@ -262,7 +299,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
     return e(CompletudeFiche, { key: x.id, x, ref, liste, data, hotels, isMobile, setPage, adminFromName, onChange: charger, onHotel: id => setHotelId(id), carte, pastille });
   };
 
-  return e('div', null, onglets,
+  return e('div', null, onglets, bandeauImport,
     vue === "classement" ? vueClassement() : vue === "tournees" ? vueTournees() : vue === "bareme" ? vueBareme() : vueFiche());
 }
 
@@ -427,7 +464,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     ]), lienPage("Modifier", "client-admin")),
 
     // Serveurs
-    section("srv", "Serveurs & infrastructure", !det ? e('div', { style: { fontSize: 13, color: "#888" } }, "Chargement…") : det.inv.length === 0 ? vide("Aucun serveur dans l'inventaire") :
+    section("srv", "Serveurs & infrastructure", !det ? e('div', { style: { fontSize: 13, color: "#888" } }, "Chargement…") : det.inv.length === 0 ? vide("Aucun serveur dans l'inventaire : lancer « Importer NinjaOne » (s'il n'y en a pas dans NinjaOne, le domaine passe en sans objet)") :
       e('div', { style: { overflowX: "auto" } }, e('table', { style: { width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 760 } },
         e('thead', null, e('tr', { style: { textAlign: "left", color: "#5A6172", fontSize: 11.5, textTransform: "uppercase" } },
           ["Machine", "Rôle", "Système", "IP", "MAJ", "Antivirus", "Garantie"].map(t => e('th', { key: t, style: { padding: "6px 8px", borderBottom: "1px solid #E1E4EA" } }, t)))),
