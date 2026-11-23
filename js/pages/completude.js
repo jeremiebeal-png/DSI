@@ -217,9 +217,10 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
     const tri = [...filtreSoc(liste)].sort((a, b) => (scoreDe(b) == null ? -1 : scoreDe(b)) - (scoreDe(a) == null ? -1 : scoreDe(a)));
     const vals = tri.map(scoreDe).filter(v => v != null);
     const moy = vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
-    const tuile = (lbl, v, sub, c) => carte([
-      e('div', { key: 1, style: { fontSize: 12.5, color: "#5A6172", display: "flex", alignItems: "center", gap: 8 } }, c && e('span', { style: { width: 10, height: 10, borderRadius: 3, background: c } }), lbl),
-      e('div', { key: 2, style: { fontSize: 28, fontWeight: 700, color: c || "#14171F", margin: "4px 0" } }, v),
+    // palier : pourcentage qui donne la couleur (carré = couleur des barres, chiffre = même couleur en plus foncé)
+    const tuile = (lbl, v, sub, palier) => carte([
+      e('div', { key: 1, style: { fontSize: 12.5, color: "#5A6172", display: "flex", alignItems: "center", gap: 8 } }, palier != null && e('span', { style: { width: 10, height: 10, borderRadius: 3, background: cplBande(palier).c } }), lbl),
+      e('div', { key: 2, style: { fontSize: 28, fontWeight: 700, color: palier != null ? cplTexte(palier) : "#14171F", margin: "4px 0" } }, v),
       e('div', { key: 3, style: { fontSize: 12.5, color: "#4A5060" } }, sub)]);
     const cols = isMobile ? "1fr 70px" : "36px minmax(160px, 240px) minmax(0, 1fr) 64px 92px 92px " + (domaines.length * (CPL_CASE + 4)) + "px";
     return e('div', null,
@@ -229,17 +230,20 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
           ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. " + (ref ? ref.nom + " sert de modèle : le trait noir sur chaque barre montre son niveau." : "")
           : "Ce score indique si ce qu'on surveille est en bon état : mises à jour, sauvegardes, antivirus, alertes… Le trait noir marque l'objectif de " + CPL_OBJECTIF_CONF + " %. « — » veut dire qu'on n'a pas encore assez d'informations sur l'hôtel pour le calculer.")),
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
-        tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", (moy == null ? "" : cplBande(moy).tier + " · ") + "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), cplTexte(moy)),
-        tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés", cplTexte(70)),
-        tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : tri.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", "#A8401F")),
-      e('div', { style: { display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: "#4A5060", margin: "-4px 0 12px" } },
-        [[90, "85 à 100 % : très bon"], [75, "70 à 84 % : avancé"], [60, "50 à 69 % : en cours"], [30, "moins de 50 % : à lancer"]].map(([v, t]) =>
-          e('span', { key: v, style: { display: "inline-flex", gap: 6, alignItems: "center" } }, e('span', { style: { width: 12, height: 12, borderRadius: 3, background: cplBande(v).c } }), t))),
+        tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", (moy == null ? "" : cplBande(moy).tier + " · ") + "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), moy),
+        tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés", 70),
+        tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : tri.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", mode === "comp" ? 0 : null)),
       e('div', { style: { display: "flex", gap: isMobile ? 14 : 24, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end", borderBottom: "1px solid #E1E4EA" } },
         e('span', { style: { fontSize: 12.5, color: "#5A6172", paddingBottom: 11 } }, "Classer selon :"),
         onglet(mode === "comp" ? "Score global" : "Conformité globale", dom === "all", () => setDom("all"), true),
         domaines.map(([k, l]) => e('span', { key: k, style: { display: "inline-flex" } }, onglet(l, dom === k, () => setDom(k), true))),
         e('span', { style: { marginLeft: "auto", paddingBottom: 6 } }, choixSoc())),
+      e('div', { style: { display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", fontSize: 12.5, color: "#4A5060", marginBottom: 10 } },
+        e('span', { style: { fontWeight: 600, color: "#2C3240" } }, "Couleurs :"),
+        [[90, "Très bon", "85 à 100 %"], [75, "Avancé", "70 à 84 %"], [60, "En cours", "50 à 69 %"], [30, "À lancer", "moins de 50 %"], [null, "Sans objet", "—"]].map(([v, t, r]) =>
+          e('span', { key: t, style: { display: "inline-flex", gap: 6, alignItems: "center" } },
+            e('span', { style: { width: 14, height: 14, borderRadius: 3, background: v == null ? "#EEF0F4" : cplBande(v).c, border: v == null ? "1px solid #C9CED8" : "none" } }),
+            e('b', { style: { fontWeight: 600, color: "#2C3240" } }, t), e('span', null, "(" + r + ")")))),
       carte(e('div', { style: { overflowX: "auto" } },
         e('div', { style: { minWidth: isMobile ? 0 : 980 } },
           !isMobile && e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "4px 0 10px", borderBottom: "1px solid #E1E4EA", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em" } },
