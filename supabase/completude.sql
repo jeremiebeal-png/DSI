@@ -22,8 +22,9 @@ create table if not exists public.hotel_completude (
   maj_le timestamptz default now(),
   maj_par text
 );
-alter table public.hotel_completude add column if not exists serveurs_externes text;
-alter table public.hotel_completude add column if not exists av_non_gere boolean not null default false;  -- antivirus géré par la chaîne (ex. Hilton) : domaine Antivirus = sans objet  -- ex. « Serveurs hébergés sur le réseau Hilton » (avec sans_serveur = true)
+alter table public.hotel_completude add column if not exists serveurs_externes text;                         -- ex. « Serveurs hébergés sur le réseau Hilton » (avec sans_serveur = true)
+alter table public.hotel_completude add column if not exists av_non_gere boolean not null default false;    -- antivirus géré par la chaîne (ex. Hilton) : domaine Antivirus = sans objet
+alter table public.hotel_completude add column if not exists exclu boolean not null default false;          -- hôtel non suivi par le tableau de bord
 alter table public.hotel_completude enable row level security;
 drop policy if exists hotel_completude_admin on public.hotel_completude;
 create policy hotel_completude_admin on public.hotel_completude for all
@@ -113,7 +114,7 @@ with h as (
   select h.*, coalesce(hc.sans_serveur, false) ss, coalesce(hc.m365_non_gere, false) mng, coalesce(hc.av_non_gere, false) avng,
          hc.supervision_raid, hc.retention_hors_site, hc.av_console, hc.av_contact_escalade, hc.blocage_consentement
   from hotels h left join hotel_completude hc on hc.hotel_id = h.id
-  where h.name !~* '(d[ée]mo|client test)'
+  where h.name !~* '(d[ée]mo|client test)' and not coalesce(hc.exclu, false)
 ),
 inv as (
   select s.hotel_id,
