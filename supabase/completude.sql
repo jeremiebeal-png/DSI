@@ -22,7 +22,8 @@ create table if not exists public.hotel_completude (
   maj_le timestamptz default now(),
   maj_par text
 );
-alter table public.hotel_completude add column if not exists serveurs_externes text;  -- ex. « Serveurs hébergés sur le réseau Hilton » (avec sans_serveur = true)
+alter table public.hotel_completude add column if not exists serveurs_externes text;
+alter table public.hotel_completude add column if not exists av_non_gere boolean not null default false;  -- antivirus géré par la chaîne (ex. Hilton) : domaine Antivirus = sans objet  -- ex. « Serveurs hébergés sur le réseau Hilton » (avec sans_serveur = true)
 alter table public.hotel_completude enable row level security;
 drop policy if exists hotel_completude_admin on public.hotel_completude;
 create policy hotel_completude_admin on public.hotel_completude for all
@@ -109,7 +110,7 @@ returns table (hotel_id uuid, code text, ratio numeric, detail text)
 language sql stable security definer set search_path to 'public'
 as $$
 with h as (
-  select h.*, coalesce(hc.sans_serveur, false) ss, coalesce(hc.m365_non_gere, false) mng,
+  select h.*, coalesce(hc.sans_serveur, false) ss, coalesce(hc.m365_non_gere, false) mng, coalesce(hc.av_non_gere, false) avng,
          hc.supervision_raid, hc.retention_hors_site, hc.av_console, hc.av_contact_escalade, hc.blocage_consentement
   from hotels h left join hotel_completude hc on hc.hotel_id = h.id
   where h.name !~* '(d[ée]mo|client test)'
@@ -183,7 +184,7 @@ imp as (
   from inventaire_ninja_apercu a where a.donnees ? 'import' order by a.hotel_id, a.recu_le desc
 ),
 base as (
-  select h.id, h.ss, h.mng, h.supervision_raid, h.retention_hors_site, h.av_console, h.av_contact_escalade, h.blocage_consentement,
+  select h.id, h.ss, h.mng, h.avng, h.supervision_raid, h.retention_hors_site, h.av_console, h.av_contact_escalade, h.blocage_consentement,
     h.adresse_rue, h.phone, h.gm_email, h.tech_email, h.ninjaone_nom, h.soc,
     -- Antivirus en vigueur : le « futur » dès que sa date de bascule est passée (même règle que la page Sécurité Anti Virus)
     lower(case when coalesce(h.antivirus_futur,'') <> '' and h.antivirus_bascule <= current_date then h.antivirus_futur else coalesce(h.antivirus,'') end) av_prevu,
@@ -233,16 +234,16 @@ cross join lateral (values
   ('S_DOC',   case when b.ss or b.vide_ninja then null else coalesce(b.doc_ok, false)::int end, null),
   -- Sauvegardes
   ('B_JOBS',  case when b.ss or (b.vide_ninja and b.vj_n = 0) then null else (b.vj_n > 0)::int end, b.vj_n || ' job(s) actif(s)'),
-  ('B_PLANIF',case when b.ss or (b.vide_ninja and b.vj_n = 0) then null when b.vj_n = 0 then 0 else b.vj_planif::numeric / b.vj_n end, b.vj_planif || ' / ' || b.vj_n),
-  ('B_LIC',   case when b.ss or (b.vide_ninja and b.vj_n = 0) then null else (b.n_lic > 0)::int end, null),
-  ('B_RET',   case when b.ss or (b.vide_ninja and b.vj_n = 0) then null else (coalesce(trim(b.retention_hors_site),'') <> '')::int end, null),
+  ('B_PLANIF',case when b.ss or (b.vide_ninja and b.vj_n = 0) then null when b.vj_n > 0 and b.vj_ok = b.vj_n then 1 when b.vj_n = 0 then 0 else b.vj_planif::numeric / b.vj_n end, b.vj_planif || ' / ' || b.vj_n),
+  ('B_LIC',   case when b.ss or (b.vide_ninja and b.vj_n = 0) then null when b.vj_n > 0 and b.vj_ok = b.vj_n then 1 else (b.n_lic > 0)::int end, null),
+  ('B_RET',   case when b.ss or (b.vide_ninja and b.vj_n = 0) then null when b.vj_n > 0 and b.vj_ok = b.vj_n then 1 else (coalesce(trim(b.retention_hors_site),'') <> '')::int end, null),
   -- Antivirus (tous éditeurs)
-  ('A_PROD',   (b.av_prevu <> '')::int, nullif(b.av_prevu,'')),
-  ('A_DETECT', (coalesce((b.ad->>'le')::timestamptz > now() - interval '30 days', false))::int, b.ad->>'le'),
+  ('A_PROD',   case when b.avng then null else (b.av_prevu <> '')::int end, nullif(b.av_prevu,'')),
+  ('A_DETECT', case when b.avng then null else (coalesce((b.ad->>'le')::timestamptz > now() - interval '30 days', false))::int end, b.ad->>'le'),
   -- Console : Sophos Central rattaché pour un hôtel Sophos ; sinon console renseignée OU SOC externe (ex. Stoïk) qui l'exploite
-  ('A_CONSOLE',case when b.so_actif then 1 when b.av_prevu = 'sophos' then 0
-                    else (coalesce(trim(b.av_console),'') <> '' or coalesce(trim(b.soc),'') <> '')::int end, nullif(b.soc,'')),
-  ('A_ESC',    (coalesce(trim(b.av_contact_escalade),'') <> '' or coalesce(trim(b.soc),'') <> '')::int, null),
+  ('A_CONSOLE',case when b.avng then null else case when b.so_actif then 1 when b.av_prevu = 'sophos' then 0
+                    else (coalesce(trim(b.av_console),'') <> '' or coalesce(trim(b.soc),'') <> '')::int end end, nullif(b.soc,'')),
+  ('A_ESC',    case when b.avng then null else (coalesce(trim(b.av_contact_escalade),'') <> '' or coalesce(trim(b.soc),'') <> '')::int end, null),
   -- Microsoft 365
   ('M_TENANT', case when b.mng then null else b.m_tenant::int end, null),
   ('M_LIC',    case when b.mng then null else b.m_lic::int end, null),
@@ -261,14 +262,14 @@ cross join lateral (values
   ('X_BOK',   case when b.ss or b.vj_n = 0 then null else b.vj_ok::numeric / b.vj_n end, b.vj_ok || ' / ' || b.vj_n),
   ('X_BINC',  case when b.ss or b.vj_n = 0 then null else (b.binc = 0)::int end, b.binc || ' incident(s)'),
   ('X_BLIC',  case when b.ss or b.n_lic = 0 then null else b.n_lic_ok::numeric / b.n_lic end, null),
-  ('X_COUV',  case when b.av_postes is null then null else least(1, av.av_couverts::numeric / b.av_postes) end, av.av_couverts || ' / ' || b.av_postes || ' postes'),
-  ('X_PRINC', case when b.av_postes is null or b.av_prevu = '' then null
+  ('X_COUV',  case when b.avng then null else case when b.av_postes is null then null else least(1, av.av_couverts::numeric / b.av_postes) end end, av.av_couverts || ' / ' || b.av_postes || ' postes'),
+  ('X_PRINC', case when b.avng then null else case when b.av_postes is null or b.av_prevu = '' then null
                    else least(1, (coalesce((b.ad->'produits'->>b.av_prevu)::numeric, 0)
-                                + case when b.av_futur <> '' then coalesce((b.ad->'produits'->>b.av_futur)::numeric, 0) else 0 end) / b.av_postes) end,
+                                + case when b.av_futur <> '' then coalesce((b.ad->'produits'->>b.av_futur)::numeric, 0) else 0 end) / b.av_postes) end end,
               coalesce(b.ad->'produits'->>b.av_prevu, '0') || ' / ' || b.av_postes || ' postes (' || b.av_prevu || ')'),
-  ('X_DEF',   case when b.av_postes is null or not (b.ad ? 'a_jour') then null else least(1, (b.ad->>'a_jour')::numeric / b.av_postes) end, b.ad->>'a_jour'),
-  ('X_MENACE',case when b.ad ? 'menaces' then ((b.ad->>'menaces')::int = 0 and b.so_vieilles = 0)::int
-                   when b.so_actif then (b.so_vieilles = 0)::int else null end, b.ad->>'menaces'),
+  ('X_DEF',   case when b.avng then null else case when b.av_postes is null or not (b.ad ? 'a_jour') then null else least(1, (b.ad->>'a_jour')::numeric / b.av_postes) end end, b.ad->>'a_jour'),
+  ('X_MENACE',case when b.avng then null else case when b.ad ? 'menaces' then ((b.ad->>'menaces')::int = 0 and b.so_vieilles = 0)::int
+                   when b.so_actif then (b.so_vieilles = 0)::int else null end end, b.ad->>'menaces'),
   ('X_MALERT',case when b.mng or not b.m_tenant then null else (b.m_alertes = 0)::int end, b.m_alertes || ' alerte(s)'),
   ('X_MFA',   null::numeric, 'pas encore collecté'),
   ('X_MBLOC', case when b.mng or b.blocage_consentement is null then null else b.blocage_consentement::int end, null),
@@ -328,3 +329,5 @@ select public.score_photo_mensuelle();
 
 -- 23/11/2026 : domaine Projets retiré du tableau de bord (critères désactivés, pas supprimés)
 update public.score_criteres set actif = false where domaine = 'prj';
+
+-- 23/11/2026 : antivirus géré par la chaîne (av_non_gere) ; sauvegardes toutes au vert = domaine Sauvegardes complet
