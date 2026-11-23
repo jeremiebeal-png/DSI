@@ -16,6 +16,9 @@ const CPL_DOMAINES = {
   conf: [["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["mat", "Matériel"]],
 };
 const CPL_OBJECTIF_CONF = 90;
+// Libellés courts des domaines (en-têtes des petites cases du classement)
+const CPL_COURT = { fiche: "Fiche", srv: "Srv", bkp: "Sauv", av: "AV", m365: "M365", chk: "Chk", prj: "Proj", mat: "Mat" };
+const CPL_CASE = 40;
 // Hôtel de référence pour la complétude : VOCO - Clichy (choix du 23/11/2026). Si cet hôtel n'existe plus,
 // la référence redevient automatiquement l'hôtel le plus renseigné.
 const CPL_REFERENCE_ID = "c1e4b815-e842-41fc-ab8b-e57d00d7705b";
@@ -139,7 +142,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
       e('div', { key: 1, style: { fontSize: 12.5, color: "#5A6172" } }, lbl),
       e('div', { key: 2, style: { fontSize: 28, fontWeight: 700, color: c || "#14171F", margin: "4px 0" } }, v),
       e('div', { key: 3, style: { fontSize: 12.5, color: "#4A5060" } }, sub)]);
-    const cols = isMobile ? "1fr 70px" : "36px minmax(160px, 240px) minmax(0, 1fr) 64px 92px 92px " + (domaines.length * 34 + 8) + "px";
+    const cols = isMobile ? "1fr 70px" : "36px minmax(160px, 240px) minmax(0, 1fr) 64px 92px 92px " + (domaines.length * (CPL_CASE + 4)) + "px";
     return e('div', null,
       e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } },
         bascule(),
@@ -161,7 +164,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
             e('div', null, "#"), e('div', null, "Établissement"), e('div', null, (mode === "comp" ? "Complétude" : "Conformité") + " · trait = " + (mode === "comp" ? "référence" : "objectif")),
             e('div', { style: { textAlign: "right" } }, "Score"), e('div', { style: { textAlign: "right" } }, "Écart"),
             e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Conformité" : "Complétude"),
-            e('div', null, domaines.map(([, l]) => l.slice(0, 4)).join(" · "))),
+            e('div', { style: { display: "flex", gap: 4 } }, domaines.map(([k, l]) => e('div', { key: k, title: l, style: { width: CPL_CASE, textAlign: "center", fontSize: 10.5, letterSpacing: 0 } }, CPL_COURT[k] || l)))),
           tri.map((x, i) => {
             const v = scoreDe(x), b = cplBande(v), estRef = ref && x.id === ref.id && mode === "comp";
             const ecart = v == null || refVal == null ? null : v - refVal;
@@ -178,7 +181,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
               !isMobile && e('div', { style: { textAlign: "center" } }, pastille(mode === "comp" ? x.conf : x.comp)),
               !isMobile && e('div', { style: { display: "flex", gap: 4 } }, domaines.map(([k, l]) => {
                 const dv = mode === "comp" ? x.domC[k] : x.domF[k], db = cplBande(dv);
-                return e('div', { key: k, title: l + " : " + (dv == null ? "sans objet" : dv + " %"), style: { width: 30, height: 24, borderRadius: 4, background: db.bg, color: db.fg, fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" } }, dv == null ? "—" : dv);
+                return e('div', { key: k, title: l + " : " + (dv == null ? "sans objet" : dv + " %"), style: { width: CPL_CASE, height: 24, borderRadius: 4, background: db.bg, color: db.fg, fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" } }, dv == null ? "—" : dv);
               })));
           })))));
   };
