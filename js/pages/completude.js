@@ -19,6 +19,17 @@ const CPL_OBJECTIF_CONF = 90;
 // Libellés courts des domaines (en-têtes des petites cases du classement)
 const CPL_COURT = { fiche: "Fiche", srv: "Srv", bkp: "Sauv", av: "AV", m365: "M365", chk: "Chk", prj: "Proj", mat: "Mat" };
 const CPL_CASE = 40;
+// SOC externes (même liste que la page Sécurité Anti Virus) — d'autres hôtels passeront chez Stoïk
+const CPL_SOC_NOMS = { stoik: "Stoïk" };
+const cplSocNom = (k) => k ? (CPL_SOC_NOMS[String(k).toLowerCase()] || String(k)) : null;
+// Antivirus en vigueur : le « futur » dès que la date de bascule est passée (même règle que Sécurité Anti Virus)
+function cplAvEnVigueur(h) {
+  const jour = new Date().toISOString().slice(0, 10);
+  const faite = !!(h.antivirus_futur && h.antivirus_bascule && h.antivirus_bascule <= jour);
+  return { actuel: String((faite ? h.antivirus_futur : h.antivirus) || "").toLowerCase(), avant: faite ? String(h.antivirus || "").toLowerCase() : null,
+           futur: !faite && h.antivirus_futur ? String(h.antivirus_futur).toLowerCase() : null, bascule: h.antivirus_bascule || null };
+}
+const cplBadgeSoc = (e, soc, grand) => soc ? e('span', { title: "SOC externe : " + cplSocNom(soc), style: { fontSize: grand ? 12 : 10.5, padding: grand ? "2px 9px" : "1px 6px", borderRadius: 999, background: "#EDE6F7", color: "#4B2A80", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } }, "SOC " + cplSocNom(soc)) : null;
 // Hôtel de référence pour la complétude : VOCO - Clichy (choix du 23/11/2026). Si cet hôtel n'existe plus,
 // la référence redevient automatiquement l'hôtel le plus renseigné.
 const CPL_REFERENCE_ID = "c1e4b815-e842-41fc-ab8b-e57d00d7705b";
@@ -39,6 +50,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   const [mode, setMode] = React.useState("comp");           // comp | conf
   const [dom, setDom] = React.useState("all");
   const [hotelId, setHotelId] = React.useState("");
+  const [socFiltre, setSocFiltre] = React.useState("");     // "" = tous, "_sans" = sans SOC, sinon code du SOC
   const [data, setData] = React.useState(null);              // { criteres, mesures, historique, saisies }
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -134,8 +146,14 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   const refVal = mode === "comp" ? (ref ? (dom === "all" ? ref.comp : ref.domC[dom]) : null) : CPL_OBJECTIF_CONF;
 
   // =================== VUE : CLASSEMENT ===================
+  const socs = [...new Set(liste.map(x => String(x.hotel.soc || "").toLowerCase()).filter(Boolean))];
+  const filtreSoc = (l) => !socFiltre ? l : l.filter(x => socFiltre === "_sans" ? !x.hotel.soc : String(x.hotel.soc || "").toLowerCase() === socFiltre);
+  const choixSoc = () => e('select', { value: socFiltre, onChange: ev => setSocFiltre(ev.target.value), "aria-label": "Filtrer par SOC", style: { padding: "8px 10px", border: "1px solid #C9CED8", borderRadius: 8, fontSize: 13, background: "white" } },
+    e('option', { value: "" }, "Tous les hôtels (" + liste.length + ")"),
+    socs.map(k => e('option', { key: k, value: k }, "SOC " + cplSocNom(k) + " (" + liste.filter(x => String(x.hotel.soc || "").toLowerCase() === k).length + ")")),
+    e('option', { value: "_sans" }, "Sans SOC externe (" + liste.filter(x => !x.hotel.soc).length + ")"));
   const vueClassement = () => {
-    const tri = [...liste].sort((a, b) => (scoreDe(b) == null ? -1 : scoreDe(b)) - (scoreDe(a) == null ? -1 : scoreDe(a)));
+    const tri = [...filtreSoc(liste)].sort((a, b) => (scoreDe(b) == null ? -1 : scoreDe(b)) - (scoreDe(a) == null ? -1 : scoreDe(a)));
     const vals = tri.map(scoreDe).filter(v => v != null);
     const moy = vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
     const tuile = (lbl, v, sub, c) => carte([
@@ -152,12 +170,13 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
         tuile(mode === "comp" ? "Référence · hôtel modèle" : "Objectif de conformité", refVal == null ? "—" : refVal + " %", mode === "comp" ? (ref ? ref.nom : "") : "identique pour tous les hôtels", "#1E4FA8"),
         tuile("Moyenne du parc", moy == null ? "—" : moy + " %", moy != null && refVal != null ? (moy - refVal) + " pts sous " + (mode === "comp" ? "la référence" : "l'objectif") : ""),
-        tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + liste.length + " hôtels suivis"),
-        tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : liste.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", "#A8401F")),
+        tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés"),
+        tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : tri.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", "#A8401F")),
       e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" } },
         e('span', { style: { fontSize: 12.5, color: "#5A6172", marginRight: 4 } }, "Classer selon :"),
         bouton(mode === "comp" ? "Score global" : "Conformité globale", dom === "all", () => setDom("all")),
-        domaines.map(([k, l]) => e('span', { key: k }, bouton(l, dom === k, () => setDom(k))))),
+        domaines.map(([k, l]) => e('span', { key: k }, bouton(l, dom === k, () => setDom(k)))),
+        e('span', { style: { marginLeft: "auto" } }, choixSoc())),
       carte(e('div', { style: { overflowX: "auto" } },
         e('div', { style: { minWidth: isMobile ? 0 : 980 } },
           !isMobile && e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "4px 0 10px", borderBottom: "1px solid #E1E4EA", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em" } },
@@ -171,7 +190,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
             return e('div', { key: x.id, style: { display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #EEF0F4", background: estRef ? "#F0F4FC" : "white" } },
               !isMobile && e('div', { style: { fontSize: 13, color: "#5A6172" } }, i + 1),
               e('div', { style: { minWidth: 0 } },
-                e('button', { onClick: () => ouvrirFiche(x.id), style: { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: "#14171F", textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (estRef ? "★ " : "") + x.nom),
+                e('button', { onClick: () => ouvrirFiche(x.id), style: { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: "#14171F", textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (estRef ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc)),
                 e('div', { style: { fontSize: 11.5, color: "#5A6172" } }, mode === "comp" ? x.aSaisir + " info(s) à compléter" : (x.conf == null ? "pas assez d'infos" : x.aCorriger + " point(s) à corriger"))),
               !isMobile && e('div', { style: { position: "relative", height: 12, background: "#EEF0F4", borderRadius: 6 } },
                 e('div', { style: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 6, width: (v || 0) + "%", background: b.c } }),
@@ -188,17 +207,17 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
 
   // =================== VUE : TOURNÉES (matrice) ===================
   const vueTournees = () => {
-    const tri = [...liste].sort((a, b) => (mode === "comp" ? (a.comp || 0) - (b.comp || 0) : (a.conf == null ? 999 : a.conf) - (b.conf == null ? 999 : b.conf)));
+    const tri = [...filtreSoc(liste)].sort((a, b) => (mode === "comp" ? (a.comp || 0) - (b.comp || 0) : (a.conf == null ? 999 : a.conf) - (b.conf == null ? 999 : b.conf)));
     const cols = "minmax(180px, 260px) repeat(" + domaines.length + ", minmax(64px, 1fr)) 80px 90px";
     return e('div', null,
-      e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } }, bascule(),
+      e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } }, bascule(), choixSoc(),
         e('div', { style: { fontSize: 12.5, color: "#5A6172" } }, "Hôtels les plus en retard en premier. Une colonne pâle = chantier à lancer sur tout le parc ; un clic sur une case ouvre la fiche de l'hôtel.")),
       carte(e('div', { style: { overflowX: "auto" } }, e('div', { style: { minWidth: 900 } },
         e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 5, fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", padding: "4px 0 8px" } },
           e('div', null, "Établissement"), domaines.map(([k, l]) => e('div', { key: k, style: { textAlign: "center" } }, l)),
           e('div', { style: { textAlign: "center" } }, "Global"), e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Infos à saisir" : "À corriger")),
         tri.map(x => e('div', { key: x.id, style: { display: "grid", gridTemplateColumns: cols, gap: 5, alignItems: "center", padding: "2px 0" } },
-          e('div', { style: { fontSize: 13, fontWeight: ref && x.id === ref.id ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (ref && x.id === ref.id ? "★ " : "") + x.nom),
+          e('div', { style: { fontSize: 13, fontWeight: ref && x.id === ref.id ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (ref && x.id === ref.id ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc)),
           domaines.map(([k, l]) => {
             const dv = mode === "comp" ? x.domC[k] : x.domF[k], b = cplBande(dv);
             return e('button', { key: k, onClick: () => ouvrirFiche(x.id), title: x.nom + " — " + l, style: { height: 36, border: "none", borderRadius: 6, background: b.bg, color: b.fg, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, dv == null ? "—" : dv + " %");
@@ -327,7 +346,9 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
 
   const ecartRef = x.comp != null && ref ? x.comp - ref.comp : null;
   const ad = h.antivirus_detecte || null;
-  const avPrevu = String(h.antivirus || "").toLowerCase();
+  const avV = cplAvEnVigueur(h);
+  const avPrevu = avV.actuel;
+  const fr = (d) => d ? new Date(d).toLocaleDateString("fr-FR") : "";
   const nbCk = det ? det.ck.length : 0, nbCkRempli = det ? det.ck.filter(p => p.statut).length : 0;
   const dernierCk = det ? det.ck.map(p => p.date_controle).filter(Boolean).sort().pop() : null;
 
@@ -352,6 +373,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } },
           h.groupe_hotelier && e('span', { style: { fontSize: 12, padding: "2px 9px", borderRadius: 999, background: "#E6E9EF" } }, h.groupe_hotelier),
           e('span', { style: { fontSize: 12, padding: "2px 9px", borderRadius: 999, background: "#E6E9EF" } }, "NinjaOne : " + (h.ninjaone_nom || "—")),
+          cplBadgeSoc(e, h.soc, true),
           ref && ref.id === x.id && e('span', { style: { fontSize: 12, padding: "2px 9px", borderRadius: 999, background: "#1E4FA8", color: "white", fontWeight: 600 } }, "★ Hôtel de référence"))),
       e('select', { value: x.id, onChange: ev => onHotel(ev.target.value), "aria-label": "Établissement", style: { padding: "9px 10px", border: "1px solid #D5D9E0", borderRadius: 8, fontSize: 13.5, fontWeight: 600, minWidth: 260, background: "white" } },
         [...liste].sort((a, b) => String(a.nom).localeCompare(String(b.nom))).map(y => e('option', { key: y.id, value: y.id }, y.nom)))),
@@ -429,13 +451,15 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
 
     // Antivirus
     section("av", "Antivirus", grille([
-      ["Antivirus prévu", avPrevu ? (CPL_AV_NOMS[avPrevu] || h.antivirus) : vide()],
-      ["SOC externe", h.soc || "—"],
+      ["Antivirus en vigueur", avPrevu ? e('span', null, CPL_AV_NOMS[avPrevu] || avPrevu,
+        avV.avant && e('span', { style: { color: "#888", fontSize: 12 } }, " · depuis le " + fr(avV.bascule) + " (avant : " + (CPL_AV_NOMS[avV.avant] || avV.avant) + ")"),
+        avV.futur && e('span', { style: { color: "#8A5A00", fontSize: 12 } }, " · passage à " + (CPL_AV_NOMS[avV.futur] || avV.futur) + (avV.bascule ? " prévu le " + fr(avV.bascule) : " prévu"))) : vide()],
+      ["SOC externe", h.soc ? cplSocNom(h.soc) + " (surveillance et escalade des alertes)" : "Aucun"],
       ["Détecté par NinjaOne", !ad ? vide("Lancer la détection (page Sécurité Anti Virus)") :
         e('div', null, Object.entries(ad.produits || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => (CPL_AV_NOMS[k] || k) + " : " + n).join(" · ") + " — sur " + ad.postes + " postes" + (ad.sans_info ? " (" + ad.sans_info + " sans antivirus actif)" : ""),
           e('div', { style: { fontSize: 12, color: "#888" } }, "Lecture du " + new Date(ad.le).toLocaleDateString("fr-FR") + (ad.a_jour != null ? " · définitions à jour : " + ad.a_jour + " / " + ad.postes : "") + (ad.menaces != null ? " · menaces actives : " + ad.menaces : "")))],
-      ["Console de l'éditeur", saisie0.av_console || (avPrevu === "sophos" ? "Sophos Central (supervisé dans le portail)" : vide())],
-      ["Contact d'escalade", saisie0.av_contact_escalade || h.soc || vide()],
+      ["Console de l'éditeur", saisie0.av_console || (avPrevu === "sophos" ? "Sophos Central (supervisé dans le portail)" : h.soc ? "Exploitée par le SOC " + cplSocNom(h.soc) : vide())],
+      ["Contact d'escalade", saisie0.av_contact_escalade || (h.soc ? "SOC " + cplSocNom(h.soc) : vide())],
     ]), lienPage("Sécurité Anti Virus", "sophos")),
 
     // Microsoft 365
