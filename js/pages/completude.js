@@ -29,6 +29,9 @@ function cplAvEnVigueur(h) {
   return { actuel: String((faite ? h.antivirus_futur : h.antivirus) || "").toLowerCase(), avant: faite ? String(h.antivirus || "").toLowerCase() : null,
            futur: !faite && h.antivirus_futur ? String(h.antivirus_futur).toLowerCase() : null, bascule: h.antivirus_bascule || null };
 }
+// Badge « serveurs hébergés ailleurs » (ex. réseau Hilton) : serveurs, sauvegardes et check-list hors score
+const cplBadgeExt = (e, sa) => sa && sa.sans_serveur ? e('span', { title: (sa.serveurs_externes || "Pas de serveur sur site") + " : serveurs, sauvegardes et check-list hors score", style: { fontSize: 10.5, padding: "1px 6px", borderRadius: 999, background: "#EEF0F4", color: "#2C3240", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } },
+  /hilton/i.test(sa.serveurs_externes || "") ? "Serveurs Hilton" : sa.serveurs_externes ? "Serveurs hébergés" : "Sans serveur") : null;
 const cplBadgeSoc = (e, soc, grand) => soc ? e('span', { title: "SOC externe : " + cplSocNom(soc), style: { fontSize: grand ? 12 : 10.5, padding: grand ? "2px 9px" : "1px 6px", borderRadius: 999, background: "#EDE6F7", color: "#4B2A80", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } }, "SOC " + cplSocNom(soc)) : null;
 // Hôtel de référence pour la complétude : VOCO - Clichy (choix du 23/11/2026). Si cet hôtel n'existe plus,
 // la référence redevient automatiquement l'hôtel le plus renseigné.
@@ -177,6 +180,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   if (!calc) return e('div', null, onglets, e('div', { style: { color: "#888", fontSize: 13, padding: 20 } }, "Calcul des scores…"));
 
   const { liste, ref } = calc;
+  const saisieDe = (id) => data.saisies.find(s => s.hotel_id === id);
   const refComp = ref ? ref.comp : null;
   const domaines = CPL_DOMAINES[mode];
   const scoreDe = (x) => mode === "comp" ? (dom === "all" ? x.comp : x.domC[dom]) : (dom === "all" ? x.conf : x.domF[dom]);
@@ -227,7 +231,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
             return e('div', { key: x.id, style: { display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #EEF0F4", background: estRef ? "#F0F4FC" : "white" } },
               !isMobile && e('div', { style: { fontSize: 13, color: "#5A6172" } }, i + 1),
               e('div', { style: { minWidth: 0 } },
-                e('button', { onClick: () => ouvrirFiche(x.id), style: { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: "#14171F", textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (estRef ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc)),
+                e('button', { onClick: () => ouvrirFiche(x.id), style: { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: "#14171F", textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (estRef ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc), cplBadgeExt(e, saisieDe(x.id))),
                 e('div', { style: { fontSize: 11.5, color: "#5A6172" } }, mode === "comp" ? x.aSaisir + " info(s) à compléter" : (x.conf == null ? "pas assez d'infos" : x.aCorriger + " point(s) à corriger"))),
               !isMobile && e('div', { style: { position: "relative", height: 12, background: "#EEF0F4", borderRadius: 6 } },
                 e('div', { style: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 6, width: (v || 0) + "%", background: b.c } }),
@@ -254,7 +258,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
           e('div', null, "Établissement"), domaines.map(([k, l]) => e('div', { key: k, style: { textAlign: "center" } }, l)),
           e('div', { style: { textAlign: "center" } }, "Global"), e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Infos à saisir" : "À corriger")),
         tri.map(x => e('div', { key: x.id, style: { display: "grid", gridTemplateColumns: cols, gap: 5, alignItems: "center", padding: "2px 0" } },
-          e('div', { style: { fontSize: 13, fontWeight: ref && x.id === ref.id ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (ref && x.id === ref.id ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc)),
+          e('div', { style: { fontSize: 13, fontWeight: ref && x.id === ref.id ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (ref && x.id === ref.id ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc), cplBadgeExt(e, saisieDe(x.id))),
           domaines.map(([k, l]) => {
             const dv = mode === "comp" ? x.domC[k] : x.domF[k], b = cplBande(dv);
             return e('button', { key: k, onClick: () => ouvrirFiche(x.id), title: x.nom + " — " + l, style: { height: 36, border: "none", borderRadius: 6, background: b.bg, color: b.fg, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, dv == null ? "—" : dv + " %");
@@ -328,7 +332,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
 
   const enregistrer = async () => {
     setEnreg("…");
-    const ligne = { hotel_id: x.id, sans_serveur: !!saisie.sans_serveur, m365_non_gere: !!saisie.m365_non_gere,
+    const ext = (saisie.serveurs_externes || "").trim() || null;
+    const ligne = { hotel_id: x.id, sans_serveur: !!saisie.sans_serveur || !!ext, serveurs_externes: ext, m365_non_gere: !!saisie.m365_non_gere,
       supervision_raid: saisie.supervision_raid == null ? null : !!saisie.supervision_raid,
       retention_hors_site: (saisie.retention_hors_site || "").trim() || null, av_console: (saisie.av_console || "").trim() || null,
       av_contact_escalade: (saisie.av_contact_escalade || "").trim() || null,
@@ -447,6 +452,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         triEtat("Consentement « Bloquer expéditeur » (Microsoft 365)", "blocage_consentement", "Donné", "Refusé / pas encore"),
         e('div', { style: { display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" } },
           coche("Pas de serveur sur site (serveurs, sauvegardes, check-list = sans objet)", "sans_serveur"),
+          champ("Serveurs hébergés ailleurs (rend aussi « sans serveur sur site »)", "serveurs_externes", "ex. Serveurs hébergés sur le réseau Hilton"),
           coche("Messagerie non gérée par DSI Hotel (Microsoft 365 = sans objet)", "m365_non_gere"))),
       e('div', { key: "b", style: { display: "flex", gap: 10, alignItems: "center", marginTop: 12 } },
         e('button', { onClick: enregistrer, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "Enregistrer"),
@@ -463,7 +469,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     ]), lienPage("Modifier", "client-admin")),
 
     // Serveurs
-    section("srv", "Serveurs & infrastructure", !det ? e('div', { style: { fontSize: 13, color: "#888" } }, "Chargement…") : det.inv.length === 0 ? vide("Aucun serveur dans l'inventaire : lancer « Importer NinjaOne » (s'il n'y en a pas dans NinjaOne, le domaine passe en sans objet)") :
+    section("srv", "Serveurs & infrastructure", saisie0.sans_serveur ? e('div', { style: { fontSize: 13.5, padding: "8px 12px", borderRadius: 8, background: "#EEF0F4", color: "#2C3240" } },
+        (saisie0.serveurs_externes || "Pas de serveur sur site") + " — serveurs, sauvegardes et check-list ne comptent pas dans le score de cet hôtel.") : !det ? e('div', { style: { fontSize: 13, color: "#888" } }, "Chargement…") : det.inv.length === 0 ? vide("Aucun serveur dans l'inventaire : lancer « Importer NinjaOne » (s'il n'y en a pas dans NinjaOne, le domaine passe en sans objet)") :
       e('div', { style: { overflowX: "auto" } }, e('table', { style: { width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 760 } },
         e('thead', null, e('tr', { style: { textAlign: "left", color: "#5A6172", fontSize: 11.5, textTransform: "uppercase" } },
           ["Machine", "Rôle", "Système", "IP", "MAJ", "Antivirus", "Garantie"].map(t => e('th', { key: t, style: { padding: "6px 8px", borderBottom: "1px solid #E1E4EA" } }, t)))),
