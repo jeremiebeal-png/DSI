@@ -31,7 +31,7 @@ function cplAvEnVigueur(h) {
 }
 // Badge « serveurs hébergés ailleurs » (ex. réseau Hilton) : serveurs, sauvegardes et check-list hors score
 const cplBadgeExt = (e, sa) => sa && sa.sans_serveur ? e('span', { title: (sa.serveurs_externes || "Pas de serveur sur site") + " : serveurs, sauvegardes et check-list hors score", style: { fontSize: 10.5, padding: "1px 6px", borderRadius: 999, background: "#EEF0F4", color: "#2C3240", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } },
-  /hilton/i.test(sa.serveurs_externes || "") ? "Serveurs Hilton" : sa.serveurs_externes ? "Serveurs hébergés" : "Sans serveur") : null;
+  /hilton/i.test(sa.serveurs_externes || "") ? (sa.av_non_gere && sa.m365_non_gere ? "Géré par Hilton" : "Serveurs Hilton") : sa.serveurs_externes ? "Serveurs hébergés" : "Sans serveur") : null;
 const cplBadgeSoc = (e, soc, grand) => soc ? e('span', { title: "SOC externe : " + cplSocNom(soc), style: { fontSize: grand ? 12 : 10.5, padding: grand ? "2px 9px" : "1px 6px", borderRadius: 999, background: "#EDE6F7", color: "#4B2A80", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } }, "SOC " + cplSocNom(soc)) : null;
 // Hôtel de référence pour la complétude : VOCO - Clichy (choix du 23/11/2026). Si cet hôtel n'existe plus,
 // la référence redevient automatiquement l'hôtel le plus renseigné.
@@ -90,7 +90,8 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   // Import NinjaOne de l'inventaire serveurs pour TOUS les hôtels (Worker dsi-hotel-inventaire, route /importer,
   // un hôtel par appel : limite de sous-requêtes du plan gratuit). Ne supprime jamais rien, n'écrase ni rôle ni Care Pack.
   const importerTout = async () => {
-    const cibles = hotels.filter(h => !/d[ée]mo|client test/i.test(h.name || "")).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const sansServeur = new Set((data ? data.saisies : []).filter(x => x.sans_serveur).map(x => x.hotel_id));
+    const cibles = hotels.filter(h => !/d[ée]mo|client test/i.test(h.name || "") && !sansServeur.has(h.id)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
     if (!confirm("Importer l'inventaire serveurs depuis NinjaOne pour les " + cibles.length + " hôtels ?\n\nLes machines manquantes sont ajoutées, l'OS, les mises à jour et l'antivirus sont mis à jour. Rien n'est supprimé ; rôles, Care Pack et notes ne sont jamais modifiés.\n\nCompter 2 à 4 minutes.")) return;
     const { data: sd } = await sb.auth.getSession();
     const token = (sd.session && sd.session.access_token) || "";
@@ -333,7 +334,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const enregistrer = async () => {
     setEnreg("…");
     const ext = (saisie.serveurs_externes || "").trim() || null;
-    const ligne = { hotel_id: x.id, sans_serveur: !!saisie.sans_serveur || !!ext, serveurs_externes: ext, m365_non_gere: !!saisie.m365_non_gere,
+    const ligne = { hotel_id: x.id, sans_serveur: !!saisie.sans_serveur || !!ext, serveurs_externes: ext, m365_non_gere: !!saisie.m365_non_gere, av_non_gere: !!saisie.av_non_gere,
       supervision_raid: saisie.supervision_raid == null ? null : !!saisie.supervision_raid,
       retention_hors_site: (saisie.retention_hors_site || "").trim() || null, av_console: (saisie.av_console || "").trim() || null,
       av_contact_escalade: (saisie.av_contact_escalade || "").trim() || null,
@@ -453,7 +454,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         e('div', { style: { display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" } },
           coche("Pas de serveur sur site (serveurs, sauvegardes, check-list = sans objet)", "sans_serveur"),
           champ("Serveurs hébergés ailleurs (rend aussi « sans serveur sur site »)", "serveurs_externes", "ex. Serveurs hébergés sur le réseau Hilton"),
-          coche("Messagerie non gérée par DSI Hotel (Microsoft 365 = sans objet)", "m365_non_gere"))),
+          coche("Messagerie non gérée par DSI Hotel (Microsoft 365 = sans objet)", "m365_non_gere"),
+          coche("Antivirus géré par la chaîne, ex. Hilton (Antivirus = sans objet)", "av_non_gere"))),
       e('div', { key: "b", style: { display: "flex", gap: 10, alignItems: "center", marginTop: 12 } },
         e('button', { onClick: enregistrer, style: { padding: "9px 16px", background: G, border: "none", color: "#111", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "Enregistrer"),
         e('span', { style: { fontSize: 12.5 } }, enreg))]),
@@ -493,7 +495,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
       lienPage("Sauvegardes", "backups")),
 
     // Antivirus
-    section("av", "Antivirus", grille([
+    section("av", "Antivirus", saisie0.av_non_gere ? e('div', { style: { fontSize: 13.5, padding: "8px 12px", borderRadius: 8, background: "#EEF0F4", color: "#2C3240" } },
+        "Antivirus géré par la chaîne (" + (saisie0.serveurs_externes || "hors DSI Hotel") + ") : ne compte pas dans le score.") : grille([
       ["Antivirus en vigueur", avPrevu ? e('span', null, CPL_AV_NOMS[avPrevu] || avPrevu,
         avV.avant && e('span', { style: { color: "#888", fontSize: 12 } }, " · depuis le " + fr(avV.bascule) + " (avant : " + (CPL_AV_NOMS[avV.avant] || avV.avant) + ")"),
         avV.futur && e('span', { style: { color: "#8A5A00", fontSize: 12 } }, " · passage à " + (CPL_AV_NOMS[avV.futur] || avV.futur) + (avV.bascule ? " prévu le " + fr(avV.bascule) : " prévu"))) : vide()],
@@ -506,7 +509,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     ]), lienPage("Sécurité Anti Virus", "sophos")),
 
     // Microsoft 365
-    section("m365", "Microsoft 365", saisie0.m365_non_gere ? e('div', { style: { fontSize: 13, color: "#5A6172" } }, "Messagerie non gérée par DSI Hotel : domaine sans objet.") : grille([
+    section("m365", "Microsoft 365", saisie0.m365_non_gere ? e('div', { style: { fontSize: 13, color: "#5A6172" } }, "Messagerie non gérée par DSI Hotel" + (saisie0.serveurs_externes && /hilton/i.test(saisie0.serveurs_externes) ? " (gérée par Hilton)" : "") + " : ne compte pas dans le score.") : grille([
       ["Tenant(s) rattaché(s)", !det ? "…" : det.m365.length ? det.m365.map(t => (t.domaines || []).join(", ") || t.tenant_id).join(" · ") : vide("Aucun domaine rattaché")],
       ["Bloquer expéditeur", saisie0.blocage_consentement == null ? vide() : saisie0.blocage_consentement ? "Consentement donné" : "Pas encore donné"],
       ["MFA", "Pas encore collecté par le portail"],
