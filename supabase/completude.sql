@@ -178,7 +178,12 @@ capx as (
 ),
 base as (
   select h.id, h.ss, h.mng, h.supervision_raid, h.retention_hors_site, h.av_console, h.av_contact_escalade, h.blocage_consentement,
-    h.adresse_rue, h.phone, h.gm_email, h.tech_email, h.ninjaone_nom, h.soc, lower(coalesce(h.antivirus,'')) av_prevu, h.antivirus_detecte ad,
+    h.adresse_rue, h.phone, h.gm_email, h.tech_email, h.ninjaone_nom, h.soc,
+    -- Antivirus en vigueur : le « futur » dès que sa date de bascule est passée (même règle que la page Sécurité Anti Virus)
+    lower(case when coalesce(h.antivirus_futur,'') <> '' and h.antivirus_bascule <= current_date then h.antivirus_futur else coalesce(h.antivirus,'') end) av_prevu,
+    -- Bascule programmée pas encore faite : pendant la transition, l'ancien ET le nouvel antivirus sont acceptés
+    lower(case when coalesce(h.antivirus_futur,'') <> '' and (h.antivirus_bascule is null or h.antivirus_bascule > current_date) then h.antivirus_futur else '' end) av_futur,
+    h.antivirus_detecte ad,
     coalesce(i.n,0) n, coalesce(i.n_ninja,0) n_ninja, coalesce(i.n_os,0) n_os, coalesce(i.n_role,0) n_role,
     coalesce(i.n_phys,0) n_phys, coalesce(i.n_phys_cp,0) n_phys_cp, coalesce(i.n_aj,0) n_aj, coalesce(i.n_aj_ok,0) n_aj_ok,
     coalesce(i.n_win,0) n_win, coalesce(i.n_win_ok,0) n_win_ok, coalesce(i.n_gar,0) n_gar, coalesce(i.n_gar_ok,0) n_gar_ok,
@@ -225,7 +230,9 @@ cross join lateral (values
   -- Antivirus (tous éditeurs)
   ('A_PROD',   (b.av_prevu <> '')::int, nullif(b.av_prevu,'')),
   ('A_DETECT', (coalesce((b.ad->>'le')::timestamptz > now() - interval '30 days', false))::int, b.ad->>'le'),
-  ('A_CONSOLE',case when b.av_prevu = 'sophos' or b.so_actif then b.so_actif::int else (coalesce(trim(b.av_console),'') <> '')::int end, null),
+  -- Console : Sophos Central rattaché pour un hôtel Sophos ; sinon console renseignée OU SOC externe (ex. Stoïk) qui l'exploite
+  ('A_CONSOLE',case when b.so_actif then 1 when b.av_prevu = 'sophos' then 0
+                    else (coalesce(trim(b.av_console),'') <> '' or coalesce(trim(b.soc),'') <> '')::int end, nullif(b.soc,'')),
   ('A_ESC',    (coalesce(trim(b.av_contact_escalade),'') <> '' or coalesce(trim(b.soc),'') <> '')::int, null),
   -- Microsoft 365
   ('M_TENANT', case when b.mng then null else b.m_tenant::int end, null),
@@ -246,8 +253,10 @@ cross join lateral (values
   ('X_BINC',  case when b.ss or b.vj_n = 0 then null else (b.binc = 0)::int end, b.binc || ' incident(s)'),
   ('X_BLIC',  case when b.ss or b.n_lic = 0 then null else b.n_lic_ok::numeric / b.n_lic end, null),
   ('X_COUV',  case when b.av_postes is null then null else least(1, av.av_couverts::numeric / b.av_postes) end, av.av_couverts || ' / ' || b.av_postes || ' postes'),
-  ('X_PRINC', case when b.av_postes is null or b.av_prevu = '' then null else least(1, coalesce((b.ad->'produits'->>b.av_prevu)::numeric, 0) / b.av_postes) end,
-              coalesce(b.ad->'produits'->>b.av_prevu, '0') || ' / ' || b.av_postes || ' postes'),
+  ('X_PRINC', case when b.av_postes is null or b.av_prevu = '' then null
+                   else least(1, (coalesce((b.ad->'produits'->>b.av_prevu)::numeric, 0)
+                                + case when b.av_futur <> '' then coalesce((b.ad->'produits'->>b.av_futur)::numeric, 0) else 0 end) / b.av_postes) end,
+              coalesce(b.ad->'produits'->>b.av_prevu, '0') || ' / ' || b.av_postes || ' postes (' || b.av_prevu || ')'),
   ('X_DEF',   case when b.av_postes is null or not (b.ad ? 'a_jour') then null else least(1, (b.ad->>'a_jour')::numeric / b.av_postes) end, b.ad->>'a_jour'),
   ('X_MENACE',case when b.ad ? 'menaces' then ((b.ad->>'menaces')::int = 0 and b.so_vieilles = 0)::int
                    when b.so_actif then (b.so_vieilles = 0)::int else null end, b.ad->>'menaces'),
