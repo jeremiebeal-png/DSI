@@ -7,9 +7,18 @@
 // Calcul côté base : fonction score_mesures() (supabase/completude.sql). Les états sont internes au composant
 // CompletudeTableau : app.js ne lui passe que hotels, isMobile, setPage et adminFromName.
 function Page_completude(ctx) {
-  const { hotels, isMobile, setPage, adminFromName } = ctx;
-  return React.createElement(CompletudeTableau, { hotels, isMobile, setPage, adminFromName });
+  const { hotels, isMobile, setPage, adminFromName, ouvrirPourHotel } = ctx;
+  // Ouvre la page du portail correspondant à un domaine, directement sur l'hôtel.
+  // Dans le portail : ouvrirPourHotel (app.js). Hors portail (aperçu tableau.html) : lien ?ouvrir=…&hotel=…
+  const ouvrir = (pageCible, hotelId) => {
+    if (ouvrirPourHotel) ouvrirPourHotel(pageCible, hotelId);
+    else window.location.href = "/?ouvrir=" + encodeURIComponent(pageCible) + "&hotel=" + encodeURIComponent(hotelId || "");
+  };
+  return React.createElement(CompletudeTableau, { hotels, isMobile, setPage, adminFromName, ouvrir });
 }
+// Page du portail ouverte par un clic sur un domaine
+const CPL_PAGE_DOMAINE = { fiche: "client-admin", srv: "inventaire", bkp: "backups", av: "sophos", m365: "m365", chk: "checklist", mat: "capex" };
+const CPL_NOM_PAGE = { "client-admin": "Établissements", inventaire: "Inventaire serveurs", backups: "Sauvegardes", sophos: "Sécurité Anti Virus", m365: "Sécurité Microsoft", checklist: "Check-list", capex: "CAPEX" };
 
 const CPL_DOMAINES = {
   comp: [["fiche", "Info Hotel"], ["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"]],   // domaine « Projets » retiré le 23/11/2026
@@ -53,7 +62,7 @@ function cplBande(p) {
   return { c: "#C4532D", bg: "#F5C2AE", fg: "#5C1A06", tier: "À lancer" };
 }
 
-function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
+function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir }) {
   const e = React.createElement;
   const [vue, setVue] = React.useState("classement");      // classement | tournees | fiche | bareme
   const [mode, setMode] = React.useState("comp");           // comp | conf
@@ -247,7 +256,9 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
               !isMobile && e('div', { style: { textAlign: "center" } }, pastille(mode === "comp" ? x.conf : x.comp)),
               !isMobile && e('div', { style: { display: "flex", gap: 4 } }, domaines.map(([k, l]) => {
                 const dv = mode === "comp" ? x.domC[k] : x.domF[k], db = cplBande(dv);
-                return e('div', { key: k, title: l + " : " + (dv == null ? "sans objet" : dv + " %"), style: { width: CPL_CASE, height: 24, borderRadius: 4, background: db.bg, color: db.fg, fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" } }, dv == null ? "—" : dv);
+                const pg = CPL_PAGE_DOMAINE[k];
+                return e('button', { key: k, onClick: () => ouvrir(pg, x.id), title: l + " : " + (dv == null ? "sans objet" : dv + " %") + " — ouvrir " + (CPL_NOM_PAGE[pg] || pg) + " pour " + x.nom,
+                  style: { width: CPL_CASE, height: 24, padding: 0, border: "none", borderRadius: 4, background: db.bg, color: db.fg, fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } }, dv == null ? "—" : dv);
               })));
           })))));
   };
@@ -320,7 +331,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
   const vueFiche = () => {
     const x = liste.find(y => y.id === hotelId) || ref;
     if (!x) return e('div', null, "Aucun hôtel.");
-    return e(CompletudeFiche, { key: x.id, x, ref, liste, data, hotels, isMobile, setPage, adminFromName, onChange: charger, onHotel: id => setHotelId(id), carte, pastille });
+    return e(CompletudeFiche, { key: x.id, x, ref, liste, data, hotels, isMobile, setPage: (pg) => ouvrir(pg, x.id), adminFromName, onChange: charger, onHotel: id => setHotelId(id), carte, pastille });
   };
 
   return e('div', null, onglets, bandeauImport,
