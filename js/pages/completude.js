@@ -12,12 +12,12 @@ function Page_completude(ctx) {
 }
 
 const CPL_DOMAINES = {
-  comp: [["fiche", "Fiche"], ["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["prj", "Projets"]],
+  comp: [["fiche", "Info Hotel"], ["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["prj", "Projets"]],
   conf: [["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["mat", "Matériel"]],
 };
 const CPL_OBJECTIF_CONF = 90;
 // Libellés courts des domaines (en-têtes des petites cases du classement)
-const CPL_COURT = { fiche: "Fiche", srv: "Srv", bkp: "Sauv", av: "AV", m365: "M365", chk: "Chk", prj: "Proj", mat: "Mat" };
+const CPL_COURT = { fiche: "Info", srv: "Srv", bkp: "Sauv", av: "AV", m365: "M365", chk: "Chk", prj: "Proj", mat: "Mat" };
 const CPL_CASE = 40;
 // SOC externes (même liste que la page Sécurité Anti Virus) — d'autres hôtels passeront chez Stoïk
 const CPL_SOC_NOMS = { stoik: "Stoïk" };
@@ -417,7 +417,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         e('span', { style: { fontSize: 12.5 } }, enreg))]),
 
     // Fiche établissement
-    section("fiche", "Fiche établissement", grille([
+    section("fiche", "Info Hotel", grille([
       ["Adresse", val([h.adresse_rue, [h.adresse_cp, h.adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", "))],
       ["Téléphone", val(h.phone)],
       ["Directeur", val([h.gm_prenom, h.gm_nom].filter(Boolean).join(" ") + (h.gm_email ? " · " + h.gm_email : ""), "Contact à renseigner")],
