@@ -30,8 +30,14 @@ function cplAvEnVigueur(h) {
            futur: !faite && h.antivirus_futur ? String(h.antivirus_futur).toLowerCase() : null, bascule: h.antivirus_bascule || null };
 }
 // Badge « serveurs hébergés ailleurs » (ex. réseau Hilton) : serveurs, sauvegardes et check-list hors score
-const cplBadgeExt = (e, sa) => sa && sa.sans_serveur ? e('span', { title: (sa.serveurs_externes || "Pas de serveur sur site") + " : serveurs, sauvegardes et check-list hors score", style: { fontSize: 10.5, padding: "1px 6px", borderRadius: 999, background: "#EEF0F4", color: "#2C3240", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } },
-  /hilton/i.test(sa.serveurs_externes || "") ? (sa.av_non_gere && sa.m365_non_gere ? "Géré par Hilton" : "Serveurs Hilton") : sa.serveurs_externes ? "Serveurs hébergés" : "Sans serveur") : null;
+// Badge « géré par la chaîne » / « serveurs hébergés ailleurs » (ex. Hilton, Marriott) : domaines concernés hors score
+const cplChaine = (t) => { const m = String(t || "").match(/hilton|marriott|ihg|accor|hyatt|radisson|best ?western/i); return m ? m[0].replace(/^./, c => c.toUpperCase()) : null; };
+const cplBadgeExt = (e, sa) => {
+  if (!sa || !sa.sans_serveur) return null;
+  const ch = cplChaine(sa.serveurs_externes);
+  const txt = ch ? (sa.av_non_gere && sa.m365_non_gere ? "Géré par " + ch : "Serveurs " + ch) : sa.serveurs_externes ? "Serveurs hébergés" : "Sans serveur";
+  return e('span', { title: (sa.serveurs_externes || "Pas de serveur sur site") + " : hors score", style: { fontSize: 10.5, padding: "1px 6px", borderRadius: 999, background: "#EEF0F4", color: "#2C3240", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } }, txt);
+};
 const cplBadgeSoc = (e, soc, grand) => soc ? e('span', { title: "SOC externe : " + cplSocNom(soc), style: { fontSize: grand ? 12 : 10.5, padding: grand ? "2px 9px" : "1px 6px", borderRadius: 999, background: "#EDE6F7", color: "#4B2A80", fontWeight: 600, marginLeft: 6, whiteSpace: "nowrap" } }, "SOC " + cplSocNom(soc)) : null;
 // Hôtel de référence pour la complétude : VOCO - Clichy (choix du 23/11/2026). Si cet hôtel n'existe plus,
 // la référence redevient automatiquement l'hôtel le plus renseigné.
@@ -509,7 +515,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     ]), lienPage("Sécurité Anti Virus", "sophos")),
 
     // Microsoft 365
-    section("m365", "Microsoft 365", saisie0.m365_non_gere ? e('div', { style: { fontSize: 13, color: "#5A6172" } }, "Messagerie non gérée par DSI Hotel" + (saisie0.serveurs_externes && /hilton/i.test(saisie0.serveurs_externes) ? " (gérée par Hilton)" : "") + " : ne compte pas dans le score.") : grille([
+    section("m365", "Microsoft 365", saisie0.m365_non_gere ? e('div', { style: { fontSize: 13, color: "#5A6172" } }, "Messagerie non gérée par DSI Hotel" + (cplChaine(saisie0.serveurs_externes) ? " (gérée par " + cplChaine(saisie0.serveurs_externes) + ")" : "") + " : ne compte pas dans le score.") : grille([
       ["Tenant(s) rattaché(s)", !det ? "…" : det.m365.length ? det.m365.map(t => (t.domaines || []).join(", ") || t.tenant_id).join(" · ") : vide("Aucun domaine rattaché")],
       ["Bloquer expéditeur", saisie0.blocage_consentement == null ? vide() : saisie0.blocage_consentement ? "Consentement donné" : "Pas encore donné"],
       ["MFA", "Pas encore collecté par le portail"],
