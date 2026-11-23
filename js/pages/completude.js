@@ -12,7 +12,7 @@ function Page_completude(ctx) {
 }
 
 const CPL_DOMAINES = {
-  comp: [["fiche", "Info Hotel"], ["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["prj", "Projets"]],
+  comp: [["fiche", "Info Hotel"], ["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"]],   // domaine « Projets » retiré le 23/11/2026
   conf: [["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["mat", "Matériel"]],
 };
 const CPL_OBJECTIF_CONF = 90;
@@ -278,7 +278,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName }) {
         return carte([
           e('div', { key: "t", style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 } },
             e('div', { style: { fontSize: 16, fontWeight: 700, color: sc === "comp" ? "#1E4FA8" : "#8A5A00" } }, sc === "comp" ? "Complétude des informations" : "Conformité"),
-            e('div', { style: { fontSize: 13, fontWeight: 600, color: total === 100 ? "#1E4FA8" : "#A8401F" } }, total + " / 100 pts")),
+            e('div', { style: { fontSize: 13, fontWeight: 600, color: "#1E4FA8" } }, total + " pts actifs")),
           CPL_DOMAINES[sc].map(([k, l]) => e('div', { key: k, style: { marginTop: 10 } },
             e('div', { style: { fontSize: 12, fontWeight: 700, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 4 } }, l),
             cs.filter(c => c.domaine === k).map(c => e('div', { key: c.code, style: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 82px 58px 40px", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: "1px solid #EEF0F4", fontSize: 13, opacity: c.actif ? 1 : .45 } },
@@ -315,14 +315,13 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   React.useEffect(() => {
     let fini = false;
     (async () => {
-      const [inv, jobs, prj, ck, m365] = await Promise.all([
+      const [inv, jobs, ck, m365] = await Promise.all([
         sb.from("inventaire_serveurs").select("id,parent_id,ordre,nom,type,role,os,version,ip,a_jour,derniere_maj,antivirus,antivirus_nom,care_pack,care_pack_fin,licence_fin").eq("hotel_id", x.id).order("ordre"),
         sb.from("veeam_jobs").select("id,nom,libelle,actif,dernier_statut,dernier_run_at,planifie,planif_desc,serveur").eq("hotel_id", x.id).order("nom"),
-        sb.from("projets").select("id,titre,statut,date_echeance").eq("hotel_id", x.id).order("created_at", { ascending: false }),
         sb.from("checklist_points").select("statut,date_controle").eq("hotel_id", x.id).range(0, 999),
         sb.from("m365_tenant_hotels").select("tenant_id,domaines").eq("hotel_id", x.id),
       ]);
-      if (!fini) setDet({ inv: inv.data || [], jobs: (jobs.data || []).filter(j => j.actif), prj: prj.data || [], ck: ck.data || [], m365: m365.data || [] });
+      if (!fini) setDet({ inv: inv.data || [], jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [] });
     })();
     return () => { fini = true; };
   }, [x.id]);
@@ -511,12 +510,6 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
       ["Points renseignés", nbCkRempli + " / " + nbCk],
       ["Dernier contrôle", dernierCk ? new Date(dernierCk).toLocaleDateString("fr-FR") : vide("Jamais vérifiée")],
     ]), lienPage("Check-list", "checklist")),
-
-    // Projets
-    section("prj", "Projets & CAPEX", !det ? null : det.prj.length === 0 ? e('div', { style: { fontSize: 13, color: "#5A6172" } }, "Aucun projet pour cet hôtel.") :
-      e('div', null, det.prj.map(p => e('div', { key: p.id, style: { display: "flex", justifyContent: "space-between", gap: 10, padding: "5px 0", borderBottom: "1px solid #EEF0F4", fontSize: 13 } },
-        e('span', null, p.titre), e('span', { style: { color: "#5A6172" } }, ({ todo: "À faire", doing: "En cours", waiting: "En attente", done: "Terminé" })[p.statut] || p.statut, p.date_echeance ? " · " + new Date(p.date_echeance).toLocaleDateString("fr-FR") : "")))),
-      e('span', { style: { display: "flex", gap: 12 } }, lienPage("Projets", "projets"), lienPage("CAPEX", "capex"))),
 
     // Matériel (conformité seulement)
     carte([titre("Matériel", badgesDom("mat")), e('div', { key: "m" }, criteres("conf", "mat"))])
