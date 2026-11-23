@@ -54,6 +54,8 @@ const CPL_REFERENCE_ID = "c1e4b815-e842-41fc-ab8b-e57d00d7705b";
 const CPL_CONF_MIN_POINTS = 30;
 const CPL_AV_NOMS = { sophos: "Sophos", crowdstrike: "CrowdStrike", sentinelone: "SentinelOne", watchguard: "WatchGuard", defender: "Microsoft Defender", trendmicro: "Trend Micro", autre: "Autre" };
 
+// Couleur de TEXTE du palier (version foncée, lisible sur fond blanc)
+function cplTexte(p) { return p == null ? "#5A6172" : p >= 85 ? "#1E4FA8" : p >= 70 ? "#2D5BB0" : p >= 50 ? "#8A5A00" : "#A8401F"; }
 function cplBande(p) {
   if (p == null) return { c: "#C9CED8", bg: "#EEF0F4", fg: "#5A6172", tier: "—" };
   if (p >= 85) return { c: "#1E4FA8", bg: "#1E4FA8", fg: "#FFFFFF", tier: "Très bon" };
@@ -214,7 +216,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
     const vals = tri.map(scoreDe).filter(v => v != null);
     const moy = vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
     const tuile = (lbl, v, sub, c) => carte([
-      e('div', { key: 1, style: { fontSize: 12.5, color: "#5A6172" } }, lbl),
+      e('div', { key: 1, style: { fontSize: 12.5, color: "#5A6172", display: "flex", alignItems: "center", gap: 8 } }, c && e('span', { style: { width: 10, height: 10, borderRadius: 3, background: c } }), lbl),
       e('div', { key: 2, style: { fontSize: 28, fontWeight: 700, color: c || "#14171F", margin: "4px 0" } }, v),
       e('div', { key: 3, style: { fontSize: 12.5, color: "#4A5060" } }, sub)]);
     const cols = isMobile ? "1fr 70px" : "36px minmax(160px, 240px) minmax(0, 1fr) 64px 92px 92px " + (domaines.length * (CPL_CASE + 4)) + "px";
@@ -225,9 +227,12 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
           ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. " + (ref ? ref.nom + " sert de modèle : le trait noir sur chaque barre montre son niveau." : "")
           : "Ce score indique si ce qu'on surveille est en bon état : mises à jour, sauvegardes, antivirus, alertes… Le trait noir marque l'objectif de " + CPL_OBJECTIF_CONF + " %. « — » veut dire qu'on n'a pas encore assez d'informations sur l'hôtel pour le calculer.")),
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
-        tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), "#1E4FA8"),
-        tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés"),
+        tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", (moy == null ? "" : cplBande(moy).tier + " · ") + "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), cplTexte(moy)),
+        tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés", cplTexte(70)),
         tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : tri.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", "#A8401F")),
+      e('div', { style: { display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", fontSize: 12, color: "#4A5060", margin: "-4px 0 12px" } },
+        [[90, "85 à 100 % : très bon"], [75, "70 à 84 % : avancé"], [60, "50 à 69 % : en cours"], [30, "moins de 50 % : à lancer"]].map(([v, t]) =>
+          e('span', { key: v, style: { display: "inline-flex", gap: 6, alignItems: "center" } }, e('span', { style: { width: 12, height: 12, borderRadius: 3, background: cplBande(v).c } }), t))),
       e('div', { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" } },
         e('span', { style: { fontSize: 12.5, color: "#5A6172", marginRight: 4 } }, "Classer selon :"),
         bouton(mode === "comp" ? "Score global" : "Conformité globale", dom === "all", () => setDom("all")),
