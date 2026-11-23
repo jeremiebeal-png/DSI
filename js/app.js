@@ -13,6 +13,14 @@ function App() {
     } catch (e) { return null; }
   });
 
+  // Lien direct vers la page d'un hôtel (tableau de bord hôtels) : ?ouvrir=inventaire&hotel=<id>
+  const [pendingOuvrir, setPendingOuvrir] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      return q.get("ouvrir") ? { page: q.get("ouvrir"), hotel: q.get("hotel") || "" } : null;
+    } catch (e) { return null; }
+  });
+
   // ---------- RESPONSIVE / MOBILE ----------
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -998,6 +1006,26 @@ function App() {
     }
   }, [page, profile]);
   const myHotelId = profile?.hotel_id;
+
+  // Ouvre une page du portail directement sur un hôtel (utilisé par le Tableau de bord hôtels)
+  const PAGES_OUVRABLES = ["client-admin", "inventaire", "backups", "sophos", "m365", "checklist", "capex", "completude"];
+  const ouvrirPourHotel = (p, hid) => {
+    if (!PAGES_OUVRABLES.includes(p)) return;
+    setPage(p);
+    window.scrollTo && window.scrollTo(0, 0);
+    if (!hid) return;
+    if (p === "inventaire") invChoisirHotel(hid);
+    else if (p === "checklist") ckChoisirHotel(hid);
+    else if (p === "sophos") { setSoHotelFiltre(hid); setSoTab("alertes"); }
+    else if (p === "client-admin") { const h = hotels.find(x => x.id === hid); if (h) openEditClientForm(h); }
+  };
+  useEffect(() => {
+    if (!pendingOuvrir || !isAdmin || !hotels.length) return;
+    const { page: p, hotel: hid } = pendingOuvrir;
+    setPendingOuvrir(null);
+    try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
+    ouvrirPourHotel(p, hid);
+  }, [pendingOuvrir, profile, hotels]);
 
   // Lien direct vers un ticket (?ticket=DSI-XXXX) : on va sur la page Tickets…
   useEffect(() => {
@@ -8231,7 +8259,7 @@ const nav = isAdmin
 
   // ---------- ADMIN : PROJETS (KANBAN) ----------
   // ================= PAGE : TABLEAU DE BORD HÔTELS (complétude / conformité) =================
-  if (page === "completude" && isAdmin) content = Page_completude({ hotels, isMobile, setPage, adminFromName });
+  if (page === "completude" && isAdmin) content = Page_completude({ hotels, isMobile, setPage, adminFromName, ouvrirPourHotel });
 
   if (page === "projets" && isAdmin) content = Page_projets({
     content, addTacheToForm, deleteProjet, dragOverCol, dragProjId, hotels, isMobile, loadProjets,
