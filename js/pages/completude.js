@@ -20,7 +20,7 @@ const CPL_OBJECTIF_CONF = 90;
 // la référence redevient automatiquement l'hôtel le plus renseigné.
 const CPL_REFERENCE_ID = "c1e4b815-e842-41fc-ab8b-e57d00d7705b";
 const CPL_CONF_MIN_POINTS = 30;
-const CPL_AV_NOMS = { sophos: "Sophos", crowdstrike: "CrowdStrike", sentinelone: "SentinelOne", watchguard: "WatchGuard", defender: "Microsoft Defender", autre: "Autre" };
+const CPL_AV_NOMS = { sophos: "Sophos", crowdstrike: "CrowdStrike", sentinelone: "SentinelOne", watchguard: "WatchGuard", defender: "Microsoft Defender", trendmicro: "Trend Micro", autre: "Autre" };
 
 function cplBande(p) {
   if (p == null) return { c: "#C9CED8", bg: "#EEF0F4", fg: "#5A6172", tier: "—" };

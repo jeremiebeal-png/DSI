@@ -532,6 +532,7 @@ function categorieAV(nom) {
   if (/sentinel/i.test(s)) return "sentinelone";
   if (/crowdstrike|falcon/i.test(s)) return "crowdstrike";
   if (/watchguard|panda|cytomic/i.test(s)) return "watchguard";
+  if (/trend ?micro/i.test(s)) return "trendmicro";
   if (/defender|windows security/i.test(s)) return "defender";
   return "autre";
 }
@@ -592,7 +593,8 @@ async function routeAntivirusPostes(env) {
   // 4) Un antivirus « retenu » par poste : actif de préférence, autre que Defender de préférence
   const parPoste = {};
   lignes.forEach(l => { (parPoste[l.deviceId] = parPoste[l.deviceId] || []).push(l); });
-  const actif = (l) => !l.productState || /^(ON|ENABLED|ACTIVE)$/i.test(String(l.productState));
+  // « NONE » = NinjaOne n'a trouvé aucun antivirus : jamais compté comme une protection
+  const actif = (l) => !/^\s*none\s*$/i.test(String(l.productName || "")) && (!l.productState || /^(ON|ENABLED|ACTIVE)$/i.test(String(l.productState)));
   const synthese = {};
   Object.keys(orgDuPoste).forEach(id => {
     const h = hotelDeOrg[orgDuPoste[id]];
