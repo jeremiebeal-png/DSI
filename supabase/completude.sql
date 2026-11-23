@@ -22,6 +22,7 @@ create table if not exists public.hotel_completude (
   maj_le timestamptz default now(),
   maj_par text
 );
+alter table public.hotel_completude add column if not exists serveurs_externes text;  -- ex. « Serveurs hébergés sur le réseau Hilton » (avec sans_serveur = true)
 alter table public.hotel_completude enable row level security;
 drop policy if exists hotel_completude_admin on public.hotel_completude;
 create policy hotel_completude_admin on public.hotel_completude for all
@@ -324,3 +325,6 @@ select cron.unschedule(jobid) from cron.job where jobname = 'score-photo-mensuel
 select cron.schedule('score-photo-mensuelle', '0 6 1 * *', 'select public.score_photo_mensuelle()');
 -- Première photo tout de suite (mois en cours)
 select public.score_photo_mensuelle();
+
+-- 23/11/2026 : domaine Projets retiré du tableau de bord (critères désactivés, pas supprimés)
+update public.score_criteres set actif = false where domaine = 'prj';
