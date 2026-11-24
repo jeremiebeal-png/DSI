@@ -235,6 +235,23 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
         e('div', { style: { fontSize: 12.5, color: "#5A6172", maxWidth: 640, lineHeight: 1.5 } }, mode === "comp"
           ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. Le trait noir sur chaque barre montre la moyenne de tous les hôtels."
           : "Ce score indique si ce qu'on surveille est en bon état : mises à jour, sauvegardes, antivirus, alertes… Le trait noir marque l'objectif de " + CPL_OBJECTIF_CONF + " %. « — » veut dire qu'on n'a pas encore assez d'informations sur l'hôtel pour le calculer.")),
+      e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2.2fr) minmax(280px, 1fr)", gap: 12, marginBottom: 14, alignItems: "stretch" } },
+        carte([
+          e('div', { key: "t", style: { fontSize: 14, fontWeight: 700, marginBottom: 8 } }, (mode === "comp" ? "Complétude" : "Conformité") + " par hôtel"),
+          e(CplCarte, { key: "c", liste: filtreSoc(liste), valeur: scoreDe, onHotel: ouvrirFiche })], { padding: 12 }),
+        carte([
+          e('div', { key: "t", style: { fontSize: 14, fontWeight: 700 } }, "Vue hôtel"),
+          e('div', { key: "s", style: { fontSize: 12.5, color: "#5A6172", margin: "4px 0 10px" } }, "Choisissez un hôtel pour ouvrir sa fiche, ou cliquez sur une pastille de la carte."),
+          e('label', { key: "l", style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, color: "#5A6172" } }, "Établissement",
+            e('select', { value: "", onChange: ev => { if (ev.target.value) ouvrirFiche(ev.target.value); }, style: { padding: "10px 10px", border: "1px solid #C9CED8", borderRadius: 8, fontSize: 14, background: "white", color: "#14171F" } },
+              e('option', { value: "" }, "— Choisir un hôtel —"),
+              [...liste].sort((a, b) => String(a.nom).localeCompare(String(b.nom))).map(x => e('option', { key: x.id, value: x.id }, x.nom + (mode === "comp" ? (x.comp != null ? " · " + x.comp + " %" : "") : (x.conf != null ? " · " + x.conf + " %" : "")))))),
+          e('div', { key: "r", style: { fontSize: 12.5, fontWeight: 700, color: "#2C3240", margin: "16px 0 6px" } }, "Les plus en retard"),
+          [...filtreSoc(liste)].filter(x => scoreDe(x) != null).sort((a, b) => scoreDe(a) - scoreDe(b)).slice(0, 5).map(x => {
+            const v = scoreDe(x), b = cplBande(v);
+            return e('button', { key: x.id, onClick: () => ouvrirFiche(x.id), style: { display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8, padding: "6px 0", border: "none", borderBottom: "1px solid #EEF0F4", background: "none", cursor: "pointer", fontSize: 13, color: "#14171F", textAlign: "left" } },
+              e('span', null, x.nom), e('span', { style: { padding: "2px 8px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: b.bg, color: b.fg } }, v + " %"));
+          })], { display: "flex", flexDirection: "column" })),
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
         tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", (moy == null ? "" : cplBande(moy).tier + " · ") + "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), moy),
         tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés", 70),
@@ -334,6 +351,71 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
 
   return e('div', null, onglets, bandeauImport,
     vue === "classement" ? vueClassement() : vue === "bareme" ? vueBareme() : vueFiche());
+}
+
+
+// ---------- Carte des hôtels (fond de carte clair, une pastille par hôtel colorée selon son score) ----------
+// Même géocodage que la carte des clients (Nominatim, cache navigateur « geoCache » partagé).
+function CplCarte({ liste, valeur, onHotel, hauteur }) {
+  const e = React.createElement;
+  const ref = React.useRef(null);
+  const carteRef = React.useRef(null);
+  const coucheRef = React.useRef(null);
+  const [etat, setEtat] = React.useState("");
+  React.useEffect(() => {
+    if (!ref.current || !window.L) { setEtat("Carte indisponible (librairie non chargée)."); return; }
+    const m = window.L.map(ref.current, { zoomControl: true, scrollWheelZoom: false, attributionControl: true }).setView([47.5, 4], 5);
+    window.L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { maxZoom: 18, subdomains: "abcd", attribution: "© OpenStreetMap © CARTO" }).addTo(m);
+    carteRef.current = m;
+    coucheRef.current = window.L.layerGroup().addTo(m);
+    return () => { try { m.remove(); } catch (x) {} carteRef.current = null; };
+  }, []);
+  // Ne redessine que si la liste ou les scores changent (pas à chaque rendu)
+  const cle = liste.map(x => x.id + ":" + valeur(x)).join("|");
+  const onHotelRef = React.useRef(onHotel); onHotelRef.current = onHotel;
+  React.useEffect(() => {
+    const m = carteRef.current, couche = coucheRef.current;
+    if (!m || !couche) return;
+    let annule = false;
+    couche.clearLayers();
+    let cache = {}; try { cache = JSON.parse(localStorage.getItem("geoCache") || "{}"); } catch (x) {}
+    const avecAdresse = liste.filter(x => x.hotel && (x.hotel.adresse_ville || x.hotel.adresse_rue || x.hotel.city));
+    const points = [];
+    (async () => {
+      let n = 0;
+      for (const x of avecAdresse) {
+        if (annule) return;
+        const h = x.hotel;
+        const q = [h.adresse_rue, h.adresse_cp, h.adresse_ville || h.city, h.adresse_pays || "France"].filter(Boolean).join(", ");
+        let ll = cache[q];
+        if (!ll) {
+          setEtat("Localisation des hôtels… " + n + " / " + avecAdresse.length);
+          try {
+            const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q));
+            const j = await r.json();
+            if (j && j[0]) { ll = [parseFloat(j[0].lat), parseFloat(j[0].lon)]; cache[q] = ll; try { localStorage.setItem("geoCache", JSON.stringify(cache)); } catch (y) {} }
+          } catch (y) {}
+          await new Promise(res => setTimeout(res, 1100)); // limite Nominatim : 1 requête / seconde
+        }
+        n++;
+        if (!ll || annule) continue;
+        const v = valeur(x);
+        const b = cplBande(v);
+        const pt = window.L.circleMarker(ll, { radius: 9, color: "#FFFFFF", weight: 2, fillColor: v == null ? "#9AA3B2" : b.c, fillOpacity: 0.95 })
+          .bindTooltip(x.nom + " — " + (v == null ? "—" : v + " %"), { direction: "top", offset: [0, -8], className: "htip" });
+        pt.on("click", () => onHotelRef.current(x.id));
+        pt.addTo(couche);
+        points.push(ll);
+      }
+      if (annule) return;
+      setEtat(points.length + " hôtel(s) sur la carte" + (points.length < liste.length ? " · " + (liste.length - points.length) + " sans adresse" : ""));
+      if (points.length) { try { m.fitBounds(points, { padding: [30, 30], maxZoom: 7 }); } catch (y) {} }
+    })();
+    return () => { annule = true; };
+  }, [cle]);
+  return e('div', { style: { position: "relative" } },
+    e('div', { ref, role: "img", "aria-label": "Carte des hôtels colorés selon leur score", style: { height: hauteur || 360, borderRadius: 10, background: "#E6E9EF" } }),
+    etat && e('div', { style: { position: "absolute", left: 10, bottom: 10, zIndex: 500, background: "rgba(255,255,255,.92)", borderRadius: 6, padding: "3px 8px", fontSize: 11.5, color: "#4A5060" } }, etat));
 }
 
 // ---------- Fiche d'un hôtel : toutes les informations + ce qu'il reste à faire ----------
