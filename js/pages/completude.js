@@ -436,6 +436,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const [det, setDet] = React.useState(null);   // détails chargés pour cet hôtel
   const [filtreM, setFiltreM] = React.useState("tous");   // filtre du tableau des machines
   const [voirTout, setVoirTout] = React.useState(false);
+  const [triM, setTriM] = React.useState({ col: "note", sens: 1 }); // tri du tableau des machines (sens 1 = croissant)
   const [lecture, setLecture] = React.useState("");       // relecture des machines NinjaOne
 
   React.useEffect(() => {
@@ -641,8 +642,28 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     ["win", "Windows à mettre à jour (" + actives.filter(winAFaire).length + ")"],
     ...(actives.some(m => m.log_attente != null) ? [["log", "Logiciels à mettre à jour (" + actives.filter(logAFaire).length + ")"]] : []),
     ["eol", "Fin de vie"], ["inactives", "Non vues depuis 8 j (" + inactives.length + ")"]];
+  // Valeur de tri de chaque colonne (valeurs manquantes toujours en dernier en ordre croissant)
+  const cleTri = (m, col) => {
+    if (col === "nom") return String(m.nom || "").toLowerCase();
+    if (col === "type") return m.type || "";
+    if (col === "ip") return m.ip ? m.ip.split(".").reduce((t, o) => t * 256 + (Number(o) || 0), 0) : Number.MAX_SAFE_INTEGER;
+    if (col === "os") return osCourt(m).toLowerCase();
+    if (col === "maj") return m.type === "Hôte" ? -1 : (m.maj_echec || 0) * 1000 + (m.log_echec || 0) * 1000 + (m.maj_attente || 0) * 10 + (m.log_attente || 0);
+    if (col === "vue") return m.dernier_contact ? -new Date(m.dernier_contact).getTime() : Number.MAX_SAFE_INTEGER;
+    if (col === "note") return m.note == null ? 999 : m.note;
+    if (col === "raisons") return (m.raisons || []).reduce((t, r) => t + (r.p || 0), 0);
+    return 0;
+  };
+  const enteteTri = (col, lbl, centre) => e('button', { onClick: () => setTriM(t => ({ col, sens: t.col === col ? -t.sens : (col === "maj" ? -1 : 1) })),
+      "aria-sort": triM.col === col ? (triM.sens === 1 ? "ascending" : "descending") : "none", title: "Trier par " + lbl.toLowerCase(),
+      style: { background: "none", border: "none", padding: 0, font: "inherit", color: triM.col === col ? "#14171F" : "inherit", textTransform: "inherit", letterSpacing: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, justifyContent: centre ? "center" : "flex-start", width: "100%" } },
+    lbl, e('span', { style: { fontSize: 10, opacity: triM.col === col ? 1 : 0.35 } }, triM.col === col ? (triM.sens === 1 ? "▲" : "▼") : "↕"));
   const filtrees = (filtreM === "inactives" ? inactives : actives).filter(m => filtreM === "tous" || filtreM === "inactives" ? true : filtreM === "serv" ? m.type !== "Poste" : filtreM === "postes" ? m.type === "Poste" : filtreM === "bas" ? (m.note || 0) < 70 : filtreM === "win" ? winAFaire(m) : filtreM === "log" ? logAFaire(m) : aRaison(m, filtreM))
-    .sort((a, b2) => (a.note == null ? 999 : a.note) - (b2.note == null ? 999 : b2.note) || String(a.nom).localeCompare(String(b2.nom)));
+    .sort((a, b2) => {
+      const va = cleTri(a, triM.col), vb = cleTri(b2, triM.col);
+      const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb), "fr", { numeric: true });
+      return c * triM.sens || String(a.nom).localeCompare(String(b2.nom), "fr", { numeric: true });
+    });
   const visibles = voirTout ? filtrees : filtrees.slice(0, 15);
   const colsM = "minmax(140px, 1.1fr) 70px 110px minmax(160px, 1.2fr) minmax(170px, 1.2fr) 90px 70px minmax(220px, 2fr)";
   const ongletM = (k, l) => e('button', { key: k, onClick: () => { setFiltreM(k); setVoirTout(false); }, style: { background: "none", border: "none", borderBottom: "3px solid " + (filtreM === k ? "#14171F" : "transparent"), padding: "8px 2px 9px", marginBottom: -1, fontSize: 13.5, fontWeight: filtreM === k ? 700 : 500, color: filtreM === k ? "#14171F" : "#5A6172", cursor: "pointer", whiteSpace: "nowrap" } }, l);
@@ -704,7 +725,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
       M.length === 0 ? e('div', { key: "z", style: { fontSize: 13, color: "#5A6172", padding: "12px 0" } }, "Aucune machine lue pour cet hôtel. Cliquez sur « Relire les machines NinjaOne » (vérifiez aussi le « Nom NinjaOne » de l'hôtel).") :
       e('div', { key: "t", style: { overflowX: "auto" } }, e('div', { style: { minWidth: 1160 } },
         e('div', { style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "10px 0", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em", borderBottom: "1px solid #E1E4EA" } },
-          e('div', null, "Machine"), e('div', null, "Type"), e('div', null, "IP"), e('div', null, "Système"), e('div', null, "Mises à jour"), e('div', null, "Vue"), e('div', { style: { textAlign: "center" } }, "Note"), e('div', null, "Raisons")),
+          e('div', null, enteteTri("nom", "Machine")), e('div', null, enteteTri("type", "Type")), e('div', null, enteteTri("ip", "IP")), e('div', null, enteteTri("os", "Système")),
+          e('div', null, enteteTri("maj", "Mises à jour")), e('div', null, enteteTri("vue", "Vue")), e('div', null, enteteTri("note", "Note", true)), e('div', null, enteteTri("raisons", "Raisons"))),
         visibles.map(m => { const b = cplBande(m.note);
           return e('div', { key: m.ninja_id, style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "9px 0", fontSize: 13, borderBottom: "1px solid #EEF0F4", alignItems: "start" } },
             e('div', { style: { fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" } }, m.nom),
