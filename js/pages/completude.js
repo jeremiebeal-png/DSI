@@ -449,8 +449,12 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     return () => { fini = true; };
   }, [x.id]);
   React.useEffect(() => {
-    sb.from("profiles").select("full_name,role").in("role", ["admin", "supervisor"]).then(({ data }) =>
-      setEquipe([...new Set((data || []).map(p => p.full_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"))));
+    // Techniciens DSI Hotel (comptes admin), comme pour l'assignation des tickets ; doublons de nom fusionnés
+    sb.rpc("liste_techniciens").then(({ data }) => {
+      const norm = (v) => String(v || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+      const vus = {}; (data || []).forEach(t => { const n = typeof nomTechDepuis === "function" ? nomTechDepuis(t) : (t.full_name || t.email || ""); if (n && n !== "?" && !vus[norm(n)]) vus[norm(n)] = n; });
+      setEquipe(Object.values(vus).sort((a, b) => a.localeCompare(b, "fr")));
+    });
   }, []);
   const enregistrerAction = async (code, champ, valeur) => {
     const avant = actions[code] || {};
@@ -636,7 +640,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     const a = actions[code] || {}, et = etatEcheance(a.echeance);
     const st = { padding: "4px 6px", border: "1px solid #D5D9E0", borderRadius: 6, fontSize: 12, background: "white", color: "#14171F" };
     return e('div', { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
-      e('select', { value: a.responsable || "", onChange: ev => enregistrerAction(code, "responsable", ev.target.value), "aria-label": "Responsable", style: { ...st, maxWidth: 150 } },
+      e('select', { value: a.responsable || "", onChange: ev => enregistrerAction(code, "responsable", ev.target.value), "aria-label": "Responsable (technicien DSI Hotel)", style: { ...st, width: 150 } },
         e('option', { value: "" }, "Responsable…"),
         [...new Set(equipe.concat(a.responsable ? [a.responsable] : []))].map(n => e('option', { key: n, value: n }, n))),
       e('input', { type: "date", value: a.echeance || "", onChange: ev => enregistrerAction(code, "echeance", ev.target.value), "aria-label": "Échéance", style: { ...st, width: 128 } }),
@@ -651,13 +655,13 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         ? "La complétude mesure si les informations de l'hôtel sont renseignées dans le portail. Chaque info rapporte des points (" + total + " au total pour cet hôtel). Voici ce qui manque, du plus rentable au moins rentable :"
         : "La conformité mesure si ce qu'on surveille est en bon état (sauvegardes, antivirus, mises à jour…). Objectif : " + CPL_OBJECTIF_CONF + " %. Voici ce qui fait perdre des points, du plus important au moins important :"),
       l.length === 0 ? e('div', { style: { fontSize: 13, color: "#2F855A", fontWeight: 600 } }, "Tout est fait ✓") :
-      l.map(r => e('div', { key: r.code, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "100px minmax(0, 1fr) 70px 310px auto", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid #EEF0F4", fontSize: 13 } },
+      l.map(r => e('div', { key: r.code, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "100px minmax(0, 1fr) 70px 330px 200px", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid #EEF0F4", fontSize: 13 } },
         e('span', { style: { fontSize: 11.5, fontWeight: 600, color: "#5A6172" } }, NOM_DOM[r.domaine] || r.domaine),
         e('span', null, r.libelle, r.detail && e('span', { style: { color: "#6B7280", fontSize: 12 } }, " · " + r.detail),
           e('div', { style: { fontSize: 11.5, color: "#8A90A0" } }, Math.round((r.ratio || 0) * 100) + " % fait · " + r.points + " pts possibles (" + (r.attribution || "") + ")")),
         e('span', { style: { fontWeight: 700, color: coul, whiteSpace: "nowrap" } }, "+" + r.gain + " pts"),
         champsAction(r.code),
-        e('span', { "data-noprint": "1" }, actionCritere(r)))));
+        e('span', { "data-noprint": "1", style: { display: "flex", justifyContent: "flex-end" } }, actionCritere(r)))));
   };
   const panneauMachines = () => {
     const parRaison = {};
