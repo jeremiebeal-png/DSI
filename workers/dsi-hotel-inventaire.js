@@ -13,6 +13,9 @@
  *   Enregistre le résultat (brut + propositions de lignes) dans la table
  *   inventaire_ninja_apercu. N'ÉCRIT RIEN dans inventaire_serveurs.
  *
+ * POST /machines : tous les ordinateurs (postes, serveurs, hôtes) de tous les hôtels, table « machines »
+ *   (note par machine du Tableau de bord hôtels).
+ *
  * POST /antivirus-postes : antivirus actif de tous les PC Windows (tous éditeurs), synthèse par hôtel
  *   (hotels.antivirus_detecte : produits, définitions à jour, menaces actives),
  *   via la fonction enregistrer_antivirus_detecte. Sert au Tableau de bord hôtels.
@@ -644,6 +647,109 @@ async function routeAntivirusPostes(env) {
 }
 /* ===================== FIN AJOUT : antivirus de tous les PC ===================== */
 
+/* ======================= AJOUT : toutes les machines (tableau de bord) ======================= */
+// POST /machines
+//   Lit dans NinjaOne TOUS les ordinateurs (postes, serveurs, hôtes VMware/Hyper-V) de toutes les organisations
+//   rattachées à un hôtel, avec : dernier contact, OS, mises à jour en attente / en échec / installées sur 30 j,
+//   antivirus (tous éditeurs) et état des définitions. Enregistre le tout dans la table « machines »
+//   (une ligne par machine NinjaOne) ; les machines qui n'existent plus dans NinjaOne sont retirées.
+//   Sert à la note par machine du Tableau de bord hôtels. ~20 sous-requêtes. Lecture seule côté NinjaOne.
+
+const CLASSES_MACHINES = ["WINDOWS_WORKSTATION", "WINDOWS_SERVER", "MAC", "MAC_SERVER", "LINUX_WORKSTATION", "LINUX_SERVER", "VMWARE_VM_HOST", "HYPERV_VMM_HOST"];
+
+async function routeMachines(env) {
+  const debut = new Date().toISOString();
+  const erreurs = [];
+  const essai = async (cle, fn) => { try { return await fn(); } catch (e) { erreurs.push(cle + " : " + String((e && e.message) || e).slice(0, 200)); return null; } };
+
+  // 1) Organisations NinjaOne <-> hôtels du portail
+  const orgs = await ninjaGet(env, "/v2/organizations?pageSize=1000");
+  const hotels = (await sbJson(env, "hotels?select=id,name,ninjaone_nom")) || [];
+  const hotelDeOrg = {};
+  (Array.isArray(orgs) ? orgs : []).forEach(o => {
+    const n = normNom(o.name);
+    const h = hotels.find(x => normNom(x.ninjaone_nom) === n) || hotels.find(x => normNom(x.name) === n);
+    if (h) hotelDeOrg[o.id] = h;
+  });
+
+  // 2) Tous les appareils (pagination par « after »)
+  const devices = [];
+  let after = 0, complet = false;
+  for (let i = 0; i < 8; i++) {
+    const p = await ninjaGet(env, `/v2/devices-detailed?pageSize=1000${after ? "&after=" + after : ""}`);
+    const arr = Array.isArray(p) ? p : (p.devices || []);
+    arr.forEach(d => { if (CLASSES_MACHINES.includes(String(d.nodeClass || "").toUpperCase()) && hotelDeOrg[d.organizationId]) devices.push(d); });
+    if (arr.length < 1000) { complet = true; break; }
+    after = arr[arr.length - 1].id;
+  }
+
+  // 3) Antivirus, mises à jour en attente / en échec, mises à jour installées depuis 30 jours
+  const il30j = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const av = (await essai("antivirus-status", () => ninjaRequeteToutes(env, `/v2/queries/antivirus-status?pageSize=1000`, 8))) || [];
+  const enAttente = (await essai("os-patches (approuvés)", () => ninjaRequeteToutes(env, `/v2/queries/os-patches?status=APPROVED&pageSize=1000`, 5))) || [];
+  const enEchec = (await essai("os-patches (échecs)", () => ninjaRequeteToutes(env, `/v2/queries/os-patches?status=FAILED&pageSize=1000`, 3))) || [];
+  const installes = await essai("os-patch-installs", () => ninjaRequeteToutes(env, `/v2/queries/os-patch-installs?status=INSTALLED&installedAfter=${il30j}&pageSize=1000`, 6));
+
+  const grouper = l => { const m = {}; l.forEach(x => { (m[x.deviceId] = m[x.deviceId] || []).push(x); }); return m; };
+  const avPar = grouper(av);
+  const utile = (p) => !/DRIVER|DEFINITION/i.test(String(p.type || ""));
+  const attPar = grouper(enAttente.filter(p => /PENDING|APPROVED|MANUAL/i.test(String(p.status || "")) && utile(p)));
+  const echPar = grouper(enEchec.filter(p => /FAIL/i.test(String(p.status || "")) && utile(p)));
+  const limite30 = Date.now() / 1000 - 30 * 86400;
+  const majRecente = new Set((installes || []).filter(x => { const t = Number(x.installedAt || x.timestamp || 0); return !t || (t > 1e12 ? t / 1000 : t) >= limite30; }).map(x => x.deviceId));
+  const actif = (l) => !/^\s*none\s*$/i.test(String(l.productName || "")) && (!l.productState || /^(ON|ENABLED|ACTIVE)$/i.test(String(l.productState)));
+
+  // 4) Lignes de la table machines
+  const lignes = devices.map(d => {
+    const cls = String(d.nodeClass || "").toUpperCase();
+    const os = d.os || {}, sys = d.system || {};
+    const type = /VM_HOST|VMM_HOST/.test(cls) ? "Hôte" : /SERVER/.test(cls) ? "Serveur" : "Poste";
+    const avs = avPar[d.id] || [];
+    const choix = avs.filter(actif).find(l => categorieAV(l.productName) !== "defender") || avs.find(actif) || null;
+    return {
+      ninja_id: d.id,
+      hotel_id: hotelDeOrg[d.organizationId].id,
+      nom: nomCourt(d.systemName || d.dnsName || d.displayName) || String(d.displayName || d.id),
+      classe: cls,
+      type,
+      ip: ipv4(d.ipAddresses)[0] || null,
+      os: os.name || (type === "Hôte" ? (/HYPERV/.test(cls) ? "Hyper-V" : "VMware ESXi") + (d.version ? " " + d.version : "") : null),
+      os_build: os.buildNumber ? String(os.buildNumber) : null,
+      os_release: os.releaseId ? String(os.releaseId) : null,
+      fabricant: sys.manufacturer || d.vendor || null,
+      modele: sys.model || d.model || null,
+      serie: (sys.serialNumber && !/^none$/i.test(sys.serialNumber) ? sys.serialNumber : null) || d.serviceTag || null,
+      dernier_contact: ninjaDate(d.lastContact || d.lastUpdate),
+      en_ligne: d.offline === false,
+      maj_attente: (attPar[d.id] || []).length,
+      maj_echec: (echPar[d.id] || []).length,
+      maj_30j: installes ? majRecente.has(d.id) : null,
+      av_nom: choix ? String(choix.productName || "").trim() || null : null,
+      av_actif: type === "Hôte" ? null : !!choix,
+      av_def_ok: choix && choix.definitionStatus ? /up.?to.?date|current/i.test(String(choix.definitionStatus)) : null,
+      maj_le: debut,
+    };
+  });
+
+  // 5) Enregistrement par lots de 500, puis retrait des machines disparues de NinjaOne
+  for (let i = 0; i < lignes.length; i += 500) {
+    await sbJson(env, "machines?on_conflict=ninja_id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(lignes.slice(i, i + 500)) });
+  }
+  if (complet && lignes.length > 0) {
+    await sbJson(env, `machines?maj_le=lt.${encodeURIComponent(debut)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(e => erreurs.push("retrait des machines disparues : " + e.message));
+  }
+  const parHotel = {};
+  lignes.forEach(l => { parHotel[l.hotel_id] = (parHotel[l.hotel_id] || 0) + 1; });
+  return {
+    status: 200,
+    body: {
+      success: true, machines: lignes.length, hotels: Object.keys(parHotel).length, lecture_complete: complet, erreurs,
+      organisations_sans_hotel: (Array.isArray(orgs) ? orgs : []).filter(o => !hotelDeOrg[o.id]).map(o => o.name),
+    },
+  };
+}
+/* ===================== FIN AJOUT : toutes les machines ===================== */
+
 /* --------------------------------- Entrée --------------------------------- */
 
 export default {
@@ -662,6 +768,7 @@ export default {
       if (url.pathname === "/apercu") { const r = await routeApercu(env, body, auth.user); return json(r.body, env, r.status); }
       if (url.pathname === "/importer") { const r = await routeImporter(env, body, auth.user); return json(r.body, env, r.status); }
       if (url.pathname === "/antivirus-postes") { const r = await routeAntivirusPostes(env); return json(r.body, env, r.status); }
+      if (url.pathname === "/machines") { const r = await routeMachines(env); return json(r.body, env, r.status); }
       return json({ error: "Route inconnue" }, env, 404);
     } catch (e) {
       return json({ error: String((e && e.message) || e) }, env, (e && e.status) || 502);

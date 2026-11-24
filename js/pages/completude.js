@@ -127,6 +127,8 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
       r.fait++;
       setImp({ ...r });
     }
+    // Puis lecture de toutes les machines (postes compris) pour la note par machine
+    try { await fetch(INVENTAIRE_API_URL + "/machines", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: "{}" }); } catch (x) { r.erreurs.push("Lecture des machines : " + ((x && x.message) || x)); }
     r.fini = true; setImp({ ...r });
     charger();
   };
@@ -164,8 +166,11 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
         aCorriger: h.lignes.filter(l => l.score === "conf" && l.ratio != null && l.ratio < 1).length,
       };
     });
-    const ref = liste.find(x => x.id === CPL_REFERENCE_ID && x.comp != null)
-      || liste.filter(x => x.comp != null).sort((a, b) => b.comp - a.comp)[0] || null;
+    // Référence = moyenne de tous les hôtels suivis (plus d'hôtel modèle depuis le 24/11/2026)
+    const moyDe = (f) => { const v = liste.map(f).filter(n => n != null); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null; };
+    const domMoy = {};
+    CPL_DOMAINES.comp.forEach(([k]) => { domMoy[k] = moyDe(x => x.domC[k]); });
+    const ref = { id: "__moyenne__", nom: "la moyenne de tous les hôtels", comp: moyDe(x => x.comp), domC: domMoy };
     return { liste, ref };
   }, [data, hotels]);
 
@@ -181,7 +186,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
 
   const onglets = e('div', { style: { display: "flex", gap: isMobile ? 18 : 32, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 18, borderBottom: "1px solid #E1E4EA" } },
     onglet("Classement", vue === "classement", () => setVue("classement")),
-    onglet("Fiche hôtel", vue === "fiche", () => { if (!hotelId && calc && calc.ref) setHotelId(calc.ref.id); setVue("fiche"); }),
+    onglet("Fiche hôtel", vue === "fiche", () => { if (!hotelId && calc && calc.liste.length) setHotelId([...calc.liste].sort((a, b) => (b.comp || 0) - (a.comp || 0))[0].id); setVue("fiche"); }),
     onglet("Tournées", vue === "tournees", () => setVue("tournees")),
     onglet("Barème", vue === "bareme", () => setVue("bareme")),
     e('button', { onClick: importerTout, disabled: !!(imp && !imp.fini), title: "Remplit l'inventaire serveurs de tous les hôtels depuis NinjaOne", style: { marginLeft: "auto", marginBottom: 8, padding: "8px 14px", borderRadius: 8, border: "1px solid #1E4FA8", background: "white", color: "#1E4FA8", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
@@ -227,7 +232,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
       e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } },
         bascule(),
         e('div', { style: { fontSize: 12.5, color: "#5A6172", maxWidth: 640, lineHeight: 1.5 } }, mode === "comp"
-          ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. " + (ref ? ref.nom + " sert de modèle : le trait noir sur chaque barre montre son niveau." : "")
+          ? "Ce score indique si tout ce qu'on doit savoir sur l'hôtel est bien rempli dans le portail. Le trait noir sur chaque barre montre la moyenne de tous les hôtels."
           : "Ce score indique si ce qu'on surveille est en bon état : mises à jour, sauvegardes, antivirus, alertes… Le trait noir marque l'objectif de " + CPL_OBJECTIF_CONF + " %. « — » veut dire qu'on n'a pas encore assez d'informations sur l'hôtel pour le calculer.")),
       e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 14 } },
         tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", (moy == null ? "" : cplBande(moy).tier + " · ") + "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), moy),
@@ -247,8 +252,8 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
       carte(e('div', { style: { overflowX: "auto" } },
         e('div', { style: { minWidth: isMobile ? 0 : 980 } },
           !isMobile && e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "4px 0 10px", borderBottom: "1px solid #E1E4EA", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em" } },
-            e('div', null, "#"), e('div', null, "Établissement"), e('div', null, (mode === "comp" ? "Complétude" : "Conformité") + " · trait = " + (mode === "comp" ? "référence" : "objectif")),
-            e('div', { style: { textAlign: "right" } }, "Score"), e('div', { style: { textAlign: "right" } }, "Écart"),
+            e('div', null, "#"), e('div', null, "Établissement"), e('div', null, (mode === "comp" ? "Complétude" : "Conformité") + " · trait = " + (mode === "comp" ? "moyenne des hôtels" : "objectif 90 %")),
+            e('div', { style: { textAlign: "right" } }, "Score"), e('div', { style: { textAlign: "right" } }, mode === "comp" ? "Écart / moy." : "Écart / obj."),
             e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Conformité" : "Complétude"),
             e('div', { style: { display: "flex", gap: 4 } }, domaines.map(([k, l]) => e('div', { key: k, title: l, style: { width: CPL_CASE, textAlign: "center", fontSize: 10.5, letterSpacing: 0 } }, CPL_COURT[k] || l)))),
           tri.map((x, i) => {
@@ -340,7 +345,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
 
   // =================== VUE : FICHE HÔTEL ===================
   const vueFiche = () => {
-    const x = liste.find(y => y.id === hotelId) || ref;
+    const x = liste.find(y => y.id === hotelId) || [...liste].sort((a, b) => (b.comp || 0) - (a.comp || 0))[0];
     if (!x) return e('div', null, "Aucun hôtel.");
     return e(CompletudeFiche, { key: x.id, x, ref, liste, data, hotels, isMobile, setPage: (pg) => ouvrir(pg, x.id), adminFromName, onChange: charger, onHotel: id => setHotelId(id), carte, pastille });
   };
@@ -357,20 +362,45 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const [saisie, setSaisie] = React.useState(saisie0);
   const [enreg, setEnreg] = React.useState("");
   const [det, setDet] = React.useState(null);   // détails chargés pour cet hôtel
+  const [filtreM, setFiltreM] = React.useState("tous");   // filtre du tableau des machines
+  const [voirTout, setVoirTout] = React.useState(false);
+  const [lecture, setLecture] = React.useState("");       // relecture des machines NinjaOne
 
   React.useEffect(() => {
     let fini = false;
     (async () => {
-      const [inv, jobs, ck, m365] = await Promise.all([
+      const [inv, jobs, ck, m365, mach, jours, soph, m365s, machMaj] = await Promise.all([
         sb.from("inventaire_serveurs").select("id,parent_id,ordre,nom,type,role,os,version,ip,a_jour,derniere_maj,antivirus,antivirus_nom,care_pack,care_pack_fin,licence_fin").eq("hotel_id", x.id).order("ordre"),
         sb.from("veeam_jobs").select("id,nom,libelle,actif,dernier_statut,dernier_run_at,planifie,planif_desc,serveur").eq("hotel_id", x.id).order("nom"),
         sb.from("checklist_points").select("statut,date_controle").eq("hotel_id", x.id).range(0, 999),
         sb.from("m365_tenant_hotels").select("tenant_id,domaines").eq("hotel_id", x.id),
+        sb.rpc("machines_notes", { p_hotel: x.id }).range(0, 1999),
+        sb.from("score_jour").select("jour,completude,conformite,machines").eq("hotel_id", x.id).order("jour", { ascending: false }).limit(15),
+        sb.from("sophos_comptes").select("dernier_controle").eq("hotel_id", x.id),
+        sb.from("m365_tenants").select("derniere_synchro").eq("hotel_id", x.id),
+        sb.from("machines").select("maj_le").eq("hotel_id", x.id).order("maj_le", { ascending: false }).limit(1),
       ]);
-      if (!fini) setDet({ inv: inv.data || [], jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [] });
+      if (!fini) setDet({ inv: inv.data || [], jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [],
+        machines: mach.data || [], machErr: mach.error ? mach.error.message : "", jours: jours.data || [],
+        sophos: (soph.data || []).map(r => r.dernier_controle).filter(Boolean).sort().pop() || null,
+        m365sync: (m365s.data || []).map(r => r.derniere_synchro).filter(Boolean).sort().pop() || null,
+        machMaj: ((machMaj.data || [])[0] || {}).maj_le || null });
     })();
     return () => { fini = true; };
-  }, [x.id]);
+  }, [x.id, lecture === "✅"]);
+
+  // Relit toutes les machines de tous les hôtels dans NinjaOne (Worker dsi-hotel-inventaire, route /machines)
+  const relireMachines = async () => {
+    setLecture("…");
+    try {
+      const { data: sd } = await sb.auth.getSession();
+      const res = await fetch(INVENTAIRE_API_URL + "/machines", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + ((sd.session && sd.session.access_token) || "") }, body: "{}" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setLecture("❌ " + (d.error || "erreur " + res.status)); return; }
+      setLecture("✅");
+      onChange();
+    } catch (err) { setLecture("❌ " + ((err && err.message) || err)); }
+  };
 
   const enregistrer = async () => {
     setEnreg("…");
@@ -440,6 +470,151 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     .map(l => ({ ...l, gain: Math.round(l.points * (1 - l.ratio) * 10) / 10 })).sort((a, b) => b.gain - a.gain);
   const resteC = restes("comp"), resteF = restes("conf");
 
+
+  // =================== Fiche v2 : note par machine (inspirée du tableau de bord Hilton) ===================
+  const jour0 = new Date().toISOString().slice(0, 10);
+  const ilYa = (d) => { if (!d) return null; const j = Math.floor((Date.now() - new Date(d).getTime()) / 86400000); return j <= 0 ? "aujourd'hui" : j === 1 ? "hier" : "il y a " + j + " j"; };
+  const fraicheur = (d, joursMax) => !d ? "#C4532D" : (Date.now() - new Date(d).getTime()) / 86400000 > joursMax ? "#E0A030" : "#1E4FA8";
+  const dateHeure = (d) => d ? new Date(d).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "jamais";
+  const M = det ? det.machines : [];
+  const actives = M.filter(m => m.active), inactives = M.filter(m => !m.active);
+  const avNonGere = !!saisie0.av_non_gere;
+  const moyM = actives.length ? Math.round(actives.reduce((t, m) => t + (m.note || 0), 0) / actives.length) : null;
+  const aRaison = (m, k) => (m.raisons || []).some(r => r.k === k);
+  // Tendance : écart avec la photo d'il y a 7 jours (ou la plus ancienne disponible)
+  const photos = det ? [...det.jours].reverse() : [];
+  const tendance = (champ, actuel) => {
+    if (actuel == null || !photos.length) return null;
+    const vieilles = photos.filter(p => p.jour <= new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
+    const base = vieilles.length ? vieilles[vieilles.length - 1] : (photos[0].jour < jour0 ? photos[0] : null);
+    if (!base || base[champ] == null) return { txt: "nouveau", c: "#5A6172", info: "tendance disponible dans 7 jours" };
+    const d = actuel - base[champ];
+    return { txt: (d > 0 ? "↗ +" : d < 0 ? "↘ " : "→ ") + d, c: d > 0 ? "#1E4FA8" : d < 0 ? "#8A5A00" : "#5A6172", info: "depuis le " + new Date(base.jour).toLocaleDateString("fr-FR") };
+  };
+  const courbe = (champ, couleur) => {
+    const pts = photos.map(p => p[champ]).filter(v => v != null);
+    if (pts.length < 2) return null;
+    const w = 300, hh = 34, pas = w / (pts.length - 1);
+    return e('svg', { width: "100%", height: 34, viewBox: "0 0 300 34", preserveAspectRatio: "none", "aria-hidden": "true" },
+      e('polyline', { points: pts.map((v, i) => (i * pas).toFixed(0) + "," + (hh - 3 - (v / 100) * (hh - 6)).toFixed(1)).join(" "), fill: "none", stroke: couleur, strokeWidth: 2.5 }));
+  };
+  const carteScore = (lbl, v, suffixe, champ, sous) => {
+    const t = tendance(champ, v), b = cplBande(v);
+    return carte([
+      e('div', { key: "l", style: { fontSize: 13, color: "#5A6172", display: "flex", gap: 8, alignItems: "center" } }, v != null && e('span', { style: { width: 10, height: 10, borderRadius: 3, background: b.c } }), lbl),
+      e('div', { key: "v", style: { display: "flex", alignItems: "baseline", gap: 10, margin: "4px 0" } },
+        e('span', { style: { fontSize: 32, fontWeight: 700, color: cplTexte(v) } }, v == null ? "—" : v + suffixe),
+        t && e('span', { style: { fontSize: 15, fontWeight: 700, color: t.c } }, t.txt),
+        t && e('span', { style: { fontSize: 12, color: "#5A6172" } }, t.info)),
+      e('div', { key: "c" }, courbe(champ, b.c)),
+      e('div', { key: "s", style: { fontSize: 12.5, color: "#4A5060" } }, sous)]);
+  };
+  const pct = (n, d) => d ? Math.round(100 * n / d) : null;
+  const nonHotes = actives.filter(m => m.type !== "Hôte");
+  const nbAv = nonHotes.filter(m => !aRaison(m, "av")).length, nbMaj = nonHotes.filter(m => !aRaison(m, "maj")).length;
+  const jobsOk = det ? det.jobs.filter(j => j.dernier_statut === "Success").length : 0, jobsN = det ? det.jobs.length : 0;
+  const tuileAgent = (cle, lbl, p, sous, lien, page) => {
+    const b = cplBande(p), fonce = p != null && (p >= 85 || p < 50);
+    return e('div', { key: cle, style: { display: "flex", flexDirection: "column", background: p == null ? "#EEF0F4" : b.c, color: p == null ? "#5A6172" : fonce ? "#FFFFFF" : "#14171F" } },
+      e('button', { onClick: () => { if (cle === "bkp") setPage(page); else { setFiltreM(cle); setVoirTout(true); } }, title: cle === "bkp" ? "Ouvrir " + lien : "Afficher les machines concernées",
+        style: { border: "none", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", padding: "14px 10px 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } },
+        e('span', { style: { fontSize: 13, fontWeight: 600 } }, lbl),
+        e('span', { style: { fontSize: 38, fontWeight: 700, lineHeight: 1.1 } }, p == null ? "—" : p + " %"),
+        e('span', { style: { fontSize: 12 } }, sous)),
+      e('button', { onClick: () => setPage(page), style: { border: "none", background: "transparent", color: "inherit", font: "inherit", fontSize: 12, textDecoration: "underline", cursor: "pointer", padding: "0 10px 10px" } }, "Ouvrir " + lien + " →"));
+  };
+  // Problèmes les plus fréquents
+  const LIB = { av: "Antivirus absent ou arrêté", def: "Définitions antivirus pas à jour", eol: "Système en fin de vie (ou bientôt)", maj: "Mises à jour en retard", gar: "Care Pack expiré", hl: "Hors ligne depuis 3 jours ou plus" };
+  const freq = Object.keys(LIB).map(k => ({ k, l: LIB[k], n: actives.filter(m => aRaison(m, k)).length })).filter(f => f.n > 0).sort((a, b2) => b2.n - a.n);
+  // Systèmes
+  const osCourt = (m) => (m.os || "Inconnu").replace(/^Microsoft\s+/i, "").replace(/\s+(Standard|Datacenter|Edition)\b.*$/i, "") + (m.os_release && /windows 1[01]/i.test(m.os || "") ? " " + m.os_release : "");
+  const parOs = {};
+  actives.forEach(m => { const k = osCourt(m); parOs[k] = parOs[k] || { n: 0, fdv: m.fin_de_vie }; parOs[k].n++; });
+  const listeOs = Object.entries(parOs).sort((a, b2) => b2[1].n - a[1].n);
+  const maxOs = listeOs.length ? listeOs[0][1].n : 1;
+  const finVie = actives.filter(m => m.fin_de_vie && m.fin_de_vie < new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10)).sort((a, b2) => String(a.fin_de_vie).localeCompare(String(b2.fin_de_vie)));
+  // Tableau des machines
+  const FILTRES = [["tous", "Toutes (" + actives.length + ")"], ["serv", "Serveurs (" + actives.filter(m => m.type !== "Poste").length + ")"], ["postes", "Postes (" + actives.filter(m => m.type === "Poste").length + ")"],
+    ["bas", "Note sous 70"], ["av", "Sans antivirus"], ["maj", "Mises à jour en retard"], ["eol", "Fin de vie"], ["inactives", "Non vues depuis 8 j (" + inactives.length + ")"]];
+  const filtrees = (filtreM === "inactives" ? inactives : actives).filter(m => filtreM === "tous" || filtreM === "inactives" ? true : filtreM === "serv" ? m.type !== "Poste" : filtreM === "postes" ? m.type === "Poste" : filtreM === "bas" ? (m.note || 0) < 70 : aRaison(m, filtreM))
+    .sort((a, b2) => (a.note == null ? 999 : a.note) - (b2.note == null ? 999 : b2.note) || String(a.nom).localeCompare(String(b2.nom)));
+  const visibles = voirTout ? filtrees : filtrees.slice(0, 15);
+  const colsM = "minmax(140px, 1.1fr) 70px 110px minmax(160px, 1.2fr) 90px 70px minmax(220px, 2fr)";
+  const ongletM = (k, l) => e('button', { key: k, onClick: () => { setFiltreM(k); setVoirTout(false); }, style: { background: "none", border: "none", borderBottom: "3px solid " + (filtreM === k ? "#14171F" : "transparent"), padding: "8px 2px 9px", marginBottom: -1, fontSize: 13.5, fontWeight: filtreM === k ? 700 : 500, color: filtreM === k ? "#14171F" : "#5A6172", cursor: "pointer", whiteSpace: "nowrap" } }, l);
+
+  const blocMachines = () => [
+    // Trois scores avec tendance
+    e('div', { key: "scores", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 14 } },
+      carteScore("Note moyenne des machines", moyM, " / 100", "machines", actives.length ? actives.length + " machines actives" + (inactives.length ? " · " + inactives.length + " hors calcul (non vues depuis 8 j)" : "") : "Machines pas encore lues dans NinjaOne"),
+      carteScore("Complétude des infos", x.comp, " %", "completude", (ref && ref.comp != null && x.comp != null ? ((x.comp - ref.comp >= 0 ? "+" : "") + (x.comp - ref.comp) + " pts / moyenne des hôtels (" + ref.comp + " %) · ") : "") + resteC.length + " info(s) à compléter"),
+      carteScore("Conformité", x.conf, " %", "conformite", x.conf == null ? "Pas assez d'informations pour mesurer" : "Objectif " + CPL_OBJECTIF_CONF + " % · " + resteF.length + " point(s) à corriger")),
+    // Sources + règles
+    e('div', { key: "sources", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1.2fr) minmax(0, 1fr)", gap: 14 } },
+      carte([titre("Dernières mises à jour des données", e('button', { onClick: relireMachines, disabled: lecture === "…", style: { padding: "6px 12px", borderRadius: 8, border: "1px solid #1E4FA8", background: "white", color: "#1E4FA8", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, lecture === "…" ? "Lecture NinjaOne…" : "⇣ Relire les machines NinjaOne")),
+        lecture && lecture !== "…" && lecture !== "✅" && e('div', { key: "err", style: { fontSize: 12.5, color: "#A8401F", marginBottom: 6 } }, lecture),
+        [["Machines NinjaOne (postes, serveurs, hôtes)", det && det.machMaj, 2], ["Détection antivirus (NinjaOne)", ad && ad.le, 7],
+         ["Rapports Veeam", det && det.jobs.map(j => j.dernier_run_at).filter(Boolean).sort().pop(), 2],
+         ["Sophos Central", (avPrevu === "sophos" || (det && det.sophos)) ? (det && det.sophos) : "—", 2],
+         ["Microsoft 365", saisie0.m365_non_gere ? "—" : (det && det.m365sync), 2]].map(([l, d, max]) =>
+          e('div', { key: l, style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "4px 0" } },
+            e('span', { style: { display: "flex", gap: 8, alignItems: "center" } }, e('span', { style: { width: 9, height: 9, borderRadius: "50%", background: d === "—" ? "#C9CED8" : fraicheur(d, max) } }), l),
+            e('span', { style: { color: d === "—" ? "#999" : fraicheur(d, max) === "#1E4FA8" ? "#14171F" : "#8A5A00", fontVariantNumeric: "tabular-nums" } }, d === "—" ? "sans objet" : d ? dateHeure(d) + " · " + ilYa(d) : "jamais lu")))]),
+      carte([titre("Règles de calcul"),
+        e('div', { key: "r", style: { fontSize: 13, color: "#2C3240", lineHeight: 1.6 } },
+          e('div', null, "1. Seules les machines vues par NinjaOne dans les ", e('b', null, "8 derniers jours"), " comptent ; les autres sont listées à part."),
+          e('div', null, "2. Chaque machine part de ", e('b', null, "100"), " et perd des points pour chaque problème (colonne « Raisons »)."),
+          e('div', null, "3. Un clic sur une tuile de couleur affiche les machines concernées ; le lien dessous ouvre la page du portail."))])),
+    // Tuiles par agent
+    e('div', { key: "agents", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 2, borderRadius: 12, overflow: "hidden" } },
+      tuileAgent("tous", "Vues par NinjaOne (8 j)", pct(actives.length, M.length), actives.length + " / " + M.length + " machines", "Inventaire serveurs", "inventaire"),
+      tuileAgent("av", "Antivirus actif", avNonGere ? null : pct(nbAv, nonHotes.length), avNonGere ? "géré par la chaîne" : nbAv + " / " + nonHotes.length + " · voir les " + (nonHotes.length - nbAv), "Sécurité Anti Virus", "sophos"),
+      tuileAgent("maj", "Mises à jour à jour", pct(nbMaj, nonHotes.length), nbMaj + " / " + nonHotes.length + " · voir les " + (nonHotes.length - nbMaj), "Inventaire serveurs", "inventaire"),
+      tuileAgent("bkp", "Sauvegardes OK", pct(jobsOk, jobsN), jobsN ? jobsOk + " / " + jobsN + " jobs Veeam" : "aucun job Veeam", "Sauvegardes", "backups")),
+    // Fin de vie, systèmes, problèmes
+    e('div', { key: "trois", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 14, alignItems: "start" } },
+      carte([titre("Systèmes en fin de vie (ou dans moins de 3 mois)"),
+        finVie.length === 0 ? e('div', { key: "v", style: { fontSize: 13, color: "#5A6172" } }, "Aucun.") :
+        finVie.map(m => e('div', { key: m.ninja_id, style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: "1px solid #EEF0F4" } },
+          e('span', null, e('b', null, m.nom), e('span', { style: { color: "#5A6172", fontSize: 12 } }, " · " + osCourt(m))),
+          e('span', { style: { fontWeight: 600, whiteSpace: "nowrap", color: m.fin_de_vie < jour0 ? "#A8401F" : "#8A5A00" } }, (m.fin_de_vie < jour0 ? "fini le " : "fin le ") + new Date(m.fin_de_vie).toLocaleDateString("fr-FR"))))]),
+      carte([titre("Machines par système"),
+        listeOs.length === 0 ? e('div', { key: "v", style: { fontSize: 13, color: "#5A6172" } }, "—") :
+        listeOs.map(([l, o]) => { const fin = o.fdv && o.fdv < new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+          return e('div', { key: l, style: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 80px 28px", gap: 8, alignItems: "center", fontSize: 13, padding: "3px 0" } },
+            e('span', null, l + (fin ? "  ⚠" : "")),
+            e('span', { style: { height: 8, background: "#EEF0F4", borderRadius: 4, position: "relative" } }, e('span', { style: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 4, width: Math.round(100 * o.n / maxOs) + "%", background: fin ? "#C4532D" : "#5B8DEF" } })),
+            e('span', { style: { textAlign: "right" } }, o.n)); })]),
+      carte([titre("Problèmes les plus fréquents"),
+        freq.length === 0 ? e('div', { key: "v", style: { fontSize: 13, color: "#5A6172" } }, actives.length ? "Aucun problème détecté." : "—") :
+        freq.map(f => e('button', { key: f.k, onClick: () => { setFiltreM(f.k); setVoirTout(true); }, style: { display: "flex", justifyContent: "space-between", width: "100%", gap: 10, fontSize: 13, padding: "6px 0", border: "none", borderBottom: "1px solid #EEF0F4", background: "none", cursor: "pointer", textAlign: "left", color: "#14171F" } },
+          e('span', null, f.l), e('b', { style: { color: "#A8401F" } }, f.n))),
+        inactives.length > 0 && e('div', { key: "ina", style: { fontSize: 12, color: "#5A6172", marginTop: 8 } }, inactives.length + " machine(s) non vue(s) depuis plus de 8 jours : hors calcul")])),
+    // Tableau des machines
+    carte([
+      e('div', { key: "o", style: { display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end", borderBottom: "1px solid #E1E4EA" } },
+        e('span', { style: { fontSize: 15, fontWeight: 700, padding: "8px 0 9px", marginRight: 6 } }, "Toutes les machines"),
+        FILTRES.map(([k, l]) => ongletM(k, l))),
+      det && det.machErr ? e('div', { key: "e", style: { fontSize: 13, color: "#A8401F", padding: "12px 0" } }, "Note par machine indisponible : " + det.machErr) :
+      !det ? e('div', { key: "c", style: { fontSize: 13, color: "#888", padding: "12px 0" } }, "Chargement…") :
+      M.length === 0 ? e('div', { key: "z", style: { fontSize: 13, color: "#5A6172", padding: "12px 0" } }, "Aucune machine lue pour cet hôtel. Cliquez sur « Relire les machines NinjaOne » (vérifiez aussi le « Nom NinjaOne » de l'hôtel).") :
+      e('div', { key: "t", style: { overflowX: "auto" } }, e('div', { style: { minWidth: 980 } },
+        e('div', { style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "10px 0", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em", borderBottom: "1px solid #E1E4EA" } },
+          e('div', null, "Machine"), e('div', null, "Type"), e('div', null, "IP"), e('div', null, "Système"), e('div', null, "Vue"), e('div', { style: { textAlign: "center" } }, "Note"), e('div', null, "Raisons")),
+        visibles.map(m => { const b = cplBande(m.note);
+          return e('div', { key: m.ninja_id, style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "9px 0", fontSize: 13, borderBottom: "1px solid #EEF0F4", alignItems: "start" } },
+            e('div', { style: { fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" } }, m.nom),
+            e('div', null, m.type),
+            e('div', { style: { color: "#4A5060", fontVariantNumeric: "tabular-nums" } }, m.ip || "—"),
+            e('div', null, osCourt(m), m.av_nom && e('div', { style: { fontSize: 11.5, color: "#5A6172" } }, m.av_nom)),
+            e('div', { style: { color: m.jours >= 3 ? "#8A5A00" : "#14171F" } }, ilYa(m.dernier_contact) || "—"),
+            e('div', { style: { display: "flex", justifyContent: "center" } }, e('span', { style: { minWidth: 40, textAlign: "center", padding: "3px 8px", borderRadius: 999, fontWeight: 700, background: b.bg, color: b.fg } }, m.note == null ? "—" : m.note)),
+            e('div', { style: { display: "flex", flexDirection: "column", gap: 2 } }, (m.raisons || []).length === 0 ? e('span', { style: { color: "#5A6172" } }, "Rien à signaler") :
+              m.raisons.map((r, i) => e('span', { key: i }, r.t, " ", e('b', { style: { color: "#A8401F" } }, "(" + r.p + ")")))));
+        }),
+        filtrees.length > visibles.length && e('button', { onClick: () => setVoirTout(true), style: { marginTop: 10, border: "none", background: "none", color: "#1E4FA8", fontSize: 13, cursor: "pointer", padding: 0 } }, "Afficher les " + (filtrees.length - visibles.length) + " autres machines"),
+        filtrees.length === 0 && e('div', { style: { fontSize: 13, color: "#5A6172", padding: "12px 0" } }, "Aucune machine dans ce filtre.")))]),
+  ];
+
   const champ = (lbl, cle, aide) => e('label', { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, color: "#5A6172" } }, lbl,
     e('input', { value: saisie[cle] || "", onChange: ev => setSaisie({ ...saisie, [cle]: ev.target.value }), placeholder: aide, style: { padding: "8px 10px", border: "1px solid #D5D9E0", borderRadius: 7, fontSize: 13.5, color: "#14171F" } }));
   const triEtat = (lbl, cle, oui, non) => e('label', { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, color: "#5A6172" } }, lbl,
@@ -457,22 +632,10 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
           h.groupe_hotelier && e('span', { style: { fontSize: 12, padding: "2px 9px", borderRadius: 999, background: "#E6E9EF" } }, h.groupe_hotelier),
           e('span', { style: { fontSize: 12, padding: "2px 9px", borderRadius: 999, background: "#E6E9EF" } }, "NinjaOne : " + (h.ninjaone_nom || "—")),
           cplBadgeSoc(e, h.soc, true),
-          ref && ref.id === x.id && e('span', { style: { fontSize: 12, padding: "2px 9px", borderRadius: 999, background: "#1E4FA8", color: "white", fontWeight: 600 } }, "★ Hôtel de référence"))),
+          )),
       e('select', { value: x.id, onChange: ev => onHotel(ev.target.value), "aria-label": "Établissement", style: { padding: "9px 10px", border: "1px solid #D5D9E0", borderRadius: 8, fontSize: 13.5, fontWeight: 600, minWidth: 260, background: "white" } },
         [...liste].sort((a, b) => String(a.nom).localeCompare(String(b.nom))).map(y => e('option', { key: y.id, value: y.id }, y.nom)))),
-    // Deux scores
-    e('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 } },
-      anneau(x.comp, ref ? ref.comp : null, "Complétude des informations",
-        ref && ref.id === x.id ? "Hôtel modèle : il sert de référence aux autres." : ecartRef == null ? "" : (ecartRef >= 0 ? "+" : "") + ecartRef + " pts par rapport à " + (ref ? ref.nom + " (" + ref.comp + " %)" : "la référence") + " · " + resteC.length + " info(s) à compléter"),
-      anneau(x.conf, CPL_OBJECTIF_CONF, "Conformité",
-        x.conf == null ? "Pas assez d'informations pour mesurer (" + x.confPoints + " pts mesurables sur 100). Renseigner d'abord l'hôtel." : (x.conf - CPL_OBJECTIF_CONF >= 0 ? "Objectif de " + CPL_OBJECTIF_CONF + " % atteint." : (x.conf - CPL_OBJECTIF_CONF) + " pts par rapport à l'objectif de " + CPL_OBJECTIF_CONF + " %") + " · mesurée sur " + x.confPoints + " pts")),
-    histo.length > 0 && carte([titre("Évolution (photo du 1er de chaque mois)"),
-      e('div', { key: "h", style: { display: "flex", gap: 14, alignItems: "flex-end" } }, histo.map(r => e('div', { key: r.mois, style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1, maxWidth: 110 } },
-        e('div', { style: { fontSize: 12, fontWeight: 600 } }, (r.completude == null ? "—" : r.completude + " %") + " · " + (r.conformite == null ? "—" : r.conformite + " %")),
-        e('div', { style: { display: "flex", gap: 3, alignItems: "flex-end", height: 70 } },
-          e('div', { style: { width: 18, height: (r.completude || 0) * 0.7, background: "#1E4FA8", borderRadius: 3 } }),
-          e('div', { style: { width: 18, height: (r.conformite || 0) * 0.7, background: "#E0A030", borderRadius: 3 } })),
-        e('div', { style: { fontSize: 11.5, color: "#5A6172" } }, r.mois))))]),
+    blocMachines(),
 
     // Reste à faire
     carte([titre("Reste à faire"),
