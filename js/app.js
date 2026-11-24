@@ -13,6 +13,14 @@ function App() {
     } catch (e) { return null; }
   });
 
+  // Lien direct vers la page d'un hôtel (tableau de bord hôtels) : ?ouvrir=inventaire&hotel=<id>
+  const [pendingOuvrir, setPendingOuvrir] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      return q.get("ouvrir") ? { page: q.get("ouvrir"), hotel: q.get("hotel") || "" } : null;
+    } catch (e) { return null; }
+  });
+
   // ---------- RESPONSIVE / MOBILE ----------
   const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 768 : false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -949,6 +957,10 @@ function App() {
  const isSuperAdmin = isAdmin && ["support@dsihotel.com", "pascal.sanglier@dsihotel.fr"].includes((profile?.email || "").toLowerCase());
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
+  // Tableau de bord hôtels : réservé pour l'instant à Jérémie Beal et Pascal Sanglier (phase d'essai)
+  const TDB_COMPTES = ["jeremie.beal@dsihotel.fr", "support@dsihotel.com", "pascal.sanglier@dsihotel.fr"];
+  const peutTdb = isAdmin && TDB_COMPTES.includes((profile?.email || "").toLowerCase());
+  const sectionVisible = (s) => s.page === "completude" ? peutTdb : hasPerm(s.key === "ninjaone" ? "docs" : s.key);
   const ADMIN_SECTIONS = [
     { key: "clients",    page: "client-admin",       icon: "🏨", label: "Établissements", grp: "cli" },
     { key: "procedures", page: "proc-admin",         icon: "📚", label: "Procédures clients", grp: "cli" },
@@ -959,6 +971,7 @@ function App() {
     { key: "tickets",    page: "aide-interne",       icon: "📖", label: "Base de connaissances interne", grp: "sup" },
     { key: "projets",    page: "projets",            icon: "📊", label: "Projets", grp: "org" },
     { key: "tickets",    page: "planning",           icon: "📅", label: "Planning équipe", grp: "org" },
+    { key: "docs",       page: "completude",         icon: "🎯", label: "Tableau de bord hôtels", grp: "sec" },
     { key: "docs",       page: "backups",            icon: "💾", label: "Sauvegardes", grp: "sec" },
     { key: "docs",       page: "sophos",             icon: "🔒", label: "Sécurité Anti Virus", grp: "sec" },
     { key: "docs",       page: "m365",               icon: "🛡️", label: "Sécurité Microsoft", grp: "sec" },
@@ -980,7 +993,7 @@ function App() {
   };
   useEffect(() => {
     if (!isAdmin) return;
-    const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => s.page);
+    const allowedPages = ADMIN_SECTIONS.filter(sectionVisible).map(s => s.page);
     if (isSuperAdmin) allowedPages.push("admins");
     if (isSuperAdmin) allowedPages.push("login-logs");
     allowedPages.push("securite");
@@ -997,6 +1010,26 @@ function App() {
     }
   }, [page, profile]);
   const myHotelId = profile?.hotel_id;
+
+  // Ouvre une page du portail directement sur un hôtel (utilisé par le Tableau de bord hôtels)
+  const PAGES_OUVRABLES = ["client-admin", "inventaire", "backups", "sophos", "m365", "checklist", "capex", "completude"];
+  const ouvrirPourHotel = (p, hid) => {
+    if (!PAGES_OUVRABLES.includes(p)) return;
+    setPage(p);
+    window.scrollTo && window.scrollTo(0, 0);
+    if (!hid) return;
+    if (p === "inventaire") invChoisirHotel(hid);
+    else if (p === "checklist") ckChoisirHotel(hid);
+    else if (p === "sophos") { setSoHotelFiltre(hid); setSoTab("alertes"); }
+    else if (p === "client-admin") { const h = hotels.find(x => x.id === hid); if (h) openEditClientForm(h); }
+  };
+  useEffect(() => {
+    if (!pendingOuvrir || !isAdmin || !hotels.length) return;
+    const { page: p, hotel: hid } = pendingOuvrir;
+    setPendingOuvrir(null);
+    try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
+    ouvrirPourHotel(p, hid);
+  }, [pendingOuvrir, profile, hotels]);
 
   // Lien direct vers un ticket (?ticket=DSI-XXXX) : on va sur la page Tickets…
   useEffect(() => {
@@ -7765,7 +7798,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
 const nav = isAdmin
     ? (() => {
-        const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
+        const items = ADMIN_SECTIONS.filter(sectionVisible).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
         // Tableau de bord en tête de menu
         items.unshift({ p: "accueil", icon: "🏠", label: "Tableau de bord" });
         // Modèles de demande (demandes internes) — groupe Support
@@ -8229,6 +8262,9 @@ const nav = isAdmin
   });
 
   // ---------- ADMIN : PROJETS (KANBAN) ----------
+  // ================= PAGE : TABLEAU DE BORD HÔTELS (complétude / conformité) =================
+  if (page === "completude" && peutTdb) content = Page_completude({ hotels, isMobile, setPage, adminFromName, ouvrirPourHotel });
+
   if (page === "projets" && isAdmin) content = Page_projets({
     content, addTacheToForm, deleteProjet, dragOverCol, dragProjId, hotels, isMobile, loadProjets,
     moveProjetToStatut, openEditProjet, openNewProjet, projErr, projExistingFiles, projFichiers,
@@ -8266,7 +8302,7 @@ const nav = isAdmin
   const nbAlertesDefenderMenu = isAdmin ? tickets.filter(t => estAlerteMicrosoft(t) && t.status !== "closed").length : 0;
   const nbAlertesSophosMenu = isAdmin ? tickets.filter(t => estAlerteSophos(t) && t.status !== "closed").length : 0;
   const nbAlertesBackupMenu = isAdmin ? tickets.filter(t => estAlerteBackup(t) && t.status !== "closed").length : 0;
-  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "sophos" ? "Sécurité Anti Virus" : page === "m365" ? "Sécurité Microsoft 365" : page === "licences-m365" ? "Licences Microsoft 365" : page === "checklist" ? "Check-list sécurité serveurs" : page === "inventaire" ? "Inventaire serveurs — versions, Care Pack, antivirus" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "licences-m365" ? "Licences Microsoft 365" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
+  const pageTitle = isAdmin ? (page === "accueil" ? "Tableau de bord" : page === "aide-interne" ? "Base de connaissances interne" : page === "suppr-ticket" ? "Suppression de ticket" : page === "admins" ? "Administrateurs" : page === "login-logs" ? "Journal des connexions" : page === "securite" ? "Double authentification — Appareils" : page === "client-admin" ? "Établissements" : page === "proc-admin" ? "Procédures clients" : page === "docs-techniques" ? "Infrastructure" : page === "tickets-admin" ? "Tickets" : page === "rapport-jour" ? "Rapport du jour — tickets ouverts" : page === "rapport-tickets" ? "Suivi des tickets" : page === "projets" ? "Projets" : page === "rapports" ? "Rapports d'intervention" : page === "ninjaone" ? "Rapports de sécurité" : page === "reponses-types" ? "Réponses types" : page === "backups" ? "Sauvegardes" : page === "completude" ? "Tableau de bord hôtels — complétude et conformité" : page === "sophos" ? "Sécurité Anti Virus" : page === "m365" ? "Sécurité Microsoft 365" : page === "licences-m365" ? "Licences Microsoft 365" : page === "checklist" ? "Check-list sécurité serveurs" : page === "inventaire" ? "Inventaire serveurs — versions, Care Pack, antivirus" : page === "planning" ? "Planning équipe" : page === "historique-comptes" ? "Historique des comptes" : page === "templates" ? "Modèles de demande" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédures clients") : (page === "accueil" ? "Accueil" : page === "historique-comptes" ? "Historique des comptes" : page === "knowledge" ? "Procédures" : page === "mon-installation" ? "Mon infrastructure" : page === "contact" ? "Nouvelle demande" : page === "templates" ? "Modèles de demande" : page === "tickets-client" ? "Mes demandes" : page === "rapport-securite" ? "Rapports de sécurité" : page === "rapport-intervention" ? "Rapports d'intervention" : page === "licences-m365" ? "Licences Microsoft 365" : page === "rapport-tickets" ? "Suivi des tickets" : page === "securite" ? "Mes téléphones (MFA)" : page === "capex" ? "CAPEX — Plan d'investissement" : "Procédure");
 
   // Styles de la barre latérale : escamotable sur mobile, fixe au défilement sur desktop
   const sidebarStyle = isMobile

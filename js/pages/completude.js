@@ -97,13 +97,25 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
         mesures = mesures.concat(lot || []);
         if (!lot || lot.length < 1000) break;
       }
-      const [{ data: criteres, error: e1 }, { data: historique, error: e2 }, { data: saisies, error: e3 }] = await Promise.all([
+      const il15j = new Date(Date.now() - 15 * 86400000).toISOString().slice(0, 10);
+      const [{ data: criteres, error: e1 }, { data: historique, error: e2 }, { data: saisies, error: e3 }, { data: jours }] = await Promise.all([
         sb.from("score_criteres").select("*").order("ordre"),
         sb.from("score_historique").select("*").order("mois"),
         sb.from("hotel_completude").select("*"),
+        sb.from("score_jour").select("jour,hotel_id,completude,conformite").gte("jour", il15j).range(0, 1999),
       ]);
       if (e1 || e2 || e3) throw (e1 || e2 || e3);
-      setData({ criteres: criteres || [], mesures, historique: historique || [], saisies: saisies || [] });
+      // Évolution sur 7 jours : dernière photo quotidienne comparée à celle d'au moins 7 jours avant
+      const evol = {}, js = jours || [];
+      const dernier = js.reduce((m, r) => r.jour > m ? r.jour : m, "");
+      const limite = dernier ? new Date(new Date(dernier).getTime() - 7 * 86400000).toISOString().slice(0, 10) : "";
+      const ancien = js.filter(r => r.jour <= limite).reduce((m, r) => r.jour > m ? r.jour : m, "");
+      js.filter(r => r.jour === dernier).forEach(r => {
+        const a = js.find(y => y.jour === ancien && y.hotel_id === r.hotel_id);
+        evol[r.hotel_id] = { comp: a && a.completude != null && r.completude != null ? r.completude - a.completude : null,
+                             conf: a && a.conformite != null && r.conformite != null ? r.conformite - a.conformite : null };
+      });
+      setData({ criteres: criteres || [], mesures, historique: historique || [], saisies: saisies || [], evol, evolDepuis: ancien || null, evolPremier: js.reduce((m, r) => !m || r.jour < m ? r.jour : m, "") });
     } catch (x) {
       const m = (x && x.message) || String(x);
       setErr(/score_mesures|score_criteres|hotel_completude|does not exist|Could not find/i.test(m)
@@ -236,7 +248,10 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
       e('div', { key: 1, style: { fontSize: 12.5, color: "#5A6172", display: "flex", alignItems: "center", gap: 8 } }, palier != null && e('span', { style: { width: 10, height: 10, borderRadius: 3, background: cplBande(palier).c } }), lbl),
       e('div', { key: 2, style: { fontSize: 28, fontWeight: 700, color: palier != null ? cplTexte(palier) : "#14171F", margin: "4px 0" } }, v),
       e('div', { key: 3, style: { fontSize: 12.5, color: "#4A5060" } }, sub)]);
-    const cols = isMobile ? "1fr 70px" : "36px minmax(160px, 240px) minmax(0, 1fr) 64px 92px 92px " + (domaines.length * (CPL_CASE + 4)) + "px";
+    const cols = isMobile ? "1fr 70px" : "36px minmax(160px, 240px) minmax(0, 1fr) 64px 92px 70px 92px " + (domaines.length * (CPL_CASE + 4)) + "px";
+    const evolDe = (x) => dom !== "all" ? null : ((data.evol || {})[x.id] || {})[mode === "comp" ? "comp" : "conf"];
+    const titreEvol = data.evolDepuis ? "Évolution depuis le " + new Date(data.evolDepuis).toLocaleDateString("fr-FR") + " (photo quotidienne des scores)"
+      : "Disponible à partir du " + (data.evolPremier ? new Date(new Date(data.evolPremier).getTime() + 7 * 86400000).toLocaleDateString("fr-FR") : "7e jour de photos") + " (7 jours de photos nécessaires)";
     return e('div', null,
       e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } },
         bascule(),
@@ -280,6 +295,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
           !isMobile && e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "4px 0 10px", borderBottom: "1px solid #E1E4EA", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em" } },
             e('div', null, "#"), e('div', null, "Établissement"), e('div', null, (mode === "comp" ? "Complétude" : "Conformité") + " · trait = " + (mode === "comp" ? "moyenne des hôtels" : "objectif 90 %")),
             e('div', { style: { textAlign: "right" } }, "Score"), e('div', { style: { textAlign: "right" } }, mode === "comp" ? "Écart / moy." : "Écart / obj."),
+            e('div', { style: { textAlign: "right" }, title: titreEvol }, "7 jours"),
             e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Conformité" : "Complétude"),
             e('div', { style: { display: "flex", gap: 4 } }, domaines.map(([k, l]) => e('div', { key: k, title: l, style: { width: CPL_CASE, textAlign: "center", fontSize: 10.5, letterSpacing: 0 } }, CPL_COURT[k] || l)))),
           tri.map((x, i) => {
@@ -295,6 +311,9 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
                 refVal != null && e('div', { style: { position: "absolute", top: -4, bottom: -4, width: 2, background: "#14171F", left: refVal + "%" } })),
               e('div', { style: { textAlign: "right", fontSize: 15, fontWeight: 700 } }, v == null ? "—" : v + " %"),
               !isMobile && e('div', { style: { textAlign: "right", fontSize: 13, fontWeight: 600, color: ecart == null ? "#999" : ecart >= 0 ? "#1E4FA8" : ecart > -20 ? "#8A5A00" : "#A8401F" } }, estRef ? "référence" : ecart == null ? "—" : (ecart > 0 ? "+" : "") + ecart + " pts"),
+              !isMobile && (() => { const d = evolDe(x);
+                return e('div', { title: titreEvol, style: { textAlign: "right", fontSize: 13, fontWeight: 700, color: d == null ? "#B0B5C0" : d > 0 ? "#2F855A" : d < 0 ? "#C53030" : "#5A6172" } },
+                  d == null ? "—" : d > 0 ? "↗ +" + d : d < 0 ? "↘ " + d : "→ 0"); })(),
               !isMobile && e('div', { style: { textAlign: "center" } }, pastille(mode === "comp" ? x.conf : x.comp)),
               !isMobile && e('div', { style: { display: "flex", gap: 4 } }, domaines.map(([k, l]) => {
                 const dv = mode === "comp" ? x.domC[k] : x.domF[k], db = cplBande(dv);
