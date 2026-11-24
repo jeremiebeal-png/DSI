@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment2.outputs.page_url || steps.deployment3.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - name: Préparer le site (sans .git ni .github)
@@ -32,5 +32,21 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+      # La mise en ligne échoue parfois juste après l'envoi (« No artifacts named github-pages »,
+      # « Fetching artifact metadata failed ») : on patiente puis on réessaie, jusqu'à 2 fois.
       - id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: Patienter avant le 2e essai
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 45
+      - id: deployment2
+        if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: Patienter avant le 3e essai
+        if: steps.deployment.outcome == 'failure' && steps.deployment2.outcome == 'failure'
+        run: sleep 90
+      - id: deployment3
+        if: steps.deployment.outcome == 'failure' && steps.deployment2.outcome == 'failure'
         uses: actions/deploy-pages@v4
