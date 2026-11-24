@@ -1011,6 +1011,14 @@ function App() {
   }, [page, profile]);
   const myHotelId = profile?.hotel_id;
 
+  // Comptes autorisés : le portail s'ouvre sur le Tableau de bord hôtels (une seule fois, à l'arrivée)
+  const tdbAccueilFait = React.useRef(false);
+  useEffect(() => {
+    if (tdbAccueilFait.current || !peutTdb) return;
+    tdbAccueilFait.current = true;
+    if (page === "accueil" && !pendingOuvrir) setPage("completude");
+  }, [peutTdb]);
+
   // Ouvre une page du portail directement sur un hôtel (utilisé par le Tableau de bord hôtels)
   const PAGES_OUVRABLES = ["client-admin", "inventaire", "backups", "sophos", "m365", "checklist", "capex", "completude"];
   const ouvrirPourHotel = (p, hid) => {
@@ -7798,9 +7806,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
 const nav = isAdmin
     ? (() => {
-        const items = ADMIN_SECTIONS.filter(sectionVisible).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
-        // Tableau de bord en tête de menu
-        items.unshift({ p: "accueil", icon: "🏠", label: "Tableau de bord" });
+        const items = ADMIN_SECTIONS.filter(sectionVisible).filter(s => !(peutTdb && s.page === "completude")).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
+        // Tableau de bord en tête de menu. Pendant l'essai, pour les comptes autorisés, c'est le Tableau de bord hôtels ;
+        // l'ancien tableau de bord reste accessible dans le menu Support.
+        if (peutTdb) {
+          items.unshift({ p: "completude", icon: "🎯", label: "Tableau de bord" });
+          items.push({ p: "accueil", icon: "🏠", label: "Tableau de bord support", grp: "sup" });
+        } else items.unshift({ p: "accueil", icon: "🏠", label: "Tableau de bord" });
         // Modèles de demande (demandes internes) — groupe Support
         items.push({ p: "templates", icon: "📋", label: "Modèles de demande", grp: "sup" });
         // Groupe Administration (super-admin uniquement), en fin de menu
