@@ -161,5 +161,5 @@ $$;
 revoke all on function public.score_photo_jour() from public, anon, authenticated;
 
 select cron.unschedule(jobid) from cron.job where jobname = 'score-photo-jour';
-select cron.schedule('score-photo-jour', '15 5 * * *', 'select public.score_photo_jour()');
+select cron.schedule('score-photo-jour', '25 5 * * *', 'select public.score_photo_jour()');
 select public.score_photo_jour();

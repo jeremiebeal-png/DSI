@@ -788,4 +788,25 @@ export default {
       return json({ error: String((e && e.message) || e) }, env, (e && e.status) || 502);
     }
   },
+
+  // Actualisation automatique tous les jours à 6h (heure de Paris).
+  // Déclencheurs Cron à créer dans Cloudflare (heures UTC) : « 0 4,5 * * * » et « 10 4,5 * * * ».
+  // Les deux heures UTC couvrent l'heure d'été et d'hiver : on ne travaille que s'il est 6h à Paris.
+  // Deux passages séparés (6h00 et 6h10) car chaque exécution est limitée à 50 appels sur le plan gratuit.
+  async scheduled(event, rawEnv, ctx) {
+    const env = { ...rawEnv };
+    for (const k of ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "NINJA_CLIENT_ID", "NINJA_CLIENT_SECRET"]) if (typeof env[k] === "string") env[k] = env[k].trim();
+    const quand = new Date(event.scheduledTime || Date.now());
+    const heureParis = Number(new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", hour12: false }).format(quand));
+    if (heureParis !== 6) return;
+    const tache = quand.getUTCMinutes() < 5 ? "machines" : "antivirus";
+    ctx.waitUntil((async () => {
+      try {
+        const r = tache === "machines" ? await routeMachines(env) : await routeAntivirusPostes(env);
+        console.log("Actualisation " + tache + " :", JSON.stringify(r.body).slice(0, 500));
+      } catch (e) {
+        console.log("Actualisation " + tache + " en échec :", String((e && e.message) || e));
+      }
+    })());
+  },
 };
