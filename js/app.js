@@ -957,6 +957,10 @@ function App() {
  const isSuperAdmin = isAdmin && ["support@dsihotel.com", "pascal.sanglier@dsihotel.fr"].includes((profile?.email || "").toLowerCase());
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
+  // Tableau de bord hôtels : réservé pour l'instant à Jérémie Beal et Pascal Sanglier (phase d'essai)
+  const TDB_COMPTES = ["jeremie.beal@dsihotel.fr", "support@dsihotel.com", "pascal.sanglier@dsihotel.fr"];
+  const peutTdb = isAdmin && TDB_COMPTES.includes((profile?.email || "").toLowerCase());
+  const sectionVisible = (s) => s.page === "completude" ? peutTdb : hasPerm(s.key === "ninjaone" ? "docs" : s.key);
   const ADMIN_SECTIONS = [
     { key: "clients",    page: "client-admin",       icon: "🏨", label: "Établissements", grp: "cli" },
     { key: "procedures", page: "proc-admin",         icon: "📚", label: "Procédures clients", grp: "cli" },
@@ -989,7 +993,7 @@ function App() {
   };
   useEffect(() => {
     if (!isAdmin) return;
-    const allowedPages = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => s.page);
+    const allowedPages = ADMIN_SECTIONS.filter(sectionVisible).map(s => s.page);
     if (isSuperAdmin) allowedPages.push("admins");
     if (isSuperAdmin) allowedPages.push("login-logs");
     allowedPages.push("securite");
@@ -7794,7 +7798,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
 const nav = isAdmin
     ? (() => {
-        const items = ADMIN_SECTIONS.filter(s => hasPerm(s.key === "ninjaone" ? "docs" : s.key)).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
+        const items = ADMIN_SECTIONS.filter(sectionVisible).map(s => ({ p: s.page, icon: s.icon, label: s.label, grp: s.grp }));
         // Tableau de bord en tête de menu
         items.unshift({ p: "accueil", icon: "🏠", label: "Tableau de bord" });
         // Modèles de demande (demandes internes) — groupe Support
@@ -8259,7 +8263,7 @@ const nav = isAdmin
 
   // ---------- ADMIN : PROJETS (KANBAN) ----------
   // ================= PAGE : TABLEAU DE BORD HÔTELS (complétude / conformité) =================
-  if (page === "completude" && isAdmin) content = Page_completude({ hotels, isMobile, setPage, adminFromName, ouvrirPourHotel });
+  if (page === "completude" && peutTdb) content = Page_completude({ hotels, isMobile, setPage, adminFromName, ouvrirPourHotel });
 
   if (page === "projets" && isAdmin) content = Page_projets({
     content, addTacheToForm, deleteProjet, dragOverCol, dragProjId, hotels, isMobile, loadProjets,
