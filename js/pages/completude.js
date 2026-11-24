@@ -58,6 +58,14 @@ function cplTexte(p) { return p == null ? "#5A6172" : p >= 85 ? "#1E4FA8" : p >=
 // Couleur des tuiles de couverture (NinjaOne, antivirus, mises à jour, sauvegardes) :
 // 100 % = vert, de 90 à 99 % = orange foncé, sous 90 % = rouge (choix du 24/11/2026)
 function cplCouverture(p) { return p == null ? "#EEF0F4" : p >= 100 ? "#2E7D32" : p >= 90 ? "#B45309" : "#B42318"; }
+// Statut Veeam → couleurs de la page Sauvegardes (vert OK, orange avertissement, rouge échec, gris autre)
+function cplVeeam(st) {
+  const s = String(st || "").toLowerCase();
+  if (s === "success") return { c: "#38A169", bg: "#E9F6EE", fg: "#2F855A", lbl: "OK", rang: 3 };
+  if (s === "warning") return { c: "#DD6B20", bg: "#FEF0E4", fg: "#B45309", lbl: "Avertissement", rang: 1 };
+  if (s === "failure" || s === "failed" || s === "error") return { c: "#E53E3E", bg: "#FDECEC", fg: "#C53030", lbl: "Échec", rang: 0 };
+  return { c: "#A0AEC0", bg: "#F0F0F4", fg: "#718096", lbl: st || "Pas de résultat", rang: 2 };
+}
 function cplBande(p) {
   if (p == null) return { c: "#C9CED8", bg: "#EEF0F4", fg: "#5A6172", tier: "—" };
   if (p >= 85) return { c: "#1E4FA8", bg: "#1E4FA8", fg: "#FFFFFF", tier: "Très bon" };
@@ -433,7 +441,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   React.useEffect(() => {
     let fini = false;
     (async () => {
-      const [inv, jobs, ck, m365, mach, jours, soph, m365s, machMaj] = await Promise.all([
+      const [inv, jobs, ck, m365, mach, jours, soph, m365s, machMaj, vhist] = await Promise.all([
         sb.from("inventaire_serveurs").select("id,parent_id,ordre,nom,type,role,os,version,ip,a_jour,derniere_maj,antivirus,antivirus_nom,care_pack,care_pack_fin,licence_fin").eq("hotel_id", x.id).order("ordre"),
         sb.from("veeam_jobs").select("id,nom,libelle,actif,dernier_statut,dernier_run_at,planifie,planif_desc,serveur").eq("hotel_id", x.id).order("nom"),
         sb.from("checklist_points").select("statut,date_controle").eq("hotel_id", x.id).range(0, 999),
@@ -443,8 +451,10 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         sb.from("sophos_comptes").select("dernier_controle").eq("hotel_id", x.id),
         sb.from("m365_tenants").select("derniere_synchro").eq("hotel_id", x.id),
         sb.from("machines").select("maj_le").eq("hotel_id", x.id).order("maj_le", { ascending: false }).limit(1),
+        sb.rpc("veeam_historique", { p_n: 10 }).then(r => r, () => ({ data: [] })),
       ]);
-      if (!fini) setDet({ inv: inv.data || [], jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [],
+      const runsVeeam = {}; ((vhist && vhist.data) || []).forEach(h => { runsVeeam[String(h.job_id)] = h.runs || []; });
+      if (!fini) setDet({ inv: inv.data || [], runsVeeam, jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [],
         machines: mach.data || [], machErr: mach.error ? mach.error.message : "", jours: jours.data || [],
         sophos: (soph.data || []).map(r => r.dernier_controle).filter(Boolean).sort().pop() || null,
         m365sync: (m365s.data || []).map(r => r.derniere_synchro).filter(Boolean).sort().pop() || null,
@@ -761,10 +771,23 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
 
     // Sauvegardes
     section("bkp", "Sauvegardes Veeam", !det ? null : det.jobs.length === 0 ? vide("Aucun job Veeam rattaché") :
-      e('div', { style: { display: "flex", flexDirection: "column" } }, det.jobs.map(j => e('div', { key: j.id, style: { display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid #EEF0F4", fontSize: 13, flexWrap: "wrap" } },
-        e('span', null, e('b', null, j.libelle || j.nom), e('span', { style: { color: "#888" } }, " · " + (j.planifie ? (j.planif_desc || "planifié") : "planification non remontée") + (j.serveur ? " · " + j.serveur : ""))),
-        e('span', { style: { fontWeight: 600, color: j.dernier_statut === "Success" ? "#1E4FA8" : j.dernier_statut ? "#A8401F" : "#888" } },
-          (j.dernier_statut === "Success" ? "OK" : j.dernier_statut || "—") + (j.dernier_run_at ? " · " + new Date(j.dernier_run_at).toLocaleDateString("fr-FR") : ""))))),
+      e('div', { style: { display: "flex", flexDirection: "column" } },
+        // Échecs en premier, puis avertissements, puis OK (comme la page Sauvegardes)
+        [...det.jobs].sort((a, b) => cplVeeam(a.dernier_statut).rang - cplVeeam(b.dernier_statut).rang || String(a.nom).localeCompare(String(b.nom))).map(j => {
+          const st = cplVeeam(j.dernier_statut);
+          const runs = (det.runsVeeam || {})[String(j.id)] || [];
+          return e('div', { key: j.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #EEF0F4", fontSize: 13, flexWrap: "wrap" } },
+            e('span', { title: st.lbl, style: { width: 10, height: 10, borderRadius: "50%", background: st.c, flexShrink: 0 } }),
+            e('div', { style: { flex: 1, minWidth: 220 } },
+              e('div', { style: { fontWeight: 600, color: "#14171F" } }, j.nom || j.libelle),
+              e('div', { style: { fontSize: 12, color: "#6B7280", marginTop: 1 } }, (j.planifie ? (j.planif_desc || "planifié") : "planification non remontée") + (j.serveur ? " · " + j.serveur : ""))),
+            runs.length > 0 && e('div', { style: { display: "flex", gap: 4, alignItems: "center" }, "aria-label": "10 dernières exécutions" },
+              runs.map((r, k) => { const m = cplVeeam(r.s); return e('span', { key: r.id || k, title: (r.t ? new Date(r.t).toLocaleString("fr-FR", { timeZone: "Europe/Paris" }) + " — " : "") + m.lbl,
+                style: { width: 12, height: 12, borderRadius: "50%", background: m.c, display: "inline-block" } }); })),
+            e('span', { style: { minWidth: 150, textAlign: "right", fontWeight: 600, color: st.fg } },
+              e('span', { style: { padding: "2px 8px", borderRadius: 999, background: st.bg, fontSize: 12 } }, st.lbl),
+              j.dernier_run_at && e('span', { style: { color: "#6B7280", fontWeight: 400, marginLeft: 6 } }, new Date(j.dernier_run_at).toLocaleDateString("fr-FR"))));
+        })),
       lienPage("Sauvegardes", "backups")),
 
     // Antivirus
