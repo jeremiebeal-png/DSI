@@ -441,7 +441,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   React.useEffect(() => {
     let fini = false;
     (async () => {
-      const [inv, jobs, ck, m365, mach, jours, soph, m365s, machMaj, vhist] = await Promise.all([
+      const [inv, jobs, ck, m365, mach, jours, soph, m365s, machMaj, vhist, cxm] = await Promise.all([
         sb.from("inventaire_serveurs").select("id,parent_id,ordre,nom,type,role,os,version,ip,a_jour,derniere_maj,antivirus,antivirus_nom,care_pack,care_pack_fin,licence_fin").eq("hotel_id", x.id).order("ordre"),
         sb.from("veeam_jobs").select("id,nom,libelle,actif,dernier_statut,dernier_run_at,planifie,planif_desc,serveur").eq("hotel_id", x.id).order("nom"),
         sb.from("checklist_points").select("statut,date_controle").eq("hotel_id", x.id).range(0, 999),
@@ -452,9 +452,15 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         sb.from("m365_tenants").select("derniere_synchro").eq("hotel_id", x.id),
         sb.from("machines").select("maj_le").eq("hotel_id", x.id).order("maj_le", { ascending: false }).limit(1),
         sb.rpc("veeam_historique", { p_n: 10 }).then(r => r, () => ({ data: [] })),
+        sb.from("capex").select("auto_cle,machines,auto_maj").eq("hotel_id", x.id).not("auto_cle", "is", null),
       ]);
+      // Machines physiques par âge (inventaire CAPEX mensuel NinjaOne) : lignes « 5ans » et « 3ans »
+      const ageMat = { plus5: [], de3a5: [], maj: null };
+      (cxm.data || []).forEach(r => { const l = Array.isArray(r.machines) ? r.machines : [];
+        if (/:5ans$/.test(r.auto_cle || "")) ageMat.plus5 = l; else if (/:3ans$/.test(r.auto_cle || "")) ageMat.de3a5 = l;
+        if (r.auto_maj && (!ageMat.maj || r.auto_maj > ageMat.maj)) ageMat.maj = r.auto_maj; });
       const runsVeeam = {}; ((vhist && vhist.data) || []).forEach(h => { runsVeeam[String(h.job_id)] = h.runs || []; });
-      if (!fini) setDet({ inv: inv.data || [], runsVeeam, jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [],
+      if (!fini) setDet({ inv: inv.data || [], runsVeeam, ageMat, jobs: (jobs.data || []).filter(j => j.actif), ck: ck.data || [], m365: m365.data || [],
         machines: mach.data || [], machErr: mach.error ? mach.error.message : "", jours: jours.data || [],
         sophos: (soph.data || []).map(r => r.dernier_controle).filter(Boolean).sort().pop() || null,
         m365sync: (m365s.data || []).map(r => r.derniere_synchro).filter(Boolean).sort().pop() || null,
@@ -715,6 +721,27 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         filtrees.length === 0 && e('div', { style: { fontSize: 13, color: "#5A6172", padding: "12px 0" } }, "Aucune machine dans ce filtre.")))]),
   ];
 
+  // Liste des machines physiques trop anciennes (âge estimé : garantie, sinon BIOS, sinon processeur / installation)
+  const tableAge = (a) => {
+    if (!a || (!a.plus5.length && !a.de3a5.length)) return vide("Aucune machine de plus de 3 ans relevée (inventaire CAPEX NinjaOne du mois).");
+    const bloc = (lbl, l, coul, ouvert) => l.length > 0 && e('details', { open: ouvert, style: { marginBottom: 10 } },
+      e('summary', { style: { cursor: "pointer", fontSize: 13.5, fontWeight: 700, color: coul, padding: "4px 0" } }, lbl + " (" + l.length + ")"),
+      e('div', { style: { overflowX: "auto" } }, e('table', { style: { width: "100%", minWidth: 760, borderCollapse: "collapse", fontSize: 12.5, marginTop: 4 } },
+        e('thead', null, e('tr', { style: { textAlign: "left", color: "#5A6172", fontSize: 11.5, textTransform: "uppercase", letterSpacing: ".04em" } },
+          ["Machine", "Type", "Modèle", "Âge", "Date estimée", "Utilisateur", "Vue"].map(t => e('th', { key: t, style: { padding: "6px 8px", borderBottom: "1px solid #E1E4EA", fontWeight: 600 } }, t)))),
+        e('tbody', null, [...l].sort((p, q) => (q.age || 0) - (p.age || 0)).map((m, i) => e('tr', { key: m.id || i, style: { borderBottom: "1px solid #EEF0F4" } },
+          e('td', { style: { padding: "6px 8px", fontWeight: 600 } }, m.lien ? e('a', { href: m.lien, target: "_blank", rel: "noopener noreferrer", style: { color: "#14171F" } }, m.nom) : m.nom),
+          e('td', { style: { padding: "6px 8px" } }, m.type === "portable" ? "Portable" : m.type === "serveur" ? "Serveur" : "Poste fixe"),
+          e('td', { style: { padding: "6px 8px", color: "#4A5060", maxWidth: 300 } }, String(m.modele || "—").replace(/^(\S+)\s+\1\b/i, "$1")),
+          e('td', { style: { padding: "6px 8px", fontWeight: 700, color: coul, whiteSpace: "nowrap" } }, m.age != null ? String(m.age).replace(".", ",") + " ans" : "—"),
+          e('td', { style: { padding: "6px 8px", whiteSpace: "nowrap" } }, m.date ? new Date(m.date).getFullYear() : "—", m.source && e('div', { style: { fontSize: 11, color: "#8A90A0" } }, m.source)),
+          e('td', { style: { padding: "6px 8px", color: "#4A5060" } }, String(m.utilisateur || "—").replace(/^.*\\/, "")),
+          e('td', { style: { padding: "6px 8px", whiteSpace: "nowrap", color: "#5A6172" } }, ilYa(m.dernier_contact) || "—")))))));
+    return e('div', null,
+      bloc("Plus de 5 ans — à remplacer", a.plus5, "#C53030", true),
+      bloc("De 3 à 5 ans — à prévoir", a.de3a5, "#B45309", false),
+      a.maj && e('div', { style: { fontSize: 11.5, color: "#8A90A0" } }, "Inventaire CAPEX NinjaOne du " + new Date(a.maj).toLocaleDateString("fr-FR") + " · cliquez sur un nom pour l'ouvrir dans NinjaOne"));
+  };
   const champ = (lbl, cle, aide) => e('label', { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, color: "#5A6172" } }, lbl,
     e('input', { value: saisie[cle] || "", onChange: ev => setSaisie({ ...saisie, [cle]: ev.target.value }), placeholder: aide, style: { padding: "8px 10px", border: "1px solid #D5D9E0", borderRadius: 7, fontSize: 13.5, color: "#14171F" } }));
   const triEtat = (lbl, cle, oui, non) => e('label', { style: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, color: "#5A6172" } }, lbl,
@@ -845,6 +872,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     ]), lienPage("Check-list", "checklist")),
 
     // Matériel (conformité seulement)
-    carte([titre("Matériel", badgesDom("mat")), e('div', { key: "m" }, criteres("conf", "mat"))])
+    carte([titre("Matériel", e('span', { style: { display: "flex", gap: 10, alignItems: "center" } }, badgesDom("mat"), lienPage("CAPEX", "capex"))),
+      e('div', { key: "m" }, criteres("conf", "mat")),
+      det && e('div', { key: "l", style: { marginTop: 12 } }, tableAge(det.ageMat))])
   );
 }
