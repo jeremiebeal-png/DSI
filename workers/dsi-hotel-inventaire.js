@@ -529,6 +529,12 @@ async function routeImporter(env, body, user) {
 //     - menaces : nombre de menaces encore actives sur les postes de l'hôtel (si NinjaOne le fournit)
 //   ~15 sous-requêtes. Lecture seule côté NinjaOne.
 
+// Nom d'antivirus harmonisé : Defender remonte sous 3 noms selon la version de Windows
+function nomAV(nom) {
+  const n = String(nom || "").trim();
+  if (!n) return null;
+  return /defender/i.test(n) ? "Microsoft Defender" : n;
+}
 function categorieAV(nom) {
   const s = String(nom || "");
   if (/sophos/i.test(s)) return "sophos";
@@ -738,7 +744,7 @@ async function routeMachines(env) {
       log_attente: logSuivi ? (logAttPar[d.id] || []).length : null,
       log_echec: logSuivi ? (logEchPar[d.id] || []).length : null,
       log_liste: logSuivi ? liste(logEchPar[d.id] || [], logAttPar[d.id] || []) : null,
-      av_nom: choix ? String(choix.productName || "").trim() || null : null,
+      av_nom: choix ? nomAV(choix.productName) : null,
       av_actif: type === "Hôte" ? null : !!choix,
       av_def_ok: choix && choix.definitionStatus ? /up.?to.?date|current/i.test(String(choix.definitionStatus)) : null,
       maj_le: debut,

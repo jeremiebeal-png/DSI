@@ -332,3 +332,7 @@ select public.score_photo_mensuelle();
 update public.score_criteres set actif = false where domaine = 'prj';
 
 -- 23/11/2026 : antivirus géré par la chaîne (av_non_gere) ; sauvegardes toutes au vert = domaine Sauvegardes complet
+
+-- 24/11/2026 : la check-list pèse plus lourd
+update public.score_criteres set points = 25 where code = 'C_REMPLI';
+update public.score_criteres set points = 45 where code = 'X_CHK';

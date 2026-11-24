@@ -105,6 +105,8 @@ as $$
       ('eol', 'Fin de vie le ' || to_char(m.fdv, 'DD/MM/YYYY'), -10, m.fdv >= current_date and m.fdv < current_date + 90),
       ('maj', 'Mises à jour en retard (' || (m.maj_attente + m.maj_echec) || ' en attente, aucune installée depuis 30 j)', -20,
               m.type <> 'Hôte' and (m.maj_attente + m.maj_echec) > 0 and m.maj_30j = false),
+      ('log', 'Logiciels à mettre à jour (' || (coalesce(m.log_attente, 0) + coalesce(m.log_echec, 0)) || ')', -10,
+              m.type <> 'Hôte' and coalesce(m.log_attente, 0) + coalesce(m.log_echec, 0) > 0),
       ('gar', 'Care Pack expiré le ' || to_char(m.cp_fin, 'DD/MM/YYYY'), -10, m.cp_fin < current_date),
       ('hl',  'Hors ligne depuis ' || m.jours || ' jours', -5, m.jours >= 3)
     ) as x(k, t, p, ok)
@@ -163,3 +165,33 @@ revoke all on function public.score_photo_jour() from public, anon, authenticate
 select cron.unschedule(jobid) from cron.job where jobname = 'score-photo-jour';
 select cron.schedule('score-photo-jour', '25 5 * * *', 'select public.score_photo_jour()');
 select public.score_photo_jour();
+-- Plan d'action : un responsable et une échéance par point « Reste à faire » d'un hôtel
+create table if not exists public.score_actions (
+  hotel_id uuid not null references public.hotels(id) on delete cascade,
+  code text not null,                 -- code du critère (score_criteres.code)
+  responsable text,
+  echeance date,
+  commentaire text,
+  maj_par text,
+  maj_le timestamptz default now(),
+  primary key (hotel_id, code)
+);
+alter table public.score_actions enable row level security;
+drop policy if exists score_actions_admin on public.score_actions;
+create policy score_actions_admin on public.score_actions for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- Historique Veeam limité à un hôtel (la fiche ne charge plus les runs de tous les hôtels)
+create or replace function public.veeam_historique_hotel(p_hotel uuid, p_n integer default 10)
+returns table(job_id text, runs jsonb)
+language sql stable security invoker set search_path to 'public'
+as $$
+  select r.job_id, jsonb_agg(jsonb_build_object('id', r.id, 't', r.recu_le, 's', r.statut) order by r.recu_le)
+    from (select v.id, v.job_id, v.recu_le, v.statut,
+                 row_number() over (partition by v.job_id order by v.recu_le desc) rn
+            from veeam_runs v
+            join veeam_jobs j on j.id::text = v.job_id
+           where j.hotel_id::text = p_hotel::text and v.recu_le > now() - interval '90 days') r
+   where r.rn <= least(greatest(p_n, 1), 30)
+   group by r.job_id;
+$$;
+grant execute on function public.veeam_historique_hotel(uuid, integer) to authenticated;
