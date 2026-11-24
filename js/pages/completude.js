@@ -55,6 +55,9 @@ const CPL_AV_NOMS = { sophos: "Sophos", crowdstrike: "CrowdStrike", sentinelone:
 
 // Couleur de TEXTE du palier (version foncée, lisible sur fond blanc)
 function cplTexte(p) { return p == null ? "#5A6172" : p >= 85 ? "#1E4FA8" : p >= 70 ? "#2D5BB0" : p >= 50 ? "#8A5A00" : "#A8401F"; }
+// Couleur des tuiles de couverture (NinjaOne, antivirus, mises à jour, sauvegardes) :
+// 100 % = vert, de 90 à 99 % = orange foncé, sous 90 % = rouge (choix du 24/11/2026)
+function cplCouverture(p) { return p == null ? "#EEF0F4" : p >= 100 ? "#2E7D32" : p >= 90 ? "#B45309" : "#B42318"; }
 function cplBande(p) {
   if (p == null) return { c: "#C9CED8", bg: "#EEF0F4", fg: "#5A6172", tier: "—" };
   if (p >= 85) return { c: "#1E4FA8", bg: "#1E4FA8", fg: "#FFFFFF", tier: "Très bon" };
@@ -493,8 +496,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const nbAv = nonHotes.filter(m => !aRaison(m, "av")).length, nbMaj = nonHotes.filter(m => !aRaison(m, "maj")).length;
   const jobsOk = det ? det.jobs.filter(j => j.dernier_statut === "Success").length : 0, jobsN = det ? det.jobs.length : 0;
   const tuileAgent = (cle, lbl, p, sous, lien, page) => {
-    const b = cplBande(p), fonce = p != null && (p >= 85 || p < 50);
-    return e('div', { key: cle, style: { display: "flex", flexDirection: "column", background: p == null ? "#EEF0F4" : b.c, color: p == null ? "#5A6172" : fonce ? "#FFFFFF" : "#14171F" } },
+    return e('div', { key: cle, style: { display: "flex", flexDirection: "column", background: cplCouverture(p), color: p == null ? "#5A6172" : "#FFFFFF" } },
       e('button', { onClick: () => { if (cle === "bkp") setPage(page); else { setFiltreM(cle); setVoirTout(true); } }, title: cle === "bkp" ? "Ouvrir " + lien : "Afficher les machines concernées",
         style: { border: "none", background: "transparent", color: "inherit", font: "inherit", cursor: "pointer", padding: "14px 10px 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } },
         e('span', { style: { fontSize: 13, fontWeight: 600 } }, lbl),
@@ -546,8 +548,8 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     // Tuiles par agent
     e('div', { key: "agents", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 2, borderRadius: 12, overflow: "hidden" } },
       tuileAgent("tous", "Vues par NinjaOne (8 j)", pct(actives.length, M.length), actives.length + " / " + M.length + " machines", "Inventaire serveurs", "inventaire"),
-      tuileAgent("av", "Antivirus actif", avNonGere ? null : pct(nbAv, nonHotes.length), avNonGere ? "géré par la chaîne" : nbAv + " / " + nonHotes.length + " · voir les " + (nonHotes.length - nbAv), "Sécurité Anti Virus", "sophos"),
-      tuileAgent("maj", "Mises à jour à jour", pct(nbMaj, nonHotes.length), nbMaj + " / " + nonHotes.length + " · voir les " + (nonHotes.length - nbMaj), "Inventaire serveurs", "inventaire"),
+      tuileAgent("av", "Antivirus actif", avNonGere ? null : pct(nbAv, nonHotes.length), avNonGere ? "géré par la chaîne" : nbAv + " / " + nonHotes.length + (nonHotes.length - nbAv ? " · voir les " + (nonHotes.length - nbAv) : ""), "Sécurité Anti Virus", "sophos"),
+      tuileAgent("maj", "Mises à jour à jour", pct(nbMaj, nonHotes.length), nbMaj + " / " + nonHotes.length + (nonHotes.length - nbMaj ? " · voir les " + (nonHotes.length - nbMaj) : ""), "Inventaire serveurs", "inventaire"),
       tuileAgent("bkp", "Sauvegardes OK", pct(jobsOk, jobsN), jobsN ? jobsOk + " / " + jobsN + " jobs Veeam" : "aucun job Veeam", "Sauvegardes", "backups")),
     // Fin de vie, systèmes, problèmes
     e('div', { key: "trois", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 14, alignItems: "start" } },
