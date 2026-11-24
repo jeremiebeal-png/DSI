@@ -392,7 +392,9 @@ function CplCarte({ liste, valeur, onHotel, hauteur }) {
   React.useEffect(() => {
     if (!ref.current || !window.L) { setEtat("Carte indisponible (librairie non chargée)."); return; }
     const m = window.L.map(ref.current, { zoomControl: true, scrollWheelZoom: false, attributionControl: true }).setView([47.5, 4], 5);
-    window.L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { maxZoom: 18, subdomains: "abcd", attribution: "© OpenStreetMap © CARTO" }).addTo(m);
+    // Fond OpenStreetMap (le même que la carte des clients), passé en gris clair pour faire ressortir les pastilles
+    window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(m);
+    try { m.getPane("tilePane").style.filter = "grayscale(1) brightness(1.04) contrast(0.92)"; } catch (x) {}
     carteRef.current = m;
     coucheRef.current = window.L.layerGroup().addTo(m);
     return () => { try { m.remove(); } catch (x) {} carteRef.current = null; };
