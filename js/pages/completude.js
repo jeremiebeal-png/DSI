@@ -2,7 +2,6 @@
 // Tableau de bord des hôtels : score de COMPLÉTUDE (infos renseignées) et de CONFORMITÉ (ce qui est au vert).
 //   - Classement (accueil de la page) : un hôtel par ligne, trait = hôtel le plus renseigné (référence) / objectif 90 %
 //   - Fiche hôtel (clic sur un hôtel) : toutes les informations, critère par critère, et les infos à saisir
-//   - Tournées : matrice hôtels × domaines pour préparer les visites
 //   - Barème : points de chaque critère (modifiables)
 // Calcul côté base : fonction score_mesures() (supabase/completude.sql). Les états sont internes au composant
 // CompletudeTableau : app.js ne lui passe que hotels, isMobile, setPage et adminFromName.
@@ -187,7 +186,6 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
   const onglets = e('div', { style: { display: "flex", gap: isMobile ? 18 : 32, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 18, borderBottom: "1px solid #E1E4EA" } },
     onglet("Classement", vue === "classement", () => setVue("classement")),
     onglet("Fiche hôtel", vue === "fiche", () => { if (!hotelId && calc && calc.liste.length) setHotelId([...calc.liste].sort((a, b) => (b.comp || 0) - (a.comp || 0))[0].id); setVue("fiche"); }),
-    onglet("Tournées", vue === "tournees", () => setVue("tournees")),
     onglet("Barème", vue === "bareme", () => setVue("bareme")),
     e('button', { onClick: importerTout, disabled: !!(imp && !imp.fini), title: "Remplit l'inventaire serveurs de tous les hôtels depuis NinjaOne", style: { marginLeft: "auto", marginBottom: 8, padding: "8px 14px", borderRadius: 8, border: "1px solid #1E4FA8", background: "white", color: "#1E4FA8", fontSize: 12.5, fontWeight: 600, cursor: "pointer" } },
       imp && !imp.fini ? "Import NinjaOne " + imp.fait + " / " + imp.total + "…" : "⇣ Importer NinjaOne (tous les hôtels)"),
@@ -279,26 +277,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
           })))));
   };
 
-  // =================== VUE : TOURNÉES (matrice) ===================
-  const vueTournees = () => {
-    const tri = [...filtreSoc(liste)].sort((a, b) => (mode === "comp" ? (a.comp || 0) - (b.comp || 0) : (a.conf == null ? 999 : a.conf) - (b.conf == null ? 999 : b.conf)));
-    const cols = "minmax(180px, 260px) repeat(" + domaines.length + ", minmax(64px, 1fr)) 80px 90px";
-    return e('div', null,
-      e('div', { style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 } }, bascule(), choixSoc(),
-        e('div', { style: { fontSize: 12.5, color: "#5A6172" } }, "Les hôtels les plus en retard sont en haut. Une colonne presque entièrement orange montre un chantier à lancer sur tous les hôtels. Cliquez sur une case pour ouvrir la fiche de l'hôtel.")),
-      carte(e('div', { style: { overflowX: "auto" } }, e('div', { style: { minWidth: 900 } },
-        e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 5, fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", padding: "4px 0 8px" } },
-          e('div', null, "Établissement"), domaines.map(([k, l]) => e('div', { key: k, style: { textAlign: "center" } }, l)),
-          e('div', { style: { textAlign: "center" } }, "Global"), e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Infos à saisir" : "À corriger")),
-        tri.map(x => e('div', { key: x.id, style: { display: "grid", gridTemplateColumns: cols, gap: 5, alignItems: "center", padding: "2px 0" } },
-          e('div', { style: { fontSize: 13, fontWeight: ref && x.id === ref.id ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (ref && x.id === ref.id ? "★ " : "") + x.nom, cplBadgeSoc(e, x.hotel.soc), cplBadgeExt(e, saisieDe(x.id))),
-          domaines.map(([k, l]) => {
-            const dv = mode === "comp" ? x.domC[k] : x.domF[k], b = cplBande(dv);
-            return e('button', { key: k, onClick: () => ouvrirFiche(x.id), title: x.nom + " — " + l, style: { height: 36, border: "none", borderRadius: 6, background: b.bg, color: b.fg, fontSize: 13, fontWeight: 600, cursor: "pointer" } }, dv == null ? "—" : dv + " %");
-          }),
-          e('div', { style: { height: 36, borderRadius: 6, border: "2px solid " + cplBande(mode === "comp" ? x.comp : x.conf).c, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 } }, (mode === "comp" ? x.comp : x.conf) == null ? "—" : (mode === "comp" ? x.comp : x.conf) + " %"),
-          e('div', { style: { textAlign: "center", fontSize: 13, color: "#4A5060" } }, mode === "comp" ? x.aSaisir : x.aCorriger)))))));
-  };
+  // (Onglet « Tournées » retiré le 24/11/2026 : il faisait doublon avec le classement)
 
   // =================== VUE : BARÈME ===================
   const vueBareme = () => {
@@ -351,7 +330,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
   };
 
   return e('div', null, onglets, bandeauImport,
-    vue === "classement" ? vueClassement() : vue === "tournees" ? vueTournees() : vue === "bareme" ? vueBareme() : vueFiche());
+    vue === "classement" ? vueClassement() : vue === "bareme" ? vueBareme() : vueFiche());
 }
 
 // ---------- Fiche d'un hôtel : toutes les informations + ce qu'il reste à faire ----------
