@@ -591,7 +591,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   };
   const pct = (n, d) => d ? Math.round(100 * n / d) : null;
   const nonHotes = actives.filter(m => m.type !== "Hôte");
-  const nbAv = nonHotes.filter(m => !aRaison(m, "av")).length, nbMaj = nonHotes.filter(m => !aRaison(m, "maj")).length;
+  const nbAv = nonHotes.filter(m => !aRaison(m, "av")).length, nbMaj = nonHotes.filter(m => !((m.maj_attente || 0) > 0)).length, nbRetard = nonHotes.filter(m => aRaison(m, "maj")).length;
   const jobsOk = det ? det.jobs.filter(j => j.dernier_statut === "Success").length : 0, jobsN = det ? det.jobs.length : 0;
   const tuileAgent = (cle, lbl, p, sous, lien, page) => {
     return e('div', { key: cle, style: { display: "flex", flexDirection: "column", background: cplCouverture(p), color: p == null ? "#5A6172" : "#FFFFFF" } },
@@ -673,7 +673,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     e('div', { key: "agents", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: 2, borderRadius: 12, overflow: "hidden" } },
       tuileAgent("tous", "Vues par NinjaOne (8 j)", pct(actives.length, M.length), actives.length + " / " + M.length + " machines", "Inventaire serveurs", "inventaire"),
       tuileAgent("av", "Antivirus actif", avNonGere ? null : pct(nbAv, nonHotes.length), avNonGere ? "géré par la chaîne" : nbAv + " / " + nonHotes.length + (nonHotes.length - nbAv ? " · voir les " + (nonHotes.length - nbAv) : ""), "Sécurité Anti Virus", "sophos"),
-      tuileAgent("maj", "Mises à jour à jour", pct(nbMaj, nonHotes.length), nbMaj + " / " + nonHotes.length + (nonHotes.length - nbMaj ? " · voir les " + (nonHotes.length - nbMaj) : ""), "Inventaire serveurs", "inventaire"),
+      tuileAgent("win", "Windows à jour", pct(nbMaj, nonHotes.length), nbMaj + " / " + nonHotes.length + (nonHotes.length - nbMaj ? " · voir les " + (nonHotes.length - nbMaj) : "") + (nbRetard ? " · " + nbRetard + " en retard" : ""), "Inventaire serveurs", "inventaire"),
       tuileAgent("bkp", "Sauvegardes OK", pct(jobsOk, jobsN), jobsN ? jobsOk + " / " + jobsN + " jobs Veeam" : "aucun job Veeam", "Sauvegardes", "backups")),
     // Fin de vie, systèmes, problèmes
     e('div', { key: "trois", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 14, alignItems: "start" } },
