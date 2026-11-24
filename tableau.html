@@ -8,7 +8,11 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
+  .leaflet-tooltip.htip{background:#1a1a3e;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:12.5px;padding:5px 9px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .leaflet-tooltip.htip::before{border-top-color:#1a1a3e}
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #F5F6F8; color: #14171F; }
 </style>
@@ -22,7 +26,7 @@
 -->
 <div id="root"></div>
 <script>
-window.DSI_VERSION = "apercu-2026-11-24-3";
+window.DSI_VERSION = "apercu-2026-11-24-4";
 ["js/core.js", "js/pages/completude.js", "js/apercu-tableau.js"].forEach(function (f) {
   var s = document.createElement("script");
   s.src = f + "?v=" + window.DSI_VERSION;
