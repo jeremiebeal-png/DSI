@@ -47,6 +47,7 @@ as $$
     when p_os ~* 'server 2019' then date '2029-01-09'
     when p_os ~* 'server 2016' then date '2027-01-12'
     when p_os ~* 'server (2012|2008|2003)' then date '2023-10-10'
+    when p_os ~* 'windows 10' and p_os ~* 'iot' and p_os ~* '(ltsc|ltsb)' and (p_os ~* '2021' or p_release = '21H2') then date '2032-01-13'
     when p_os ~* 'windows 10' and p_os ~* '(ltsc|ltsb)' then
       case when p_os ~* '2021' or p_release = '21H2' then date '2027-01-12'
            when p_os ~* '2016' or p_release = '1607' then date '2026-10-13'
