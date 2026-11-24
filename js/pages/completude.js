@@ -80,6 +80,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
   const [mode, setMode] = React.useState("comp");           // comp | conf
   const [dom, setDom] = React.useState("all");
   const [hotelId, setHotelId] = React.useState("");
+  const [voirClassement, setVoirClassement] = React.useState(false); // tableau détaillé replié par défaut
   const [socFiltre, setSocFiltre] = React.useState("");     // "" = tous, "_sans" = sans SOC, sinon code du SOC
   const [imp, setImp] = React.useState(null);               // import NinjaOne de tous les hôtels : { fait, total, ajoutes, majs, erreurs, fini }
   const [data, setData] = React.useState(null);              // { criteres, mesures, historique, saisies }
@@ -279,6 +280,12 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
         tuile("Moyenne de tous les hôtels", moy == null ? "—" : moy + " %", (moy == null ? "" : cplBande(moy).tier + " · ") + "sur " + vals.length + " hôtels" + (mode === "conf" ? " mesurés · objectif " + CPL_OBJECTIF_CONF + " %" : " suivis"), moy),
         tuile("Hôtels à 70 % ou plus", String(vals.filter(v => v >= 70).length), "sur " + tri.length + " hôtels affichés", 70),
         tuile(mode === "comp" ? "Hôtels sous 50 %" : "Hôtels sans score", String(mode === "comp" ? vals.filter(v => v < 50).length : tri.length - vals.length), mode === "comp" ? "priorité des prochaines visites" : "pas assez d'infos pour mesurer", mode === "comp" ? 0 : null)),
+      // Classement détaillé de tous les hôtels : replié par défaut (tout est aussi dans les fiches hôtel)
+      e('button', { onClick: () => setVoirClassement(!voirClassement), "aria-expanded": voirClassement,
+          style: { display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "12px 16px", marginBottom: voirClassement ? 14 : 0, border: "1px solid #E1E4EA", borderRadius: 12, background: "white", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#14171F", textAlign: "left" } },
+        voirClassement ? "▾" : "▸", "Classement détaillé des " + tri.length + " hôtels",
+        e('span', { style: { fontWeight: 400, fontSize: 12.5, color: "#5A6172" } }, voirClassement ? "— cliquer pour replier" : "— scores par domaine, évolution sur 7 jours, filtre SOC")),
+      voirClassement && e('div', null,
       e('div', { style: { display: "flex", gap: isMobile ? 14 : 24, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end", borderBottom: "1px solid #E1E4EA" } },
         e('span', { style: { fontSize: 12.5, color: "#5A6172", paddingBottom: 11 } }, "Classer selon :"),
         onglet(mode === "comp" ? "Score global" : "Conformité globale", dom === "all", () => setDom("all"), true),
@@ -321,7 +328,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
                 return e('button', { key: k, onClick: () => ouvrir(pg, x.id), title: l + " : " + (dv == null ? "sans objet" : dv + " %") + " — ouvrir " + (CPL_NOM_PAGE[pg] || pg) + " pour " + x.nom,
                   style: { width: CPL_CASE, height: 24, padding: 0, border: "none", borderRadius: 4, background: db.bg, color: db.fg, fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } }, dv == null ? "—" : dv);
               })));
-          })))));
+          }))))));
   };
 
   // (Onglet « Tournées » retiré le 24/11/2026 : il faisait doublon avec le classement)
