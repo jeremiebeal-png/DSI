@@ -689,12 +689,22 @@ async function routeMachines(env) {
   const enAttente = (await essai("os-patches (approuvés)", () => ninjaRequeteToutes(env, `/v2/queries/os-patches?status=APPROVED&pageSize=1000`, 5))) || [];
   const enEchec = (await essai("os-patches (échecs)", () => ninjaRequeteToutes(env, `/v2/queries/os-patches?status=FAILED&pageSize=1000`, 3))) || [];
   const installes = await essai("os-patch-installs", () => ninjaRequeteToutes(env, `/v2/queries/os-patch-installs?status=INSTALLED&installedAfter=${il30j}&pageSize=1000`, 6));
+  // Logiciels tiers (Java, Chrome, Adobe, Zoom…) : nécessite la gestion des correctifs logiciels dans la stratégie NinjaOne.
+  // null = requête refusée / non suivie → la colonne reste vide au lieu d'afficher « à jour ».
+  const logAtt = await essai("software-patches (approuvés)", () => ninjaRequeteToutes(env, `/v2/queries/software-patches?status=APPROVED&pageSize=1000`, 3));
+  const logMan = await essai("software-patches (manuels)", () => ninjaRequeteToutes(env, `/v2/queries/software-patches?status=MANUAL&pageSize=1000`, 2));
+  const logEch = await essai("software-patches (échecs)", () => ninjaRequeteToutes(env, `/v2/queries/software-patches?status=FAILED&pageSize=1000`, 1));
+  const logSuivi = logAtt !== null && logAtt !== undefined;
 
   const grouper = l => { const m = {}; l.forEach(x => { (m[x.deviceId] = m[x.deviceId] || []).push(x); }); return m; };
   const avPar = grouper(av);
   const utile = (p) => !/DRIVER|DEFINITION/i.test(String(p.type || ""));
   const attPar = grouper(enAttente.filter(p => /PENDING|APPROVED|MANUAL/i.test(String(p.status || "")) && utile(p)));
   const echPar = grouper(enEchec.filter(p => /FAIL/i.test(String(p.status || "")) && utile(p)));
+  const logAttPar = grouper([...(logAtt || []), ...(logMan || [])]);
+  const logEchPar = grouper(logEch || []);
+  const nomPatch = (p) => String(p.title || p.name || p.productName || p.kbNumber || "").trim();
+  const liste = (...ls) => { const v = [...new Set([].concat(...ls).map(nomPatch).filter(Boolean))]; return v.length ? v.slice(0, 15) : null; };
   const limite30 = Date.now() / 1000 - 30 * 86400;
   const majRecente = new Set((installes || []).filter(x => { const t = Number(x.installedAt || x.timestamp || 0); return !t || (t > 1e12 ? t / 1000 : t) >= limite30; }).map(x => x.deviceId));
   const actif = (l) => !/^\s*none\s*$/i.test(String(l.productName || "")) && (!l.productState || /^(ON|ENABLED|ACTIVE)$/i.test(String(l.productState)));
@@ -724,6 +734,10 @@ async function routeMachines(env) {
       maj_attente: (attPar[d.id] || []).length,
       maj_echec: (echPar[d.id] || []).length,
       maj_30j: installes ? majRecente.has(d.id) : null,
+      maj_liste: liste(echPar[d.id] || [], attPar[d.id] || []),
+      log_attente: logSuivi ? (logAttPar[d.id] || []).length : null,
+      log_echec: logSuivi ? (logEchPar[d.id] || []).length : null,
+      log_liste: logSuivi ? liste(logEchPar[d.id] || [], logAttPar[d.id] || []) : null,
       av_nom: choix ? String(choix.productName || "").trim() || null : null,
       av_actif: type === "Hôte" ? null : !!choix,
       av_def_ok: choix && choix.definitionStatus ? /up.?to.?date|current/i.test(String(choix.definitionStatus)) : null,

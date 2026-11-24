@@ -606,13 +606,39 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const listeOs = Object.entries(parOs).sort((a, b2) => b2[1].n - a[1].n);
   const maxOs = listeOs.length ? listeOs[0][1].n : 1;
   const finVie = actives.filter(m => m.fin_de_vie && m.fin_de_vie < new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10)).sort((a, b2) => String(a.fin_de_vie).localeCompare(String(b2.fin_de_vie)));
+  // Mises à jour : Windows (correctifs du système) et logiciels tiers (Java, Chrome, Adobe…) remontés par NinjaOne
+  const winAFaire = (m) => m.type !== "Hôte" && (m.maj_attente || 0) > 0;
+  const logAFaire = (m) => (m.log_attente || 0) + (m.log_echec || 0) > 0;
+  const ligneMaj = (lbl, etat, n, liste, enEchec) => {
+    const c = etat === "ok" ? "#2F855A" : etat === "ech" ? "#C53030" : etat === "att" ? "#B45309" : "#8A90A0";
+    const noms = Array.isArray(liste) ? liste : [];
+    return e('div', { title: noms.length ? noms.join("\n") : undefined, style: { marginBottom: 3 } },
+      e('div', { style: { display: "flex", alignItems: "center", gap: 6, color: c, fontWeight: etat === "ok" || etat === "nd" ? 500 : 600 } },
+        e('span', { style: { width: 8, height: 8, borderRadius: "50%", background: c, flexShrink: 0 } }),
+        lbl + " : " + (etat === "ok" ? "à jour" : etat === "nd" ? "non suivi" : n + (enEchec ? " en échec" : " à installer"))),
+      noms.length > 0 && etat !== "ok" && e('div', { style: { fontSize: 11.5, color: "#5A6172", paddingLeft: 14, lineHeight: 1.35 } },
+        noms.slice(0, 2).map((t, i) => e('div', { key: i, style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t)),
+        noms.length > 2 && e('div', null, "+ " + (noms.length - 2) + " autre(s)")));
+  };
+  const logSuivi = M.some(m => m.log_attente != null);
+  const celluleMaj = (m) => {
+    if (m.type === "Hôte") return e('span', { style: { color: "#8A90A0" } }, "—");
+    const wEch = m.maj_echec || 0, wTot = m.maj_attente || 0;
+    const lEch = m.log_echec || 0, lTot = (m.log_attente || 0) + lEch;
+    return e('div', null,
+      ligneMaj("Windows", wEch > 0 ? "ech" : wTot > 0 ? "att" : "ok", wEch > 0 ? wEch : wTot, m.maj_liste, wEch > 0),
+      logSuivi && ligneMaj("Logiciels", m.log_attente == null ? "nd" : lEch > 0 ? "ech" : lTot > 0 ? "att" : "ok", lEch > 0 ? lEch : lTot, m.log_liste, lEch > 0));
+  };
   // Tableau des machines
   const FILTRES = [["tous", "Toutes (" + actives.length + ")"], ["serv", "Serveurs (" + actives.filter(m => m.type !== "Poste").length + ")"], ["postes", "Postes (" + actives.filter(m => m.type === "Poste").length + ")"],
-    ["bas", "Note sous 70"], ["av", "Sans antivirus"], ["maj", "Mises à jour en retard"], ["eol", "Fin de vie"], ["inactives", "Non vues depuis 8 j (" + inactives.length + ")"]];
-  const filtrees = (filtreM === "inactives" ? inactives : actives).filter(m => filtreM === "tous" || filtreM === "inactives" ? true : filtreM === "serv" ? m.type !== "Poste" : filtreM === "postes" ? m.type === "Poste" : filtreM === "bas" ? (m.note || 0) < 70 : aRaison(m, filtreM))
+    ["bas", "Note sous 70"], ["av", "Sans antivirus"], ["maj", "Mises à jour en retard"],
+    ["win", "Windows à mettre à jour (" + actives.filter(winAFaire).length + ")"],
+    ...(actives.some(m => m.log_attente != null) ? [["log", "Logiciels à mettre à jour (" + actives.filter(logAFaire).length + ")"]] : []),
+    ["eol", "Fin de vie"], ["inactives", "Non vues depuis 8 j (" + inactives.length + ")"]];
+  const filtrees = (filtreM === "inactives" ? inactives : actives).filter(m => filtreM === "tous" || filtreM === "inactives" ? true : filtreM === "serv" ? m.type !== "Poste" : filtreM === "postes" ? m.type === "Poste" : filtreM === "bas" ? (m.note || 0) < 70 : filtreM === "win" ? winAFaire(m) : filtreM === "log" ? logAFaire(m) : aRaison(m, filtreM))
     .sort((a, b2) => (a.note == null ? 999 : a.note) - (b2.note == null ? 999 : b2.note) || String(a.nom).localeCompare(String(b2.nom)));
   const visibles = voirTout ? filtrees : filtrees.slice(0, 15);
-  const colsM = "minmax(140px, 1.1fr) 70px 110px minmax(160px, 1.2fr) 90px 70px minmax(220px, 2fr)";
+  const colsM = "minmax(140px, 1.1fr) 70px 110px minmax(160px, 1.2fr) minmax(170px, 1.2fr) 90px 70px minmax(220px, 2fr)";
   const ongletM = (k, l) => e('button', { key: k, onClick: () => { setFiltreM(k); setVoirTout(false); }, style: { background: "none", border: "none", borderBottom: "3px solid " + (filtreM === k ? "#14171F" : "transparent"), padding: "8px 2px 9px", marginBottom: -1, fontSize: 13.5, fontWeight: filtreM === k ? 700 : 500, color: filtreM === k ? "#14171F" : "#5A6172", cursor: "pointer", whiteSpace: "nowrap" } }, l);
 
   const blocMachines = () => [
@@ -670,15 +696,16 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
       det && det.machErr ? e('div', { key: "e", style: { fontSize: 13, color: "#A8401F", padding: "12px 0" } }, "Note par machine indisponible : " + det.machErr) :
       !det ? e('div', { key: "c", style: { fontSize: 13, color: "#888", padding: "12px 0" } }, "Chargement…") :
       M.length === 0 ? e('div', { key: "z", style: { fontSize: 13, color: "#5A6172", padding: "12px 0" } }, "Aucune machine lue pour cet hôtel. Cliquez sur « Relire les machines NinjaOne » (vérifiez aussi le « Nom NinjaOne » de l'hôtel).") :
-      e('div', { key: "t", style: { overflowX: "auto" } }, e('div', { style: { minWidth: 980 } },
+      e('div', { key: "t", style: { overflowX: "auto" } }, e('div', { style: { minWidth: 1160 } },
         e('div', { style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "10px 0", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em", borderBottom: "1px solid #E1E4EA" } },
-          e('div', null, "Machine"), e('div', null, "Type"), e('div', null, "IP"), e('div', null, "Système"), e('div', null, "Vue"), e('div', { style: { textAlign: "center" } }, "Note"), e('div', null, "Raisons")),
+          e('div', null, "Machine"), e('div', null, "Type"), e('div', null, "IP"), e('div', null, "Système"), e('div', null, "Mises à jour"), e('div', null, "Vue"), e('div', { style: { textAlign: "center" } }, "Note"), e('div', null, "Raisons")),
         visibles.map(m => { const b = cplBande(m.note);
           return e('div', { key: m.ninja_id, style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "9px 0", fontSize: 13, borderBottom: "1px solid #EEF0F4", alignItems: "start" } },
             e('div', { style: { fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" } }, m.nom),
             e('div', null, m.type),
             e('div', { style: { color: "#4A5060", fontVariantNumeric: "tabular-nums" } }, m.ip || "—"),
             e('div', null, osCourt(m), m.av_nom && e('div', { style: { fontSize: 11.5, color: "#5A6172" } }, m.av_nom)),
+            celluleMaj(m),
             e('div', { style: { color: m.jours >= 3 ? "#8A5A00" : "#14171F" } }, ilYa(m.dernier_contact) || "—"),
             e('div', { style: { display: "flex", justifyContent: "center" } }, e('span', { style: { minWidth: 40, textAlign: "center", padding: "3px 8px", borderRadius: 999, fontWeight: 700, background: b.bg, color: b.fg } }, m.note == null ? "—" : m.note)),
             e('div', { style: { display: "flex", flexDirection: "column", gap: 2 } }, (m.raisons || []).length === 0 ? e('span', { style: { color: "#5A6172" } }, "Rien à signaler") :
