@@ -141,6 +141,19 @@ function Page_capex(ctx) {
       setCxAuto(prev => ({ ...prev, busy: "", msg: (erreurs.length ? "⚠ " + erreurs.join(" | ") : "✅ " + (simulation ? "Aperçu prêt (rien n'a été modifié)." : faits + " établissement(s) mis à jour.")) }));
       if (!simulation) { await loadCapex(); await loadCxAuto(); }
     };
+    // Superviseur : actualiser lui-même l'inventaire NinjaOne de son hôtel (lignes « 3 à 5 ans » et « plus de 5 ans »)
+    const hotelClient = !isAdmin ? hotels.find(h => h.id === myHotelId) : null;
+    const actualiserClient = async () => {
+      if (!hotelClient) return;
+      setCxAuto(prev => ({ ...prev, busy: hotelClient.name, msg: "⏳ Lecture de l'inventaire NinjaOne… (jusqu'à une minute)" }));
+      try {
+        const r = await callSophosApi("/capex-inventaire", { hotelId: hotelClient.id });
+        setCxAuto(prev => ({ ...prev, busy: "", msg: "✅ Inventaire à jour : " + (r.nb_5 || 0) + " machine(s) de plus de 5 ans, " + (r.nb_3_5 || 0) + " de 3 à 5 ans." }));
+        await loadCapex();
+      } catch (e) {
+        setCxAuto(prev => ({ ...prev, busy: "", msg: "⚠ " + (e.message || e) }));
+      }
+    };
     const panneauAuto = isAdmin && cxa.ouvert && React.createElement('div', { style: { background: "white", border: "1px solid #E8E8F0", borderRadius: 10, padding: "14px 16px", marginBottom: 16 } },
       React.createElement('div', { style: { fontSize: 13.5, fontWeight: 600, color: "#1a1a3e", marginBottom: 4 } }, "🤖 Inventaire automatique NinjaOne"),
       React.createElement('div', { style: { fontSize: 12, color: "#777", lineHeight: 1.6, marginBottom: 10 } },
@@ -200,9 +213,12 @@ function Page_capex(ctx) {
         React.createElement('button', { onClick: loadCapex, style: { ...selS, cursor: "pointer" } }, cxLoading ? "…" : "↻"),
         React.createElement('button', { onClick: exporterCsv, disabled: !lignes.length, style: { ...selS, cursor: "pointer" } }, "⬇ Export Excel (CSV)"),
         isAdmin && React.createElement('button', { onClick: ouvrirAuto, style: { ...selS, cursor: "pointer", marginLeft: "auto", background: cxa.ouvert ? "#F3EEDD" : "white" } }, "🤖 Inventaire NinjaOne"),
-        React.createElement('button', { onClick: ouvrirNouveau, style: { marginLeft: isAdmin ? 0 : "auto", padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Nouvelle ligne")
+        hotelClient && hotelClient.ninjaone_nom && React.createElement('button', { onClick: actualiserClient, disabled: !!cxa.busy, title: "Relit vos postes et serveurs dans NinjaOne et met à jour les lignes « 3 à 5 ans » et « plus de 5 ans »",
+          style: { ...selS, cursor: cxa.busy ? "wait" : "pointer", marginLeft: "auto", fontWeight: 600, opacity: cxa.busy ? 0.6 : 1 } }, cxa.busy ? "⏳ Actualisation…" : "↻ Actualiser les PC de + 3 ans et + 5 ans"),
+        React.createElement('button', { onClick: ouvrirNouveau, style: { marginLeft: (isAdmin || (hotelClient && hotelClient.ninjaone_nom)) ? 0 : "auto", padding: "8px 16px", background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: "pointer" } }, "+ Nouvelle ligne")
       ),
       panneauAuto,
+      !isAdmin && cxa.msg && React.createElement('div', { style: { fontSize: 12.5, color: "#555", background: "white", border: "1px solid #E8E8F0", borderRadius: 8, padding: "8px 12px", marginBottom: 12 } }, cxa.msg),
       cxErr && React.createElement('div', { style: { background: "#FDECEC", border: "1px solid #F5B5B5", color: "#C53030", borderRadius: 8, padding: "10px 12px", fontSize: 12.5, marginBottom: 12 } }, cxErr),
       React.createElement('div', { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 } },
         tuile("Budget total (hors refusés)", eur(somme(actives)), "#0F0F24"),
