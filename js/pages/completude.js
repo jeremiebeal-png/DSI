@@ -633,19 +633,35 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     return e('svg', { width: "100%", height: 34, viewBox: "0 0 300 34", preserveAspectRatio: "none", "aria-hidden": "true" },
       e('polyline', { points: pts.map((v, i) => (i * pas).toFixed(0) + "," + (hh - 3 - (v / 100) * (hh - 6)).toFixed(1)).join(" "), fill: "none", stroke: couleur, strokeWidth: 2.5 }));
   };
+  // Jauge demi-cercle (rouge / jaune / vert) avec aiguille, façon « score de sécurité »
+  const ZONES = { machines: [70, 85], completude: [50, 85], conformite: [70, CPL_OBJECTIF_CONF] };
+  const jauge = (v, champ) => {
+    const [z1, z2] = ZONES[champ] || [50, 85];
+    const cx = 110, cy = 112, r = 88;
+    const pt = (p, rr) => { const a = Math.PI * (1 - Math.max(0, Math.min(100, p)) / 100); return [cx + (rr || r) * Math.cos(a), cy - (rr || r) * Math.sin(a)]; };
+    const arc = (a, b, c) => { const [x1, y1] = pt(a + (a > 0 ? 2.2 : 0)), [x2, y2] = pt(b - (b < 100 ? 2.2 : 0));
+      return e('path', { d: "M" + x1.toFixed(1) + " " + y1.toFixed(1) + " A" + r + " " + r + " 0 0 1 " + x2.toFixed(1) + " " + y2.toFixed(1), fill: "none", stroke: c, strokeWidth: 13, strokeLinecap: "round" }); };
+    const zone = v == null ? null : v >= z2 ? { c: "#17A673", t: "BON" } : v >= z1 ? { c: "#D4A017", t: "MOYEN" } : { c: "#D62D20", t: "FAIBLE" };
+    let aiguille = null;
+    if (v != null) { const a = Math.PI * (1 - Math.max(0, Math.min(100, v)) / 100), [tx, ty] = pt(v, r - 16), px = Math.sin(a) * 4.5, py = Math.cos(a) * 4.5;
+      aiguille = [e('polygon', { key: "n", points: (cx - px).toFixed(1) + "," + (cy - py).toFixed(1) + " " + tx.toFixed(1) + "," + ty.toFixed(1) + " " + (cx + px).toFixed(1) + "," + (cy + py).toFixed(1), fill: "#CBD2DC" }),
+        e('circle', { key: "o", cx, cy, r: 6, fill: "white", stroke: "#CBD2DC", strokeWidth: 2.5 })]; }
+    return { zone, svg: e('svg', { viewBox: "0 0 220 124", width: "100%", style: { maxWidth: 250, display: "block", margin: "0 auto" }, role: "img", "aria-label": "Jauge : " + (v == null ? "pas de valeur" : v + " sur 100") },
+      arc(0, z1, "#D62D20"), arc(z1, z2, "#D4A017"), arc(z2, 100, "#17A673"), aiguille) };
+  };
   const carteScore = (lbl, v, suffixe, champ, sous) => {
-    const t = tendance(champ, v), b = cplBande(v), ouvert = detailScore === champ;
+    const t = tendance(champ, v), ouvert = detailScore === champ, g = jauge(v, champ);
     return e('div', { role: "button", tabIndex: 0, "aria-expanded": ouvert, title: "Cliquer pour voir le détail",
         onClick: () => setDetailScore(ouvert ? "" : champ), onKeyDown: ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setDetailScore(ouvert ? "" : champ); } },
-        style: { cursor: "pointer", borderRadius: 12, outline: ouvert ? "2px solid " + b.c : "none", outlineOffset: -1 } }, carte([
-      e('div', { key: "l", style: { fontSize: 13, color: "#5A6172", display: "flex", gap: 8, alignItems: "center" } }, v != null && e('span', { style: { width: 10, height: 10, borderRadius: 3, background: b.c } }), lbl),
-      e('div', { key: "v", style: { display: "flex", alignItems: "baseline", gap: 10, margin: "4px 0" } },
-        e('span', { style: { fontSize: 32, fontWeight: 700, color: cplTexte(v) } }, v == null ? "—" : v + suffixe),
-        t && e('span', { style: { fontSize: 15, fontWeight: 700, color: t.c } }, t.txt),
-        t && e('span', { style: { fontSize: 12, color: "#5A6172" } }, t.info)),
-      e('div', { key: "c" }, courbe(champ, b.c)),
-      e('div', { key: "s", style: { fontSize: 12.5, color: "#4A5060" } }, sous),
-      e('div', { key: "d", style: { fontSize: 12, color: "#1E4FA8", marginTop: 6, fontWeight: 600 } }, ouvert ? "Masquer le détail ▴" : "Voir le détail ▾")]));
+        style: { cursor: "pointer", borderRadius: 12, outline: ouvert ? "2px solid " + (g.zone ? g.zone.c : "#C9CED8") : "none", outlineOffset: -1 } }, carte([
+      e('div', { key: "l", style: { fontSize: 15, fontWeight: 700, color: "#14171F" } }, lbl),
+      e('div', { key: "s", style: { fontSize: 12.5, color: "#5A6172", marginTop: 2, minHeight: 34 } }, sous),
+      e('div', { key: "g", style: { position: "relative", marginTop: 6 } }, g.svg),
+      e('div', { key: "v", style: { textAlign: "center", marginTop: -6 } },
+        e('div', { style: { fontSize: 34, fontWeight: 800, color: g.zone ? g.zone.c : "#8A90A0", lineHeight: 1.1 } }, v == null ? "—" : v + suffixe),
+        g.zone && e('div', { style: { fontSize: 12, fontWeight: 700, letterSpacing: ".06em", color: g.zone.c } }, g.zone.t),
+        t && e('div', { style: { fontSize: 12, color: "#5A6172", marginTop: 4 } }, e('b', { style: { color: t.c } }, t.txt), " ", t.info)),
+      e('div', { key: "d", style: { fontSize: 12, color: "#1E4FA8", marginTop: 8, fontWeight: 600, textAlign: "center" } }, ouvert ? "Masquer le détail ▴" : "Voir le détail ▾")]));
   };
   // Où agir pour chaque critère : sur cette fiche (formulaire), ou sur une page du portail
   const SAISIE_ICI = { S_RAID: 1, B_RET: 1, A_CONSOLE: 1, A_ESC: 1, M_BLOC: 1, X_MBLOC: 1 };
