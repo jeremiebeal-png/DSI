@@ -6455,10 +6455,18 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const closeDest = nettoyerEmail(ticket.contact_email || (closeHotel && closeHotel.account_email) || "").trim();
     if (notify && closeDest) {
       try {
-        const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || ticket.category || "Votre demande"} — Résolu`;
+        // Objet du ticket rappelé dans le mail : à défaut d'objet, début du message du client
+        const objetTicket = (() => {
+          const o = String(ticket.subject || "").replace(/^\s*(re|tr|fw|fwd)\s*:\s*/i, "").trim();
+          if (o) return o;
+          const m = String(ticket.message || "").replace(/\s+/g, " ").trim();
+          return m ? (m.length > 100 ? m.slice(0, 100).trim() + "…" : m) : "";
+        })();
+        const subject = `[${ticket.reference || "DSI"}] Re: ${ticket.subject || objetTicket || ticket.category || "Votre demande"} — Résolu`;
         const bodyText =
           `Bonjour ${ticket.contact_name || ""},\n\n` +
-          `Votre demande de support a été traitée et est désormais marquée comme résolue.\n\n` +
+          `Votre demande de support${ticket.reference ? " " + ticket.reference : ""} a été traitée et est désormais marquée comme résolue.\n\n` +
+          (objetTicket ? `Objet de la demande : ${objetTicket}\n\n` : "") +
           `Si le problème persiste ou si vous avez une nouvelle question, n'hésitez pas à nous recontacter via votre espace intranet ou à l'adresse ${SUPPORT_EMAIL}.\n\n` +
           `Nous vous remercions de votre confiance.`;
         const mail = buildSignedEmail(bodyText);

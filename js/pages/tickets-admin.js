@@ -251,16 +251,17 @@ function Page_tickets_admin(ctx) {
           const bgLigne = t.prestataire ? prestaColor(t.prestataire) + "0E" : "white";
           const bordLigne = t.prestataire ? "1px solid " + prestaColor(t.prestataire) + "44" : "1px solid #E8E8F0";
           return React.createElement('div', { key: t.id, style: { background: bgLigne, borderRadius: 10, border: bordLigne, overflow: "hidden" } },
-            React.createElement('div', { onClick: () => closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)), onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
+            // Ligne = lien vers le ticket (hors fusion / fermeture groupée) : clic droit « Ouvrir dans un nouvel onglet »,
+            // clic molette ou Ctrl+clic ouvrent un nouvel onglet ; un clic normal déplie le ticket ici.
+            React.createElement((t.reference && !closeMode && !mergeMode) ? 'a' : 'div', { href: (t.reference && !closeMode && !mergeMode) ? lienTicket(t.reference) : undefined, title: (t.reference && !closeMode && !mergeMode && !tableView) ? "Clic droit : ouvrir ce ticket dans un nouvel onglet" : undefined, onClick: (e) => { if (t.reference && !closeMode && !mergeMode) { if (clicNouvelOnglet(e)) return; e.preventDefault(); } closeMode ? toggleCloseSel(t.id) : (mergeMode ? toggleMergeSel(t.id) : toggleTicket(t.id)); }, onMouseEnter: tableView ? (e) => onRowEnter(t, e) : undefined, onMouseMove: tableView ? onRowMove : undefined, onMouseLeave: tableView ? onRowLeave : undefined, style: { textDecoration: "none", color: "inherit", padding: tableView ? "9px 14px" : "13px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, minHeight: tableView ? 0 : 74, boxSizing: "border-box", background: (mergeMode && mergeSel.includes(t.id)) ? G + "10" : ((closeMode && closeSel.includes(t.id)) ? "#FFF5F5" : "transparent") } },
               mergeMode && React.createElement('input', { type: "checkbox", checked: mergeSel.includes(t.id), onChange: () => toggleMergeSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer" } }),
               closeMode && React.createElement('input', { type: "checkbox", checked: closeSel.includes(t.id), onChange: () => toggleCloseSel(t.id), onClick: (e) => e.stopPropagation(), style: { width: 18, height: 18, cursor: "pointer", accentColor: "#E53E3E" } }),
               tableView
                 ? React.createElement(React.Fragment, null,
                     React.createElement('span', { style: { width: 4, height: 28, borderRadius: 3, background: prioColor(t.priority), flexShrink: 0 } }),
                     t.reference
-                      // Référence = lien vers le ticket : clic droit « Ouvrir dans un nouvel onglet » (un clic normal ouvre le ticket ici)
-                      ? React.createElement('a', { href: lienTicket(t.reference), title: "Clic droit : ouvrir ce ticket dans un nouvel onglet",
-                          onClick: (e) => { if (clicNouvelOnglet(e)) { e.stopPropagation(); return; } e.preventDefault(); },
+                      // Référence (la ligne entière est le lien vers le ticket)
+                      ? React.createElement('span', {
                           style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" } }, t.reference)
                       : React.createElement('span', { style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace" } }, "—"),
                     React.createElement('span', { style: { width: "17%", minWidth: 0, display: "flex", alignItems: "center", gap: 7, overflow: "hidden" } },
