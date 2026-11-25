@@ -79,9 +79,6 @@
   .dsi-mtile:active{transform:scale(.96)}
   .dsi-mtile.on{background:#FBF3DF;color:#7A5A12}
   .dsi-mtile .dsi-tico{width:36px;height:36px;border-radius:12px}
-  /* Entrées de menu en liens <a> (clic droit « Ouvrir dans un nouvel onglet ») : même rendu que les boutons */
-  a.dsi-lien,a.dsi-lien:hover,a.dsi-lien:visited{text-decoration:none;box-sizing:border-box;-webkit-user-drag:none}
-  a.dsi-tile{color:inherit}
   html.dsi-dark #root svg.dsi-ico{filter:none}
 </style>
 </head>
@@ -89,7 +86,7 @@
 <div id="root"></div>
 <script>
 // Version des fichiers JS : À CHANGER À CHAQUE DÉPLOIEMENT (évite qu'un navigateur garde un ancien fichier en cache)
-window.DSI_VERSION = "2026-11-25-3";
+window.DSI_VERSION = "2026-11-25-2";
 // Ordre de chargement : core.js d'abord, puis les pages, app.js en dernier (async=false garde l'ordre)
 [
   "js/core.js",
