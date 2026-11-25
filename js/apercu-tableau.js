@@ -15,9 +15,7 @@ function ApercuTableau() {
       const session = data && data.session;
       if (!session) { setEtat({ charge: false, erreur: "connexion" }); return; }
       const { data: prof } = await sb.from("profiles").select("role,full_name").eq("id", session.user.id).maybeSingle();
-      // Phase d'essai : réservé à Jérémie Beal et Pascal Sanglier (même liste que dans le portail)
-      const autorises = ["jeremie.beal@dsihotel.fr", "support@dsihotel.com", "pascal.sanglier@dsihotel.fr"];
-      if (!prof || prof.role !== "admin" || !autorises.includes(String(session.user.email || "").toLowerCase())) { setEtat({ charge: false, erreur: "admin" }); return; }
+      if (!prof || prof.role !== "admin") { setEtat({ charge: false, erreur: "admin" }); return; }
       const { data: hotels, error } = await sb.from("hotels").select("*").order("name");
       if (error) { setEtat({ charge: false, erreur: error.message }); return; }
       setEtat({ charge: false, hotels: hotels || [], nom: prof.full_name || session.user.email });
@@ -31,7 +29,7 @@ function ApercuTableau() {
   const boite = (...x) => e("div", { style: { background: "white", borderRadius: 12, padding: 20, fontSize: 14 } }, ...x);
   if (etat.charge) return corps(e("div", { style: { color: "#888" } }, "Chargement…"));
   if (etat.erreur === "connexion") return corps(boite("Connectez-vous d'abord au ", e("a", { href: "/" }, "portail"), " avec un compte administrateur, puis rouvrez cette page."));
-  if (etat.erreur === "admin") return corps(boite("Page réservée pour l'instant à Jérémie Beal et Pascal Sanglier (phase d'essai)."));
+  if (etat.erreur === "admin") return corps(boite("Page réservée aux administrateurs DSI Hotel."));
   if (etat.erreur) return corps(boite("Erreur : " + etat.erreur));
   return corps(Page_completude({ hotels: etat.hotels, isMobile, setPage: () => { window.location.href = "/"; }, adminFromName: () => etat.nom }));
 }

@@ -957,9 +957,8 @@ function App() {
  const isSuperAdmin = isAdmin && ["support@dsihotel.com", "pascal.sanglier@dsihotel.fr"].includes((profile?.email || "").toLowerCase());
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
-  // Tableau de bord hôtels : réservé pour l'instant à Jérémie Beal et Pascal Sanglier (phase d'essai)
-  const TDB_COMPTES = ["jeremie.beal@dsihotel.fr", "support@dsihotel.com", "pascal.sanglier@dsihotel.fr"];
-  const peutTdb = isAdmin && TDB_COMPTES.includes((profile?.email || "").toLowerCase());
+  // Tableau de bord hôtels : page d'accueil « Tableau de bord » de tous les administrateurs
+  const peutTdb = isAdmin; // ouvert à tous les administrateurs DSI Hotel depuis le 25/11/2026
   const sectionVisible = (s) => s.page === "completude" ? peutTdb : hasPerm(s.key === "ninjaone" ? "docs" : s.key);
   const ADMIN_SECTIONS = [
     { key: "clients",    page: "client-admin",       icon: "🏨", label: "Établissements", grp: "cli" },
