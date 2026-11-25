@@ -1,6 +1,6 @@
 // ===== Page « completude » — condition dans App : page === "completude" && isAdmin =====
 // Tableau de bord des hôtels : score de COMPLÉTUDE (infos renseignées) et de CONFORMITÉ (ce qui est au vert).
-//   - Classement (accueil de la page) : un hôtel par ligne, trait = hôtel le plus renseigné (référence) / objectif 90 %
+//   - Classement (accueil de la page) : un hôtel par ligne, trait = hôtel le plus renseigné (référence) / objectif 95 %
 //   - Fiche hôtel (clic sur un hôtel) : toutes les informations, critère par critère, et les infos à saisir
 //   - Barème : points de chaque critère (modifiables)
 // Calcul côté base : fonction score_mesures() (supabase/completude.sql). Les états sont internes au composant
@@ -23,7 +23,7 @@ const CPL_DOMAINES = {
   comp: [["fiche", "Info Hotel"], ["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"]],   // domaine « Projets » retiré le 23/11/2026
   conf: [["srv", "Serveurs"], ["bkp", "Sauvegardes"], ["av", "Antivirus"], ["m365", "Microsoft 365"], ["chk", "Check-list"], ["mat", "Matériel"]],
 };
-const CPL_OBJECTIF_CONF = 90;
+const CPL_OBJECTIF_CONF = 95;
 // Libellés courts des domaines (en-têtes des petites cases du classement)
 const CPL_COURT = { fiche: "Info", srv: "Srv", bkp: "Sauv", av: "AV", m365: "M365", chk: "Chk", prj: "Proj", mat: "Mat" };
 const CPL_CASE = 40;
@@ -300,7 +300,7 @@ function CompletudeTableau({ hotels, isMobile, setPage, adminFromName, ouvrir })
       carte(e('div', { style: { overflowX: "auto" } },
         e('div', { style: { minWidth: isMobile ? 0 : 980 } },
           !isMobile && e('div', { style: { display: "grid", gridTemplateColumns: cols, gap: 12, padding: "4px 0 10px", borderBottom: "1px solid #E1E4EA", fontSize: 11.5, fontWeight: 600, color: "#5A6172", textTransform: "uppercase", letterSpacing: ".04em" } },
-            e('div', null, "#"), e('div', null, "Établissement"), e('div', null, (mode === "comp" ? "Complétude" : "Conformité") + " · trait = " + (mode === "comp" ? "moyenne des hôtels" : "objectif 90 %")),
+            e('div', null, "#"), e('div', null, "Établissement"), e('div', null, (mode === "comp" ? "Complétude" : "Conformité") + " · trait = " + (mode === "comp" ? "moyenne des hôtels" : "objectif " + CPL_OBJECTIF_CONF + " %")),
             e('div', { style: { textAlign: "right" } }, "Score"), e('div', { style: { textAlign: "right" } }, mode === "comp" ? "Écart / moy." : "Écart / obj."),
             e('div', { style: { textAlign: "right" }, title: titreEvol }, "7 jours"),
             e('div', { style: { textAlign: "center" } }, mode === "comp" ? "Conformité" : "Complétude"),
@@ -634,7 +634,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
       e('polyline', { points: pts.map((v, i) => (i * pas).toFixed(0) + "," + (hh - 3 - (v / 100) * (hh - 6)).toFixed(1)).join(" "), fill: "none", stroke: couleur, strokeWidth: 2.5 }));
   };
   // Jauge demi-cercle (rouge / jaune / vert) avec aiguille, façon « score de sécurité »
-  const ZONES = { machines: [70, 85], completude: [50, 85], conformite: [70, CPL_OBJECTIF_CONF] };
+  const ZONES = { machines: [80, 95], completude: [80, 95], conformite: [80, CPL_OBJECTIF_CONF] }; // rouge sous 80, jaune 80 à 94, vert 95 et plus
   const jauge = (v, champ) => {
     const [z1, z2] = ZONES[champ] || [50, 85];
     const cx = 110, cy = 112, r = 88;
