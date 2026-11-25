@@ -2819,7 +2819,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
 
   // ✅ Oui : compte AD (script NinjaOne sur le DC) puis boîte Microsoft 365, même mot de passe provisoire
   const validerCreation = async (t, plan) => {
-    const { faireAd, faireMail, a, f, info, lic } = plan;
+    const { faireAd, faireMail, a, f, info, lic, ouSync } = plan;
     const adresse = faireMail ? String(f.local || "").trim().toLowerCase() + "@" + f.domaine : "";
     const groupesAd = faireAd ? [...new Set([...Object.values(a.groupesParService || {}).flat(), ...(a.autresGroupes || [])])] : [];
     const resume = [
@@ -2831,7 +2831,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     try {
       const ident = faireMail ? f : a;
       const r = await callOscarProv("/provisioning/valider", {
-        ticketId: t.id, choix: "oui", mail: faireMail, mailAdresse: adresse, confirmeOuNonSynchro: !!(a && a.confirmeOu),
+        ticketId: t.id, choix: "oui", mail: faireMail, mailAdresse: adresse, ouSynchro: !!ouSync,
         compte: faireAd ? { ad: true, sam: a.sam.trim(), suffixe: a.suffixe, ou: a.ou, groupesParService: a.groupesParService, autresGroupes: a.autresGroupes,
           prenom: ident.prenom, nom: ident.nom, nomAffiche: ident.nomAffiche, poste: ident.poste } : { ad: false },
       });
@@ -2842,13 +2842,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           (info.groupes || []).forEach(g => { if (f.groupes.includes(g.id)) groupesNoms[g.id] = g.nom; });
           m365 = await callProvisioning("/provisioning/creer", {
             ticketId: t.id, local: f.local, domaine: f.domaine, prenom: f.prenom, nom: f.nom, nomAffiche: f.nomAffiche,
-            poste: f.poste, service: f.service, skuId: f.skuId, groupes: f.groupes, groupesNoms, telMfa: f.telMfa, motDePasse: r.motDePasse,
+            poste: f.poste, service: f.service, skuId: f.skuId, groupes: f.groupes, groupesNoms, telMfa: f.telMfa, motDePasse: r.motDePasse, synchro: !!(ouSync && r.ad),
           });
         } catch (e) { m365Err = e.message || String(e); }
         // Oscar relit le journal de création et répond au demandeur quand tout est revenu
         try { await callOscarProv("/provisioning/m365-fait", { ticketId: t.id, erreur: m365Err }); } catch (e) {}
       }
-      setProvResultat({ ticketId: t.id, motDePasse: r.motDePasse, ad: r.ad, m365, m365Err, statut: m365Err ? "partiel" : (m365 ? m365.statut : "ok") });
+      setProvResultat({ ticketId: t.id, synchro: !!(ouSync && r.ad), motDePasse: r.motDePasse, ad: r.ad, m365, m365Err, statut: m365Err ? "partiel" : (m365 ? m365.statut : "ok") });
       loadTicketMsgs(t.id);
       chargerProvisioning(t.id);
       chargerFicheAd(t.id);
@@ -2918,7 +2918,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
             React.createElement('code', { style: { fontSize: 18, fontWeight: 700, letterSpacing: 1, color: "#1a1a3e", userSelect: "all", flex: 1, wordBreak: "break-all" } }, R.motDePasse),
             React.createElement('button', { onClick: () => { try { navigator.clipboard.writeText(R.motDePasse); } catch (e) {} }, style: { padding: "6px 12px", background: G, border: "none", color: "#111", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Copier")
           ),
-          React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 8, lineHeight: 1.5 } }, "Il ne sera plus affiché. Transmettez-le au collaborateur par un canal sûr (en main propre ou par téléphone, pas par email). Il ne sert qu'une fois : à la première connexion, " + (R.ad && R.m365 ? "Windows puis Microsoft 365 lui demanderont" : R.ad ? "Windows lui demandera" : "Microsoft 365 lui demandera") + " de choisir son propre mot de passe.")
+          React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 8, lineHeight: 1.5 } }, "Il ne sera plus affiché. Transmettez-le au collaborateur par un canal sûr (en main propre ou par téléphone, pas par email). Il ne sert qu'une fois : " + (R.synchro ? "à la première ouverture de session Windows, il choisira son propre mot de passe ; Microsoft 365 reprendra ce mot de passe après la synchronisation Entra Connect (30 min max)." : "à la première connexion, " + (R.ad && R.m365 ? "Windows puis Microsoft 365 lui demanderont" : R.ad ? "Windows lui demandera" : "Microsoft 365 lui demandera") + " de choisir son propre mot de passe."))
         ),
         R.m365 && React.createElement('div', { style: { marginBottom: 10 } },
           (R.m365.etapes || []).map((e, i) => React.createElement('div', { key: i, style: { fontSize: 12.5, color: e.ok ? "#256029" : "#C53030", marginBottom: 3 } }, (e.ok ? "✓ " : "✗ ") + e.etape + (e.detail && !e.ok ? " — " + e.detail : "")))
@@ -3006,12 +3006,19 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           ...[["prenom", "Prénom"], ["nom", "Nom"], ["nomAffiche", "Nom affiché"], ["poste", "Poste"]].map(([k, l]) => React.createElement('div', { key: k }, React.createElement('label', { style: lbl }, l), React.createElement('input', { value: a[k], onChange: e => setA(k, e.target.value), style: champ })))));
         // OU
         sectionAd.push(React.createElement('label', { key: "lou", style: lbl }, "Unité d'organisation (OU)"));
-        sectionAd.push(React.createElement('select', { key: "ou", value: a.ou, onChange: e => setAdForm(prev => ({ ...prev, ou: e.target.value, confirmeOu: false })), style: { ...champ, marginBottom: 4, borderColor: ouSync ? "#E53E3E" : "#D5DCE8" } },
+        sectionAd.push(React.createElement('select', { key: "ou", value: a.ou, onChange: e => setAdForm(prev => ({ ...prev, ou: e.target.value, confirmeOu: false })), style: { ...champ, marginBottom: 4, borderColor: ouSync ? "#2B6CB0" : "#D5DCE8" } },
           React.createElement('option', { value: "" }, "— Choisir l'OU —"),
-          (lecture.ous || []).map(o => React.createElement('option', { key: o.dn, value: o.dn }, (ouSynchronisee(o.dn, lecture, d) ? "⚠ SYNCHRONISÉE — " : "") + o.dn + " (" + (o.n || 0) + " compte" + ((o.n || 0) > 1 ? "s" : "") + ")"))));
-        if (ouSync) sectionAd.push(React.createElement('div', { key: "ous", style: { fontSize: 11.5, color: "#C53030", marginBottom: 8 } },
-          "Cette OU remonte dans Microsoft 365 (Entra Connect) : le compte ferait doublon avec la boîte mail. Choisissez une OU non synchronisée. ",
-          React.createElement('label', { style: { display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" } }, React.createElement('input', { type: "checkbox", checked: !!a.confirmeOu, onChange: e => setA("confirmeOu", e.target.checked) }), "Je confirme que cette OU n'est pas synchronisée")));
+          (lecture.ous || []).map(o => React.createElement('option', { key: o.dn, value: o.dn }, (ouSynchronisee(o.dn, lecture, d) ? "🔄 synchronisée — " : "") + o.dn + " (" + (o.n || 0) + " compte" + ((o.n || 0) > 1 ? "s" : "") + ")"))));
+        // OU synchronisée : Entra Connect fusionnera le compte Windows et la boîte, à condition que l'identifiant soit l'adresse mail
+        const pfOu = provForm && provForm.ticketId === t.id ? provForm : null;
+        const mailOu = pfOu && mailVisible && mailFaire ? (String(pfOu.local || "").trim().toLowerCase() + "@" + pfOu.domaine) : "";
+        const suffixeMail = mailOu ? (lecture.suffixes || []).map(x => String(x).toLowerCase()).find(x => x === mailOu.split("@")[1]) : "";
+        const aligne = !mailOu || (String(a.sam || "") + "@" + a.suffixe).toLowerCase() === mailOu;
+        if (ouSync) sectionAd.push(React.createElement('div', { key: "ous", style: { fontSize: 11.5, color: aligne ? "#2B6CB0" : "#C53030", background: aligne ? "#EBF4FF" : "#FDECEC", borderRadius: 6, padding: "7px 10px", marginBottom: 8, lineHeight: 1.5 } },
+          "🔄 OU synchronisée avec Microsoft 365 (Entra Connect) : le compte Windows et la boîte mail seront fusionnés (un seul compte, un seul mot de passe, changé à l'ouverture de session Windows). " +
+          (mailOu ? (aligne ? "✓ Identifiant identique à l'adresse mail." : "L'identifiant Windows doit être identique à l'adresse mail (" + mailOu + "). ") : ""),
+          !aligne && suffixeMail && React.createElement('button', { onClick: () => setAdForm(prev => ({ ...prev, sam: mailOu.split("@")[0].slice(0, 20), suffixe: suffixeMail })), style: { ...petitBtn, marginLeft: 4 } }, "Aligner sur " + mailOu),
+          !aligne && !suffixeMail && React.createElement('span', null, "Le domaine de l'adresse n'est pas un suffixe UPN de l'AD : ajoutez-le dans « Domaines et approbations Active Directory » ou choisissez une OU non synchronisée.")));
         else sectionAd.push(React.createElement('div', { key: "ouv", style: { marginBottom: 8 } }));
         // Groupes par service
         sectionAd.push(React.createElement('label', { key: "lg", style: lbl }, "Groupes AD (retenus pour l'hôtel)"));
@@ -3026,10 +3033,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         );
         Object.keys(a.groupesParService || {}).forEach(s => sectionAd.push(ligneGroupes(s, s, a.groupesParService[s] || [], l => setAdForm(prev => ({ ...prev, groupesParService: { ...prev.groupesParService, [s]: l } })))));
         sectionAd.push(ligneGroupes("__autres", "Autres", a.autresGroupes || [], l => setA("autresGroupes", l)));
-        manqueAd = !/^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(a.sam || "") ? "identifiant Windows invalide" : !a.suffixe ? "suffixe UPN" : !a.ou ? "choisissez l'OU" : (ouSync && !a.confirmeOu) ? "OU synchronisée" : (!(mailVisible && mailFaire) && !String(a.nomAffiche || "").trim()) ? "nom affiché" : "";
+        manqueAd = !/^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(a.sam || "") ? "identifiant Windows invalide" : !a.suffixe ? "suffixe UPN" : !a.ou ? "choisissez l'OU" : (ouSync && !aligne) ? "identifiant Windows ≠ adresse mail (OU synchronisée)" : (!(mailVisible && mailFaire) && !String(a.nomAffiche || "").trim()) ? "nom affiché" : "";
       }
     }
     const faireAd = !!(adPret && a && a.faire);
+    const ouSyncChoisie = !!(faireAd && a.ou && ouSynchronisee(a.ou, lecture, d));
 
     // ---------- Section boîte Microsoft 365 ----------
     let sectionMail = [], manqueMail = "", lic = null;
@@ -3108,7 +3116,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", marginTop: 12, paddingTop: 10, borderTop: "1px solid #DCE6F4" } },
         manque && React.createElement('span', { style: { fontSize: 11.5, color: "#8A6D1F" } }, "Pour valider : " + manque),
         fiche && React.createElement('button', { onClick: () => refuserCreation(t), disabled: provBusy, style: { padding: "9px 16px", background: "white", border: "1px solid #E53E3E", color: "#C53030", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: provBusy ? "default" : "pointer" } }, "❌ Non"),
-        React.createElement('button', { onClick: () => validerCreation(t, { faireAd, faireMail, a, f, info: d, lic }), disabled: !!manque || provBusy, style: { padding: "9px 18px", background: manque ? "#B8C4D6" : "#256029", border: "none", color: "white", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: manque || provBusy ? "default" : "pointer", opacity: provBusy ? 0.6 : 1 } }, provBusy ? "Création en cours…" : "✅ Oui, créer" + (faireAd && faireMail ? " (Windows + mail)" : faireAd ? " le compte Windows" : faireMail ? " la boîte mail" : ""))
+        React.createElement('button', { onClick: () => validerCreation(t, { faireAd, faireMail, a, f, info: d, lic, ouSync: ouSyncChoisie }), disabled: !!manque || provBusy, style: { padding: "9px 18px", background: manque ? "#B8C4D6" : "#256029", border: "none", color: "white", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: manque || provBusy ? "default" : "pointer", opacity: provBusy ? 0.6 : 1 } }, provBusy ? "Création en cours…" : "✅ Oui, créer" + (faireAd && faireMail ? " (Windows + mail)" : faireAd ? " le compte Windows" : faireMail ? " la boîte mail" : ""))
       )
     );
   };

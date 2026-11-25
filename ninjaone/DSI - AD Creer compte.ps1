@@ -92,7 +92,11 @@ try {
   if ($prenom) { $params['GivenName'] = $prenom }
   if ($nom) { $params['Surname'] = $nom }
   if ("$($p.poste)".Trim()) { $params['Title'] = (Couper $p.poste 128) }
-  if ("$($p.mail)" -match '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') { $params['EmailAddress'] = "$($p.mail)" }
+  if ("$($p.mail)" -match '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') {
+    # Adresse de la boîte Microsoft 365 : mail + proxyAddresses (permet à Entra Connect de fusionner les deux comptes si l'OU est synchronisée)
+    $params['EmailAddress'] = "$($p.mail)"
+    $params['OtherAttributes'] = @{ proxyAddresses = @("SMTP:$($p.mail)") }
+  }
 
   New-ADUser @params
   $mdp = $null; $params['AccountPassword'] = $null
