@@ -9,8 +9,9 @@ function Page_capex(ctx) {
     isMobile, loadCapex, mesHotels, myHotelId, session, setCxAnnee, setCxForm, setCxHotel, setCxModal, setCxNewFiles,
     setCxRows, setCxSaving, setCxStatut, cxOuverts, setCxOuverts, cxAuto, setCxAuto, loadCxAuto, callSophosApi
   } = ctx;
-    // Superviseur multi-hôtels : ses hôtels ; superviseur d'un seul hôtel : son hôtel
-    const hotelsCx = isAdmin ? hotels : (mesHotels.length ? mesHotels : hotels.filter(h => h.id === myHotelId));
+    // Superviseur : uniquement l'hôtel actif (règle Supabase : un hôtel ne voit que son CAPEX).
+    // Un superviseur de groupe change d'hôtel avec le menu de l'en-tête.
+    const hotelsCx = isAdmin ? hotels : hotels.filter(h => h.id === myHotelId);
     const nomHotelCx = (id) => { const h = hotelsCx.find(x => x.id === id) || hotels.find(x => x.id === id); return h ? h.name : "?"; };
     const eur = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(Number(v) || 0);
     const totalLigne = (r) => (Number(r.montant_ht) || 0);
