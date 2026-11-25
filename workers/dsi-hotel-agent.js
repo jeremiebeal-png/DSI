@@ -2109,7 +2109,13 @@ async function provFinaliser(env, ticketId) {
   else l.push("La création des accès de " + nom + " est en partie faite ; un technicien termine le reste :");
   if (d.ad) l.push(ad && ad.ok ? "- Compte Windows : " + (ad.netbios ? ad.netbios + "\\" : "") + d.compte.sam + " (" + d.compte.upn + ")" : "- Compte Windows : à finaliser par un technicien");
   if (d.mail) l.push(m && (m.statut === "ok" || m.statut === "partiel") ? "- Adresse mail : " + m.upn + " (active d'ici quelques minutes)" : "- Adresse mail : à finaliser par un technicien");
-  l.push("", "Le mot de passe provisoire n'est jamais envoyé par email : il sera remis par un technicien DSI Hotel" + (f.rdvCreneau ? " lors du rendez-vous prévu" : "") + ". Il devra être changé à la première connexion.");
+  l.push("", "Le mot de passe provisoire n'est jamais envoyé par email : il sera remis par un technicien DSI Hotel" + (f.rdvCreneau ? " lors du rendez-vous prévu" : "") + ".");
+  // Première connexion : Windows (ChangePasswordAtLogon) et Microsoft 365 (forceChangePasswordNextSignIn) imposent un nouveau mot de passe
+  const lu = fiche.ad_lecture || {};
+  const longueur = Math.max(d.mail ? 8 : 0, parseInt(lu.mdpLongueurMin, 10) || 0, 8);
+  const ouvertures = [d.ad && ad && ad.ok ? "à l'ouverture de session Windows" : "", d.mail && m && m.statut && m.statut !== "echec" ? "à la connexion à Microsoft 365 (Outlook, Teams, office.com)" : ""].filter(Boolean);
+  if (ouvertures.length) l.push("À la première connexion, " + ouvertures.join(" puis ") + ", " + (nom || "le collaborateur") + " devra saisir le mot de passe provisoire puis choisir son propre mot de passe" +
+    (ouvertures.length > 1 ? " (une fois pour Windows, une fois pour Microsoft 365)" : "") + " : au moins " + longueur + " caractères, avec des majuscules, des minuscules, des chiffres et un caractère spécial, sans reprendre son nom.");
   const reste = provReste(f);
   if (reste.length) l.push("", "Encore à faire par notre équipe :", ...reste.map(x => "- " + x));
   const corps = l.join("\n");

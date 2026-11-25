@@ -2918,7 +2918,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
             React.createElement('code', { style: { fontSize: 18, fontWeight: 700, letterSpacing: 1, color: "#1a1a3e", userSelect: "all", flex: 1, wordBreak: "break-all" } }, R.motDePasse),
             React.createElement('button', { onClick: () => { try { navigator.clipboard.writeText(R.motDePasse); } catch (e) {} }, style: { padding: "6px 12px", background: G, border: "none", color: "#111", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Copier")
           ),
-          React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 8, lineHeight: 1.5 } }, "Il ne sera plus affiché. Transmettez-le au collaborateur par un canal sûr (en main propre ou par téléphone, pas par email). Il devra le changer à sa première connexion.")
+          React.createElement('div', { style: { fontSize: 11.5, color: "#8A6D1F", marginTop: 8, lineHeight: 1.5 } }, "Il ne sera plus affiché. Transmettez-le au collaborateur par un canal sûr (en main propre ou par téléphone, pas par email). Il ne sert qu'une fois : à la première connexion, Windows" + (R.m365 ? " puis Microsoft 365 lui demanderont" : " lui demandera") + " de choisir son propre mot de passe.")
         ),
         R.m365 && React.createElement('div', { style: { marginBottom: 10 } },
           (R.m365.etapes || []).map((e, i) => React.createElement('div', { key: i, style: { fontSize: 12.5, color: e.ok ? "#256029" : "#C53030", marginBottom: 3 } }, (e.ok ? "✓ " : "✗ ") + e.etape + (e.detail && !e.ok ? " — " + e.detail : "")))
