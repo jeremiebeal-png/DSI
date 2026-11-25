@@ -51,6 +51,8 @@
   /* ====== MENU : barre horizontale + méga-menu (ordinateur), onglets en bas (mobile) ====== */
   .dsi-top{height:42px;padding:0 13px;border:0;border-radius:10px;background:transparent;font:inherit;font-size:13.5px;font-weight:500;color:rgba(255,255,255,.78);display:flex;align-items:center;gap:6px;cursor:pointer;position:relative;white-space:nowrap;flex-shrink:0;transition:background .15s,color .15s}
   .dsi-top:hover{background:rgba(255,255,255,.08);color:#fff}
+  /* Menu : jamais de texte souligné (certains navigateurs soulignent les boutons) */
+  .dsi-top,.dsi-top *,.dsi-tile,.dsi-tile *,.dsi-topnav button,.dsi-topnav button *{text-decoration:none!important}
   .dsi-top.cur{color:#E7C977}
   .dsi-top.cur::after{content:"";position:absolute;left:13px;right:13px;bottom:3px;height:2px;border-radius:2px;background:#C9A84C}
   .dsi-top.open{background:rgba(201,168,76,.16);color:#E7C977}
@@ -86,7 +88,7 @@
 <div id="root"></div>
 <script>
 // Version des fichiers JS : À CHANGER À CHAQUE DÉPLOIEMENT (évite qu'un navigateur garde un ancien fichier en cache)
-window.DSI_VERSION = "2026-11-25-2";
+window.DSI_VERSION = "2026-11-25-3";
 // Ordre de chargement : core.js d'abord, puis les pages, app.js en dernier (async=false garde l'ordre)
 [
   "js/core.js",
