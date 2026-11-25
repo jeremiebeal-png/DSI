@@ -957,9 +957,8 @@ function App() {
  const isSuperAdmin = isAdmin && ["support@dsihotel.com", "pascal.sanglier@dsihotel.fr"].includes((profile?.email || "").toLowerCase());
   // Le super-admin a tout ; les autres admins ont leur liste de permissions
   const hasPerm = (perm) => isSuperAdmin || (profile?.permissions || []).includes(perm);
-  // Tableau de bord hôtels : réservé pour l'instant à Jérémie Beal et Pascal Sanglier (phase d'essai)
-  const TDB_COMPTES = ["jeremie.beal@dsihotel.fr", "support@dsihotel.com", "pascal.sanglier@dsihotel.fr"];
-  const peutTdb = isAdmin && TDB_COMPTES.includes((profile?.email || "").toLowerCase());
+  // Tableau de bord hôtels : page d'accueil « Tableau de bord » de tous les administrateurs
+  const peutTdb = isAdmin; // ouvert à tous les administrateurs DSI Hotel depuis le 25/11/2026
   const sectionVisible = (s) => s.page === "completude" ? peutTdb : hasPerm(s.key === "ninjaone" ? "docs" : s.key);
   const ADMIN_SECTIONS = [
     { key: "clients",    page: "client-admin",       icon: "🏨", label: "Établissements", grp: "cli" },
@@ -1016,7 +1015,7 @@ function App() {
   useEffect(() => {
     if (tdbAccueilFait.current || !peutTdb) return;
     tdbAccueilFait.current = true;
-    if (page === "accueil" && !pendingOuvrir) setPage("completude");
+    if (page === "accueil" && !pendingOuvrir && !PAGE_URL_INITIALE) setPage("completude");
   }, [peutTdb]);
 
   // Ouvre une page du portail directement sur un hôtel (utilisé par le Tableau de bord hôtels)
@@ -1103,7 +1102,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           if (!window.__dsiPageInit) {
             window.__dsiPageInit = true;
             const refDirect = data.role === "admin" && pendingTicketRef;
-            setPage(refDirect ? "tickets-admin" : "accueil");
+            // Page demandée dans l'adresse (?page=…, ex. lien ouvert dans un nouvel onglet)
+            const pu = !refDirect && PAGE_URL_INITIALE;
+            if (pu && pu.id) setSelId(/^\d+$/.test(pu.id) ? Number(pu.id) : pu.id);
+            setPage(refDirect ? "tickets-admin" : (pu ? pu.page : "accueil"));
           }
         }
       });
@@ -1321,6 +1323,37 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setMenuOpen(false); // referme le menu mobile après navigation
     if (id && p === "proc-detail") loadFilesFor(id);
   };
+
+  // ---------- ADRESSE DE LA PAGE (?page=…) ----------
+  // L'adresse suit la page affichée : un lien peut être ouvert dans un nouvel onglet
+  // et les boutons Précédent / Suivant du navigateur changent de page.
+  useEffect(() => {
+    if (!profile || recoveryMode) return;
+    let q; try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+    // Liens directs encore en cours de traitement : ils nettoient eux-mêmes l'adresse
+    if (q.get("ticket") || q.get("ouvrir") || q.get("admin_consent") || q.get("state")) return;
+    const idUrl = (page === "proc-detail" || page === "knowledge") && selId ? String(selId) : null;
+    if (q.get("page") === page && (q.get("id") || null) === idUrl) return;
+    const url = lienPage(page, idUrl);
+    try {
+      if (q.get("page")) window.history.pushState({ page, id: idUrl }, "", url);
+      else window.history.replaceState({ page, id: idUrl }, "", url);
+    } catch (e) {}
+  }, [page, selId, profile, recoveryMode]);
+  useEffect(() => {
+    const onPop = () => {
+      let q; try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+      const p = q.get("page");
+      if (!p) return;
+      const id = q.get("id");
+      setPage(p);
+      setSelId(id ? (/^\d+$/.test(id) ? Number(id) : id) : null);
+      setShowProcForm(false); setMenuOpen(false); setMegaOpen(null); setPlusOpen(false);
+      if (id && p === "proc-detail") loadFilesFor(/^\d+$/.test(id) ? Number(id) : id);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  });
 
   // ---------- LOGIN / LOGOUT ----------
   const doLogin = async () => {
@@ -8448,6 +8481,10 @@ const nav = isAdmin
     React.createElement('path', { d: NAV_SVG[key] })) : null;
   const navIco = (p, emoji, size) => navSvg(p, size) || React.createElement('span', { style: { fontSize: size - 2, lineHeight: 1 } }, emoji);
   const goNav = (p) => { setMegaOpen(null); setPlusOpen(false); setMenuOpen(false); go(p); };
+  // Entrée de menu = vrai lien <a href="?page=…"> : clic droit « Ouvrir dans un nouvel onglet »,
+  // Ctrl+clic et clic molette ouvrent la page dans un autre onglet ; un clic normal reste dans l'onglet.
+  const navLien = (p, props, ...enfants) => React.createElement('a', { ...props, href: lienPage(p),
+    onClick: (e) => { if (clicNouvelOnglet(e)) { setMegaOpen(null); return; } e.preventDefault(); goNav(p); } }, ...enfants);
   const nbAlertesMenu = nbAlertesDefenderMenu + nbAlertesSophosMenu + nbAlertesBackupMenu;
   const badgeDe = (p) => (p === "tickets-admin" && nbAlertesMenu > 0) ? nbAlertesMenu : 0;
   // Groupes dans l'ordre d'affichage ; un groupe d'une seule page devient une entrée simple
@@ -8467,10 +8504,10 @@ const nav = isAdmin
   // ---------- Ordinateur : barre horizontale ----------
   const topNav = !isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 50 } },
     React.createElement('div', { style: { height: 64, background: SB, display: "flex", alignItems: "center", gap: 16, padding: "0 18px", boxShadow: "0 2px 14px rgba(15,15,36,.18)" } },
-      React.createElement('button', { onClick: () => goNav("accueil"), title: "Accueil", style: { background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", flexShrink: 0 } },
+      navLien("accueil", { title: "Accueil", style: { background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", flexShrink: 0 } },
         React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 34, maxWidth: 150, objectFit: "contain", display: "block" } })),
       React.createElement('nav', { className: "dsi-topnav", "aria-label": "Menu principal", style: { display: "flex", alignItems: "center", gap: 2, flex: 1, minWidth: 0, overflowX: "auto" } },
-        navSimples.filter(it => it.p === "accueil").map(it => React.createElement('button', { key: it.p, className: "dsi-top" + (page === it.p ? " cur" : ""), onClick: () => goNav(it.p) }, it.label)),
+        navSimples.filter(it => it.p === "accueil").map(it => navLien(it.p, { key: it.p, className: "dsi-top dsi-lien" + (page === it.p ? " cur" : "") }, it.label)),
         navGroupes.map(g => {
           const ouvert = megaOpen && megaOpen.id === g.id;
           const nb = badgeGroupe(g);
@@ -8481,7 +8518,7 @@ const nav = isAdmin
             nb > 0 && React.createElement('span', { style: { width: 7, height: 7, borderRadius: 4, background: "#E53E3E", animation: "dsiPulseRouge 1.4s ease-in-out infinite" } }),
             React.createElement('span', { className: "dsi-chev" }, React.createElement('svg', { className: "dsi-ico", width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.6, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" }, React.createElement('path', { d: "M6 9l6 6 6-6" }))));
         }),
-        navSimples.filter(it => it.p !== "accueil").map(it => React.createElement('button', { key: it.p, className: "dsi-top" + (page === it.p ? " cur" : ""), onClick: () => goNav(it.p) }, it.label))
+        navSimples.filter(it => it.p !== "accueil").map(it => navLien(it.p, { key: it.p, className: "dsi-top dsi-lien" + (page === it.p ? " cur" : "") }, it.label))
       ),
       isAdmin && React.createElement('button', { onClick: ouvrirEspaceClient, disabled: apercuBusy, title: "Voir le portail comme un client (établissement de démonstration)",
         style: { fontSize: 11, fontWeight: 700, color: "white", background: "rgba(255,255,255,.08)", border: "1px solid " + G + "66", borderRadius: 20, padding: "5px 12px", whiteSpace: "nowrap", flexShrink: 0, cursor: apercuBusy ? "wait" : "pointer", opacity: apercuBusy ? 0.6 : 1 } },
@@ -8505,7 +8542,7 @@ const nav = isAdmin
           React.createElement('div', { style: { flex: 1, minWidth: 0, padding: "18px 16px 18px" } },
             React.createElement('div', { style: { fontSize: 11, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: "#6B7090", padding: "0 12px 8px" } }, g.cfg.label),
             React.createElement('div', { style: { display: "grid", gridTemplateColumns: deuxCol ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)", gap: 2 } },
-              g.items.map(it => React.createElement('button', { key: it.p, role: "menuitem", className: "dsi-tile" + (page === it.p ? " on" : ""), onClick: () => goNav(it.p) },
+              g.items.map(it => navLien(it.p, { key: it.p, role: "menuitem", className: "dsi-tile dsi-lien" + (page === it.p ? " on" : "") },
                 React.createElement('span', { className: "dsi-tico" }, navIco(it.p, it.icon, 18)),
                 React.createElement('span', { style: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 } },
                   React.createElement('span', { style: { fontSize: 13.5, fontWeight: 600, color: "#1F2340", display: "flex", alignItems: "center", gap: 6 } }, it.label,
@@ -8520,7 +8557,7 @@ const nav = isAdmin
             React.createElement('div', { style: { fontSize: 30, fontWeight: 800, color: G } }, enc.n),
             React.createElement('div', { style: { fontSize: 13, color: "rgba(255,255,255,.82)", lineHeight: 1.5 } }, enc.txt),
             React.createElement('div', { style: { flex: 1, minHeight: 10 } }),
-            React.createElement('button', { onClick: () => goNav(enc.p), style: { height: 40, border: "none", borderRadius: 10, background: G, color: "#111", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, enc.cta)
+            navLien(enc.p, { className: "dsi-lien", style: { height: 40, border: "none", borderRadius: 10, background: G, color: "#111", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } }, enc.cta)
           )
         )
       );
@@ -8545,7 +8582,7 @@ const nav = isAdmin
   const btnCompte = { display: "flex", alignItems: "center", gap: 8, padding: "0 14px", height: 44, background: "#F4F5FA", border: "none", borderRadius: 12, fontSize: 13, fontWeight: 600, color: "#1F2340", cursor: "pointer" };
   const mobileNav = isMobile && React.createElement(React.Fragment, null,
     React.createElement('nav', { "aria-label": "Menu principal", style: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 56, background: SB, display: "flex", padding: "5px 4px calc(6px + env(safe-area-inset-bottom))", boxShadow: "0 -4px 18px rgba(15,15,36,.25)" } },
-      onglets.map(o => React.createElement('button', { key: o.key, className: "dsi-tab" + (o.actif && !plusOpen ? " on" : ""), onClick: () => goNav(o.cible) },
+      onglets.map(o => navLien(o.cible, { key: o.key, className: "dsi-tab dsi-lien" + (o.actif && !plusOpen ? " on" : "") },
         React.createElement('span', { className: "dsi-pill" }, navIco(o.svg, o.emoji, 21)),
         React.createElement('span', { className: "dsi-tl" }, o.label),
         o.cible === "tickets-admin" && nbAlertesMenu > 0 && React.createElement('span', { style: { position: "absolute", top: 3, left: "calc(50% + 6px)", minWidth: 18, height: 17, padding: "0 5px", borderRadius: 9, background: "#E53E3E", color: "white", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px " + SB } }, nbAlertesMenu)
@@ -8566,7 +8603,7 @@ const nav = isAdmin
         sectionsPlus.map(sec => React.createElement('div', { key: sec.id },
           React.createElement('div', { style: { fontSize: 10.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: "#6B7090", padding: "14px 2px 8px" } }, sec.label),
           React.createElement('div', { style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 } },
-            sec.items.map(it => React.createElement('button', { key: it.p, className: "dsi-mtile" + (page === it.p ? " on" : ""), onClick: () => goNav(it.p) },
+            sec.items.map(it => navLien(it.p, { key: it.p, className: "dsi-mtile dsi-lien" + (page === it.p ? " on" : "") },
               React.createElement('span', { className: "dsi-tico" }, navIco(it.p, it.icon, 17)),
               React.createElement('span', null, it.label),
               badgeDe(it.p) > 0 && React.createElement('span', { style: { position: "absolute", top: 7, right: 8, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#E53E3E", color: "white", fontSize: 9.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" } }, badgeDe(it.p))
@@ -8884,7 +8921,7 @@ const nav = isAdmin
       topNav,
       // Barre supérieure mobile : logo + profil
       isMobile && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 40, background: SB, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 16px", marginBottom: 16 } },
-        React.createElement('button', { onClick: () => goNav("accueil"), "aria-label": "Accueil", style: { background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex" } },
+        navLien("accueil", { "aria-label": "Accueil", style: { background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex" } },
           React.createElement('img', { src: "https://www.dsihotel.com/dsi-logo-gold.png", alt: "DSI Hotel", style: { height: 32 } })),
         React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap" } }, isAdmin ? "Espace Admin" : "Intranet Client")
       ),
