@@ -649,6 +649,12 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     return { zone, svg: e('svg', { viewBox: "0 0 220 124", width: "100%", style: { maxWidth: 250, display: "block", margin: "0 auto" }, role: "img", "aria-label": "Jauge : " + (v == null ? "pas de valeur" : v + " sur 100") },
       arc(0, z1, "#D62D20"), arc(z1, z2, "#D4A017"), arc(z2, 100, "#17A673"), aiguille) };
   };
+  // Lien vers la fiche de la machine dans la console NinjaOne
+  const lienNinja = (m, contenu, style) => m && m.ninja_id
+    ? e('a', { href: (typeof NINJA_CONSOLE_URL === "string" ? NINJA_CONSOLE_URL : "https://dsihotel.rmmservice.eu") + "/#/deviceDashboard/" + m.ninja_id + "/overview",
+        target: "_blank", rel: "noopener noreferrer", title: "Ouvrir " + m.nom + " dans NinjaOne", onClick: ev => ev.stopPropagation(),
+        style: { color: "#14171F", textDecoration: "none", borderBottom: "1px dashed #9AA3B2", ...(style || {}) } }, contenu, e('span', { "aria-hidden": "true", style: { fontSize: 10, color: "#1E4FA8", marginLeft: 4 } }, "↗"))
+    : contenu;
   const carteScore = (lbl, v, suffixe, champ, sous) => {
     const t = tendance(champ, v), ouvert = detailScore === champ, g = jauge(v, champ);
     return e('div', { role: "button", tabIndex: 0, "aria-expanded": ouvert, title: "Cliquer pour voir le détail",
@@ -850,7 +856,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
       carte([titre("Systèmes en fin de vie (ou dans moins de 3 mois)"),
         finVie.length === 0 ? e('div', { key: "v", style: { fontSize: 13, color: "#5A6172" } }, "Aucun.") :
         finVie.map(m => e('div', { key: m.ninja_id, style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: "1px solid #EEF0F4" } },
-          e('span', null, e('b', null, m.nom), e('span', { style: { color: "#5A6172", fontSize: 12 } }, " · " + osCourt(m))),
+          e('span', null, lienNinja(m, e('b', null, m.nom)), e('span', { style: { color: "#5A6172", fontSize: 12 } }, " · " + osCourt(m))),
           e('span', { style: { fontWeight: 600, whiteSpace: "nowrap", color: m.fin_de_vie < jour0 ? "#A8401F" : "#8A5A00" } }, (m.fin_de_vie < jour0 ? "fini le " : "fin le ") + new Date(m.fin_de_vie).toLocaleDateString("fr-FR"))))]),
       carte([titre("Machines par système"),
         listeOs.length === 0 ? e('div', { key: "v", style: { fontSize: 13, color: "#5A6172" } }, "—") :
@@ -879,7 +885,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
           e('div', null, enteteTri("maj", "Mises à jour")), e('div', null, enteteTri("vue", "Vue")), e('div', null, enteteTri("note", "Note", true)), e('div', null, enteteTri("raisons", "Raisons"))),
         visibles.map(m => { const b = cplBande(m.note);
           return e('div', { key: m.ninja_id, style: { display: "grid", gridTemplateColumns: colsM, gap: 12, padding: "9px 0", fontSize: 13, borderBottom: "1px solid #EEF0F4", alignItems: "start" } },
-            e('div', { style: { fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" } }, m.nom),
+            e('div', { style: { fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" } }, lienNinja(m, m.nom)),
             e('div', null, m.type),
             e('div', { style: { color: "#4A5060", fontVariantNumeric: "tabular-nums" } }, m.ip || "—"),
             e('div', null, osCourt(m), m.av_nom && e('div', { style: { fontSize: 11.5, color: "#5A6172" } }, /defender/i.test(m.av_nom) ? "Microsoft Defender" : m.av_nom)),
