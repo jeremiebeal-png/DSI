@@ -131,7 +131,7 @@ function Page_contact(ctx) {
           React.createElement('a', { href: client?.phone ? `tel:${client.phone.replace(/\s/g, "")}` : "tel:+33184180223", style: { display: "block", textAlign: "center", background: G2, color: "white", borderRadius: 7, fontSize: 12, fontWeight: 600, padding: "9px", textDecoration: "none" } }, "📞 Appeler maintenant")
         ),
         React.createElement('div', { style: { background: "#EBF8FF", border: "1px solid #BEE3F8", borderRadius: 10, padding: "12px 16px", fontSize: 11, color: "#2B6CB0", lineHeight: 1.6 } },
-          React.createElement('strong', null, "Avant d'écrire, "), "consultez nos ", React.createElement('a', { onClick: () => go("knowledge"), style: { color: "#2B6CB0", textDecoration: "underline", cursor: "pointer" } }, "procédures"), " : la réponse y est peut-être déjà !"
+          React.createElement('strong', null, "Avant d'écrire, "), "consultez nos ", React.createElement('a', { href: lienPage("knowledge"), onClick: (e) => { if (clicNouvelOnglet(e)) return; e.preventDefault(); go("knowledge"); }, style: { color: "#2B6CB0", textDecoration: "underline", cursor: "pointer" } }, "procédures"), " : la réponse y est peut-être déjà !"
         )
       )
     );

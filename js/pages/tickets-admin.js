@@ -257,7 +257,12 @@ function Page_tickets_admin(ctx) {
               tableView
                 ? React.createElement(React.Fragment, null,
                     React.createElement('span', { style: { width: 4, height: 28, borderRadius: 3, background: prioColor(t.priority), flexShrink: 0 } }),
-                    React.createElement('span', { style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t.reference || "—"),
+                    t.reference
+                      // Référence = lien vers le ticket : clic droit « Ouvrir dans un nouvel onglet » (un clic normal ouvre le ticket ici)
+                      ? React.createElement('a', { href: lienTicket(t.reference), title: "Clic droit : ouvrir ce ticket dans un nouvel onglet",
+                          onClick: (e) => { if (clicNouvelOnglet(e)) { e.stopPropagation(); return; } e.preventDefault(); },
+                          style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: "none" } }, t.reference)
+                      : React.createElement('span', { style: { width: 95, flexShrink: 0, fontSize: 11, fontWeight: 700, color: G2, fontFamily: "monospace" } }, "—"),
                     React.createElement('span', { style: { width: "17%", minWidth: 0, display: "flex", alignItems: "center", gap: 7, overflow: "hidden" } },
                       (h && h.logo_url) ? React.createElement('img', { src: h.logo_url, alt: "", style: { width: 22, height: 22, borderRadius: 4, objectFit: "contain", background: "white", border: "1px solid #EEE", flexShrink: 0 } }) : null,
                       React.createElement('span', { style: { minWidth: 0, fontWeight: 600, fontSize: 12.5, color: t.hotel_id ? "#1a1a3e" : "#DD6B20", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, hotelLabel)

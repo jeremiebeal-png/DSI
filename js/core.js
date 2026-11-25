@@ -403,6 +403,25 @@ const SUPABASE_KEY = "sb_publishable_0bUT3AjMaWBI9qQa9ZKmrA_3BRqNvbL";
 // (sessionStorage, clé dédiée) : elle ne remplace jamais la session admin des autres onglets.
 const APERCU_CLIENT = (() => { try { return new URLSearchParams(window.location.search).get("apercu") === "1"; } catch (e) { return false; } })();
 const ACTIVITE_KEY = APERCU_CLIENT ? "dsi-apercu-activity" : "dsi-last-activity";
+
+// ---------- Adresse de chaque page (?page=…) ----------
+// Chaque page du portail a sa propre adresse : le clic droit « Ouvrir dans un nouvel onglet »,
+// le Ctrl+clic, le clic molette et les boutons Précédent / Suivant du navigateur fonctionnent.
+const lienPage = (p, id) => {
+  const q = new URLSearchParams();
+  if (APERCU_CLIENT) q.set("apercu", "1");
+  q.set("page", p);
+  if (id) q.set("id", String(id));
+  return window.location.pathname + "?" + q.toString();
+};
+const lienTicket = (ref) => window.location.pathname + "?ticket=" + encodeURIComponent(ref || "");
+// Ctrl / Cmd / Maj + clic : on laisse le navigateur ouvrir le lien dans un nouvel onglet ou une nouvelle fenêtre
+const clicNouvelOnglet = (e) => !!(e && (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || (e.button !== undefined && e.button !== 0)));
+// Page et identifiant demandés dans l'adresse à l'ouverture de l'onglet
+const PAGE_URL_INITIALE = (() => {
+  try { const q = new URLSearchParams(window.location.search); const p = q.get("page"); return p ? { page: p, id: q.get("id") || null } : null; }
+  catch (e) { return null; }
+})();
 const sb = APERCU_CLIENT
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storage: window.sessionStorage, storageKey: "dsi-apercu-client", detectSessionInUrl: false } })
   : window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
