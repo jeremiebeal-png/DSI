@@ -2972,25 +2972,25 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const a = adForm && adForm.ticketId === t.id ? adForm : null;
     const setA = (k, v) => setAdForm(prev => ({ ...prev, [k]: v }));
     const mailVisible = !!(d.proposition && !(d.blocages || []).length && !d.existant && !d.erreurGraph);
-    if (!sa || sa.loading) sectionAd.push(note("Lecture de la fiche d'Oscar…", "#777", "transparent", "l"));
-    else if (sa.err && !fadData) sectionAd.push(note("❌ " + sa.err, "#C53030", "#FDECEC", "e"));
+    if (!sa || sa.loading) sectionAd.push(note("Lecture de la fiche d'Oscar…", "#777", "transparent", "a-l"));
+    else if (sa.err && !fadData) sectionAd.push(note("❌ " + sa.err, "#C53030", "#FDECEC", "a-e"));
     else if (!fiche || fiche.statut === "ad_inactif") {
-      sectionAd.push(note("La création automatique des comptes AD n'est pas activée pour " + ((hotelFiche && hotelFiche.name) || "cet hôtel") + ".", "#5A6B85", "#EEF2F8", "i"));
-      sectionAd.push(React.createElement('div', { key: "b", style: { display: "flex", gap: 8, marginBottom: 6 } },
+      sectionAd.push(note("La création automatique des comptes AD n'est pas activée pour " + ((hotelFiche && hotelFiche.name) || "cet hôtel") + ".", "#5A6B85", "#EEF2F8", "a-i"));
+      sectionAd.push(React.createElement('div', { key: "a-b", style: { display: "flex", gap: 8, marginBottom: 6 } },
         hotelFiche && !hotelFiche.provisioning_ad && React.createElement('button', { onClick: () => activerAdHotel(t, hotelFiche), disabled: provBusy, style: petitBtn }, "Activer pour cet hôtel"),
         hotelFiche && hotelFiche.provisioning_ad && React.createElement('button', { onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Préparer la fiche (lire l'AD)")));
     } else if (fiche.statut === "lecture") {
-      sectionAd.push(note("⏳ Oscar lit l'AD sur " + ((fiche.ad_resultat && fiche.ad_resultat.serveur) || "le contrôleur de domaine") + " (lecture seule)…", "#8A6D1F", "#FFFBEB", "l"));
-      if (Date.now() - new Date(fiche.maj_le).getTime() > 10 * 60000) sectionAd.push(React.createElement('button', { key: "r", onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Pas de réponse : relancer la lecture"));
+      sectionAd.push(note("⏳ Oscar lit l'AD sur " + ((fiche.ad_resultat && fiche.ad_resultat.serveur) || "le contrôleur de domaine") + " (lecture seule)…", "#8A6D1F", "#FFFBEB", "a-l"));
+      if (Date.now() - new Date(fiche.maj_le).getTime() > 10 * 60000) sectionAd.push(React.createElement('button', { key: "a-r", onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Pas de réponse : relancer la lecture"));
     } else if (fiche.statut === "sans_ad" || fiche.statut === "erreur") {
-      sectionAd.push(note((fiche.statut === "sans_ad" ? "ℹ️ Pas de compte AD automatique : " : "❌ ") + (fiche.erreur || ""), fiche.statut === "sans_ad" ? "#5A6B85" : "#C53030", fiche.statut === "sans_ad" ? "#EEF2F8" : "#FDECEC", "e"));
-      sectionAd.push(React.createElement('button', { key: "r", onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Relancer la lecture de l'AD"));
+      sectionAd.push(note((fiche.statut === "sans_ad" ? "ℹ️ Pas de compte AD automatique : " : "❌ ") + (fiche.erreur || ""), fiche.statut === "sans_ad" ? "#5A6B85" : "#C53030", fiche.statut === "sans_ad" ? "#EEF2F8" : "#FDECEC", "a-e"));
+      sectionAd.push(React.createElement('button', { key: "a-r", onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Relancer la lecture de l'AD"));
     } else if (fiche.statut === "prete" && lecture && a) {
       adPret = true;
       const groupesDispo = (lecture.groupes || []);
       const nomGroupe = (sam) => { const g = groupesDispo.find(x => x.sam === sam); return g ? (g.nom || g.sam) : sam; };
       const ouSync = a.ou && ouSynchronisee(a.ou, lecture, d);
-      (fiche.proposition.alertes || []).forEach((x, i) => sectionAd.push(note("⚠️ " + x, "#8A6D1F", "#FFFBEB", "al" + i)));
+      (fiche.proposition.alertes || []).filter(x => !/^OU synchronisée/.test(x)).forEach((x, i) => sectionAd.push(note("⚠️ " + x, "#8A6D1F", "#FFFBEB", "al" + i)));
       if (a.faire) {
         // Identifiant + suffixe
         sectionAd.push(React.createElement('label', { key: "lid", style: lbl }, "Identifiant Windows"));
@@ -3042,11 +3042,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     // ---------- Section boîte Microsoft 365 ----------
     let sectionMail = [], manqueMail = "", lic = null;
     const f = provForm && provForm.ticketId === t.id ? provForm : null;
-    if (!st || st.loading) sectionMail.push(note("Lecture du tenant Microsoft 365 de l'hôtel…", "#777", "transparent", "l"));
-    else if (st.err) sectionMail.push(note("❌ " + st.err, "#C53030", "#FDECEC", "e"));
-    else if (d.existant) sectionMail.push(note((d.existant.statut === "ok" ? "✅ " : "⚠️ ") + "Boîte déjà créée : " + d.existant.upn + (d.existant.licence ? " (" + d.existant.licence + ")" : "") + (d.existant.cree_par ? " par " + d.existant.cree_par : "") + ".", "#256029", "#EAF6EC", "x"));
-    else if ((d.blocages || []).length) d.blocages.forEach((b, i) => sectionMail.push(React.createElement('div', { key: "b" + i, style: { fontSize: 12, color: "#5A6B85", marginBottom: 3 } }, "ℹ️ " + b)));
-    else if (d.erreurGraph) sectionMail.push(note("❌ " + d.erreurGraph, "#C53030", "#FDECEC", "g"));
+    if (!st || st.loading) sectionMail.push(note("Lecture du tenant Microsoft 365 de l'hôtel…", "#777", "transparent", "m-l"));
+    else if (st.err) sectionMail.push(note("❌ " + st.err, "#C53030", "#FDECEC", "m-e"));
+    else if (d.existant) sectionMail.push(note((d.existant.statut === "ok" ? "✅ " : "⚠️ ") + "Boîte déjà créée : " + d.existant.upn + (d.existant.licence ? " (" + d.existant.licence + ")" : "") + (d.existant.cree_par ? " par " + d.existant.cree_par : "") + ".", "#256029", "#EAF6EC", "m-x"));
+    else if ((d.blocages || []).length) d.blocages.forEach((b, i) => sectionMail.push(React.createElement('div', { key: "m-b" + i, style: { fontSize: 12, color: "#5A6B85", marginBottom: 3 } }, "ℹ️ " + b)));
+    else if (d.erreurGraph) sectionMail.push(note("❌ " + d.erreurGraph, "#C53030", "#FDECEC", "m-g"));
     else if (f && mailFaire) {
       const setF = (k, v) => setProvForm(prev => ({ ...prev, [k]: v }));
       lic = (d.licences || []).find(l => l.skuId === f.skuId);
@@ -3058,8 +3058,8 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const filtre = provFiltreGroupes.trim().toLowerCase();
       const groupesVus = ajoutables.filter(g => !filtre || (g.nom + " " + g.mail).toLowerCase().includes(filtre));
       manqueMail = !lic ? "choisissez une licence" : lic.dispo < 1 ? "plus de licence disponible" : !f.local || !f.domaine ? "adresse incomplète" : !f.nomAffiche.trim() ? "nom affiché obligatoire" : !verifOk ? "vérifiez que l'adresse est libre" : "";
-      if (d.source === "texte") sectionMail.push(note("Ticket créé avant l'enregistrement structuré du formulaire : informations relues dans le texte, vérifiez-les.", "#5A6B85", "#EEF2F8", "src"));
-      if (d.avertissementDomaine) sectionMail.push(note("⚠️ " + d.avertissementDomaine, "#8A6D1F", "#FFFBEB", "dom"));
+      if (d.source === "texte") sectionMail.push(note("Ticket créé avant l'enregistrement structuré du formulaire : informations relues dans le texte, vérifiez-les.", "#5A6B85", "#EEF2F8", "m-src"));
+      if (d.avertissementDomaine) sectionMail.push(note("⚠️ " + d.avertissementDomaine, "#8A6D1F", "#FFFBEB", "m-dom"));
       sectionMail.push(
         React.createElement('label', { key: "la", style: lbl }, "Adresse mail"),
         React.createElement('div', { key: "ad", style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
@@ -3099,7 +3099,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
           (ajoutables.length ? f.groupes.length + " groupe(s) sélectionné(s). " : "Aucun groupe Microsoft 365 ou de sécurité dans ce tenant. ") +
           (exchange.length ? exchange.length + " liste(s) de distribution / groupe(s) Exchange ou synchronisé(s) : à gérer à la main." : ""))
       );
-    } else if (!f) sectionMail.push(note("Préparation…", "#777", "transparent", "p"));
+    } else if (!f) sectionMail.push(note("Préparation…", "#777", "transparent", "m-p"));
     const faireMail = !!(mailVisible && f && mailFaire);
 
     // ---------- Reste à faire + actions ----------
