@@ -1690,7 +1690,9 @@ async function routeSophosInstalleur(env, request) {
  *    UNE fois via GET /provisioning/secret), boîte Microsoft 365 créée par dsi-hotel-provisioning avec le même mot de passe.
  * 3. Quand tout est revenu, Oscar répond au demandeur (sans mot de passe) et prévient l'équipe.
  * Hôtels concernés : hotels.provisioning_ad = true (case dans la carte du ticket). Hôtels synchronisés
- * Entra Connect : le compte AD va dans une OU NON synchronisée (choix DSI, nov. 2026).
+ * Entra Connect : OU non synchronisée si l'hôtel en a une ; sinon (ex. CP - République, tout l'AD synchronisé)
+ * le compte AD va dans l'OU synchronisée avec un identifiant IDENTIQUE à l'adresse mail (UPN + mail + proxyAddresses) :
+ * Entra Connect fusionne alors le compte Windows et la boîte (soft match) — un seul compte, un seul mot de passe.
  */
 const RE_ARRIVEE = /Arrivée collaborateur/i;
 const PROV_SERVICES = {
@@ -1810,10 +1812,16 @@ function provProposition(fiche, lecture, memo) {
     const libres = ous.filter(o => !o.synchro && o.n > 0 && !/^CN=Users,/i.test(o.dn));
     libres.sort((a, b) => (b.recents - a.recents) || (b.n - a.n));
     ou = (libres[0] && libres[0].dn) || "";
-    if (!ou) alertes.push("Aucune OU non synchronisée contenant des comptes : choisissez l'OU.");
+    if (!ou) {
+      // Tout l'AD est synchronisé : OU synchronisée la plus utilisée ; le compte sera fusionné avec la boîte par Entra Connect
+      const sync = ous.filter(o => o.n > 0 && !/^CN=Users,/i.test(o.dn)).sort((a, b) => (b.recents - a.recents) || (b.n - a.n));
+      ou = (sync[0] && sync[0].dn) || "";
+    }
+    if (!ou) alertes.push("Aucune OU contenant des comptes : choisissez l'OU.");
     else alertes.push("OU proposée d'après les comptes existants (aucune mémoire pour cet hôtel) : vérifiez-la.");
   }
-  if (ous.some(o => o.synchro)) alertes.push("Des comptes de cet AD sont synchronisés avec Microsoft 365 (Entra Connect) : le compte doit aller dans une OU NON synchronisée.");
+  const ouProp = ous.find(o => o.dn === ou);
+  if (ouProp && ouProp.synchro) alertes.push("OU synchronisée avec Microsoft 365 (Entra Connect) : l'identifiant Windows doit être identique à l'adresse mail, Entra Connect fusionnera le compte Windows et la boîte (un seul compte, un seul mot de passe).");
   // Groupes par service
   const groupes = Array.isArray(lecture.groupes) ? lecture.groupes : [];
   const parService = {};
@@ -2023,8 +2031,12 @@ async function provValider(env, body, auth) {
     if (!RE_DN.test(ou) || !(lecture.ous || []).some(o => o.dn === ou)) return { status: 400, body: { error: "OU inconnue de la lecture de l'AD." } };
     if (groupes.some(g => RE_GROUPE_REFUSE.test(g))) return { status: 400, body: { error: "Groupe refusé (administration / service) : " + groupes.find(g => RE_GROUPE_REFUSE.test(g)) } };
     const ouLue = (lecture.ous || []).find(o => o.dn === ou);
-    if (ouLue && ouLue.sync > 0 && body.confirmeOuNonSynchro !== true) return { status: 400, body: { error: "Cette OU contient des comptes synchronisés avec Microsoft 365 : choisissez une OU non synchronisée (ou confirmez-la explicitement)." } };
+    const synchro = !!((ouLue && ouLue.sync > 0) || body.ouSynchro === true);
+    // OU synchronisée : identifiant = adresse mail, sinon Entra Connect créerait un doublon au lieu de fusionner
+    if (synchro && faireMail && (sam + "@" + suffixe).toLowerCase() !== String(body.mailAdresse || "").toLowerCase())
+      return { status: 400, body: { error: "OU synchronisée : l'identifiant Windows (" + sam + "@" + suffixe + ") doit être identique à l'adresse mail (" + body.mailAdresse + ")." } };
     compte = {
+      synchro,
       sam, upn: sam + "@" + suffixe, suffixe, ou, groupes, groupesParService: parService,
       prenom: String(c.prenom || "").trim().slice(0, 64), nom: String(c.nom || "").trim().slice(0, 64),
       nomAffiche: String(c.nomAffiche || "").trim().slice(0, 64), poste: String(c.poste || "").trim().slice(0, 128),
@@ -2110,11 +2122,14 @@ async function provFinaliser(env, ticketId) {
   if (d.ad) l.push(ad && ad.ok ? "- Compte Windows : " + (ad.netbios ? ad.netbios + "\\" : "") + d.compte.sam + " (" + d.compte.upn + ")" : "- Compte Windows : à finaliser par un technicien");
   if (d.mail) l.push(m && (m.statut === "ok" || m.statut === "partiel") ? "- Adresse mail : " + m.upn + " (active d'ici quelques minutes)" : "- Adresse mail : à finaliser par un technicien");
   l.push("", "Le mot de passe provisoire n'est jamais envoyé par email : il sera remis par un technicien DSI Hotel" + (f.rdvCreneau ? " lors du rendez-vous prévu" : "") + ".");
+  const synchroOk = !!(d.compte && d.compte.synchro && d.ad && ad && ad.ok);
   // Première connexion : Windows (ChangePasswordAtLogon) et Microsoft 365 (forceChangePasswordNextSignIn) imposent un nouveau mot de passe
   const lu = fiche.ad_lecture || {};
   const longueur = Math.max(d.mail ? 8 : 0, parseInt(lu.mdpLongueurMin, 10) || 0, 8);
   const ouvertures = [d.ad && ad && ad.ok ? "à l'ouverture de session Windows" : "", d.mail && m && m.statut && m.statut !== "echec" ? "à la connexion à Microsoft 365 (Outlook, Teams, office.com)" : ""].filter(Boolean);
-  if (ouvertures.length) l.push("À la première connexion, " + ouvertures.join(" puis ") + ", " + (nom || "le collaborateur") + " devra saisir le mot de passe provisoire puis choisir son propre mot de passe" +
+  if (synchroOk) l.push("À la première ouverture de session Windows, " + (nom || "le collaborateur") + " saisira le mot de passe provisoire puis choisira son propre mot de passe : au moins " + longueur + " caractères, avec des majuscules, des minuscules, des chiffres et un caractère spécial, sans reprendre son nom." +
+    (d.mail ? " Le même mot de passe servira ensuite pour Microsoft 365 (Outlook, Teams) : la synchronisation prend jusqu'à 30 minutes ; en attendant, la messagerie fonctionne avec le mot de passe provisoire." : ""));
+  else if (ouvertures.length) l.push("À la première connexion, " + ouvertures.join(" puis ") + ", " + (nom || "le collaborateur") + " devra saisir le mot de passe provisoire puis choisir son propre mot de passe" +
     (ouvertures.length > 1 ? " (une fois pour Windows, une fois pour Microsoft 365)" : "") + " : au moins " + longueur + " caractères, avec des majuscules, des minuscules, des chiffres et un caractère spécial, sans reprendre son nom.");
   const reste = provReste(f);
   if (reste.length) l.push("", "Encore à faire par notre équipe :", ...reste.map(x => "- " + x));

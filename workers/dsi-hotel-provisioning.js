@@ -491,7 +491,10 @@ async function routeCreer(env, body, admin) {
     userPrincipalName: upn,
     usageLocation: "FR",
     preferredLanguage: "fr-FR",
-    passwordProfile: { password: motDePasse, forceChangePasswordNextSignIn: true },
+    // Compte Windows en OU synchronisée (body.synchro) : Entra Connect va fusionner ce compte avec le compte AD et le mot de passe
+    // sera géré par l'AD. On n'impose donc pas de changement côté Microsoft (impossible sans réécriture du mot de passe vers l'AD) :
+    // l'utilisateur le change à l'ouverture de session Windows, Microsoft 365 suit par la synchronisation.
+    passwordProfile: { password: motDePasse, forceChangePasswordNextSignIn: body.synchro !== true },
   };
   if (prenom) nouvel.givenName = prenom;
   if (nom) nouvel.surname = nom;
@@ -535,7 +538,7 @@ async function routeCreer(env, body, admin) {
   const errJournal = await sbInsert(env, "m365_provisionings", {
     ticket_id: String(ticket.id), reference: ticket.reference || null, hotel_id: ticket.hotel_id ? String(ticket.hotel_id) : null,
     tenant_id: tid, upn, user_id_entra: userId, licence: lic.part, groupes: groupesNoms, mfa_tel: tel || null,
-    statut, details: { etapes, nomAffiche, motDePasseCommun: !!motDePasseFourni(body.motDePasse) }, cree_par: admin.nom,
+    statut, details: { etapes, nomAffiche, motDePasseCommun: !!motDePasseFourni(body.motDePasse), fusionEntraConnect: body.synchro === true }, cree_par: admin.nom,
   });
   // Licence retenue pour les prochaines demandes de cet hôtel
   if (uuidValide(ticket.hotel_id)) await sbUpsert(env, "provisioning_memo", "hotel_id,cle", { hotel_id: ticket.hotel_id, cle: "licence", valeur: { valeur: lic.part, nom: lic.nom }, maj_par: admin.nom, maj_le: new Date().toISOString() });
@@ -551,7 +554,9 @@ async function routeCreer(env, body, admin) {
   etapes.filter(e => !e.ok).forEach(e => lignes.push("À reprendre : " + e.etape));
   if (aFaire) lignes.push("Demandé par l'hôtel (listes de distribution / boîtes partagées, à faire dans Exchange) : " + aFaire);
   lignes.push("Créée par " + admin.nom + " le " + quand + ".");
-  lignes.push("La boîte sera disponible d'ici quelques minutes. Le mot de passe provisoire est communiqué séparément par le technicien ; il devra être changé à la première connexion.");
+  lignes.push(body.synchro === true
+    ? "Compte Windows en OU synchronisée : Entra Connect fusionnera ce compte avec le compte AD au prochain cycle (30 min max). Le mot de passe se change à l'ouverture de session Windows."
+    : "La boîte sera disponible d'ici quelques minutes. Le mot de passe provisoire est communiqué séparément par le technicien ; il devra être changé à la première connexion.");
   await sbInsert(env, "ticket_messages", { ticket_id: ticket.id, sender_role: "admin", sender_name: "Création Microsoft 365", body: lignes.join("\n") });
 
   return json({
