@@ -888,7 +888,7 @@ function App() {
       try { sessionStorage.setItem("dsi-hotel-choisi", "1"); } catch (e) {}
       // Rechargement complet : toutes les données (tickets, procédures, rapports…)
       // sont relues pour le nouvel hôtel. La session MFA (AAL2) est conservée.
-      window.location.href = window.location.pathname;
+      window.location.href = window.location.pathname + (APERCU_CLIENT ? "?apercu=1" : "");
     } catch (e) {
       alert("Impossible de changer d'établissement : " + (e.message || e));
       setHotelSwitchBusy(false);
@@ -1198,7 +1198,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (profile.role !== "admin" && profile.role !== "supervisor") { setMfaState("ok"); return; }
     // Aperçu Espace Client : session ouverte par un admin déjà authentifié en MFA,
     // sur le seul compte de démonstration — pas de second code demandé.
-    if (APERCU_CLIENT && (session.user?.email || "").toLowerCase() === APERCU_DEMO_EMAIL) { setMfaState("ok"); return; }
+    if (APERCU_CLIENT && ((session.user?.email || "").toLowerCase() === APERCU_DEMO_EMAIL || session.user?.app_metadata?.apercu_admin_id)) { setMfaState("ok"); return; }
 
     let cancelled = false;
     (async () => {
@@ -8002,7 +8002,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   }
 
 // ---------- SÉLECTEUR D'ÉTABLISSEMENT (superviseur multi-hôtels) ----------
-  if (multiHotel && !hotelChoisi) {
+  if (multiHotel && !hotelChoisi && !APERCU_CLIENT) {
     return React.createElement('div', { style: { minHeight: "100vh", background: SB, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui,-apple-system,sans-serif" } },
       React.createElement('div', { style: { width: 760, maxWidth: "100%" } },
         React.createElement('div', { style: { textAlign: "center", marginBottom: 26 } },
@@ -8029,7 +8029,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   const hotelSwitcher = (dark) => multiHotel && React.createElement('select', {
     value: profile?.hotel_id || "", disabled: hotelSwitchBusy, onChange: e => changerHotelActif(e.target.value),
     title: "Changer d'établissement",
-    style: { padding: "6px 9px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", maxWidth: 230,
+    style: { padding: "6px 9px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", maxWidth: APERCU_CLIENT ? 320 : 230,
       border: "1px solid " + (dark ? G + "55" : G), background: dark ? "rgba(255,255,255,.08)" : "#FFFDF5", color: dark ? "white" : "#1a1a3e" } },
     mesHotels.map(h => React.createElement('option', { key: h.id, value: h.id, style: { color: "#111" } }, "🏨 " + h.name))
   );
@@ -8717,7 +8717,7 @@ const nav = isAdmin
         }),
         navSimples.filter(it => it.p !== "accueil").map(it => navLien(it.p, { key: it.p, className: "dsi-top dsi-lien" + (page === it.p ? " cur" : "") }, it.label))
       ),
-      isAdmin && React.createElement('button', { onClick: ouvrirEspaceClient, disabled: apercuBusy, title: "Voir le portail comme un client (établissement de démonstration)",
+      isAdmin && React.createElement('button', { onClick: ouvrirEspaceClient, disabled: apercuBusy, title: "Voir le portail comme un client",
         style: { fontSize: 11, fontWeight: 700, color: "white", background: "rgba(255,255,255,.08)", border: "1px solid " + G + "66", borderRadius: 20, padding: "5px 12px", whiteSpace: "nowrap", flexShrink: 0, cursor: apercuBusy ? "wait" : "pointer", opacity: apercuBusy ? 0.6 : 1 } },
         apercuBusy ? "Ouverture…" : "👁 Espace Client"),
       React.createElement('span', { style: { fontSize: 9.5, fontWeight: 700, letterSpacing: "1.3px", textTransform: "uppercase", color: G, background: G + "14", border: "1px solid " + G + "33", borderRadius: 20, padding: "4px 10px", whiteSpace: "nowrap", flexShrink: 0 } }, isAdmin ? "Espace Admin" : (APERCU_CLIENT ? "Aperçu client" : "Intranet Client")),
@@ -9113,7 +9113,7 @@ const nav = isAdmin
     mobileNav,
     React.createElement('div', { style: { flex: 1, padding: isMobile ? "0 0 calc(92px + env(safe-area-inset-bottom))" : "0 0 24px", overflowX: "clip", width: "100%", minWidth: 0 } },
       APERCU_CLIENT && React.createElement('div', { style: { position: "sticky", top: 0, zIndex: 45, background: "#7A5C12", color: "white", display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap", padding: "7px 16px", fontSize: 12.5 } },
-        React.createElement('span', null, "👁 Aperçu de l'Espace Client — compte Superviseur de démonstration (DSI - Hôtel Démo). Les demandes envoyées ici arrivent réellement au support."),
+        React.createElement('span', null, "👁 Aperçu de l'Espace Client — " + (client ? client.name : "…") + (multiHotel ? " (vue Superviseur, changez d'hôtel avec le menu en haut à droite)" : " (compte de démonstration)") + ". Les demandes envoyées ici arrivent réellement au support."),
         React.createElement('button', { onClick: fermerApercuClient, style: { background: "white", color: "#7A5C12", border: "none", borderRadius: 14, padding: "4px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" } }, "Fermer l'aperçu")),
       topNav,
       // Barre supérieure mobile : logo + profil
@@ -9128,11 +9128,12 @@ const nav = isAdmin
           React.createElement('h2', { style: { margin: 0, fontSize: 17, fontWeight: 500, color: "#1a1a3e" } }, pageTitle),
           page === "proc-detail" && React.createElement('button', { onClick: () => go(isAdmin ? "proc-admin" : "knowledge"), style: { background: "none", border: "none", color: "#888", fontSize: 11, cursor: "pointer", padding: 0, marginTop: 3 } }, "← Retour")
         ),
+        APERCU_CLIENT && hotelSwitcher(false),
         React.createElement('div', { style: { textAlign: "right", lineHeight: 1.35 } },
           React.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: "#1a1a3e" } }, isAdmin ? "Administrateur DSI Hotel" : (client ? client.name : "")),
           React.createElement('div', { style: { fontSize: 10.5, color: G2 } }, isAdmin ? "⚡ Administrateur" : "🏨 " + (client ? (client.city || "") : ""))
         ),
-        hotelSwitcher(false),
+        !APERCU_CLIENT && hotelSwitcher(false),
         (isAdmin || isSupervisor) && React.createElement('button', {
           onClick: () => { setChangePwErr(""); setChangePwValue(""); setChangePwValue2(""); setChangePwOpen(true); },
           title: "Changer mon mot de passe",
