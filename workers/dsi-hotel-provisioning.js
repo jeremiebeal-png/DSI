@@ -215,6 +215,10 @@ function normaliserTel(tel) {
   if (!t) return "";
   if (t.startsWith("00")) t = "+" + t.slice(2);
   if (/^0[1-9]\d{8}$/.test(t)) return "+33 " + t.slice(1);
+  // Numéro français saisi sans le 0 ni l'indicatif (ex. 654119420) : mobile 6/7, ou fixe 1-5/9
+  if (/^[1-79]\d{8}$/.test(t)) return "+33 " + t;
+  // Indicatif sans le + (ex. 33654119420)
+  if (/^33[1-9]\d{8}$/.test(t)) return "+33 " + t.slice(2);
   if (t.startsWith("+")) {
     const chiffres = t.slice(1);
     const ind = INDICATIFS.find(i => chiffres.startsWith(i));
