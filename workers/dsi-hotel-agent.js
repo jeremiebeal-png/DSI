@@ -625,7 +625,26 @@ async function chargerPieceJointe(env, procedure) {
   if (!res.ok) { console.log("Pièce jointe « " + nom + " » introuvable (" + res.status + ") : réponse envoyée sans PJ"); return null; }
   const octets = new Uint8Array(await res.arrayBuffer());
   if (!octets.length || octets.length > MAX_PIECE_JOINTE) { console.log("Pièce jointe « " + nom + " » vide ou trop lourde : ignorée"); return null; }
-  return { nom, type: "application/pdf", contenuB64: b64Rapide(octets) };
+  return { nom, type: "application/pdf", contenuB64: b64Rapide(octets), octets };
+}
+// Le PDF envoyé par email est aussi rattaché à la réponse d'Oscar dans le portail (fil du ticket) :
+// copie dans le stockage « uploads » (comme les pièces jointes des tickets) + ligne ticket_fichiers liée au message.
+async function rattacherPieceJointe(env, ticketId, messageId, pj) {
+  if (!pj || !pj.octets || !uuidValide(ticketId)) return;
+  try {
+    const cle = env.SUPABASE_SERVICE_ROLE_KEY;
+    const base = String(env.SUPABASE_URL).replace(/\/+$/, "");
+    const chemin = "tickets/" + Date.now() + "_oscar_" + pj.nom.replace(/[^A-Za-z0-9._-]/g, "_");
+    const up = await fetch(`${base}/storage/v1/object/uploads/${chemin}`, {
+      method: "POST",
+      headers: { apikey: cle, ...(String(cle).startsWith("sb_") ? {} : { Authorization: `Bearer ${cle}` }), "Content-Type": pj.type || "application/pdf", "x-upsert": "false" },
+      body: pj.octets,
+    });
+    if (!up.ok) { console.log("Rattachement PJ : envoi stockage " + up.status + " " + (await up.text().catch(() => "")).slice(0, 150)); return; }
+    await sbJson(env, "ticket_fichiers", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({
+      ticket_id: ticketId, message_id: uuidValide(messageId) ? messageId : null, file_name: pj.nom,
+      file_url: `${base}/storage/v1/object/public/uploads/${chemin}`, uploaded_by: "admin" }) });
+  } catch (e) { console.log("Rattachement PJ : " + ((e && e.message) || e)); }
 }
 async function chargerScripts(env) {
   const rows = await sbJson(env, "agent_scripts?actif=eq.true&cle=not.like.prov_*&select=*&order=cle").catch(() => []); // prov_* : circuit création de comptes uniquement
@@ -1531,7 +1550,10 @@ async function traiterTicket(env, ticketId) {
   await ajouterNoteInterne(env, t, "Procédure « " + a.procOk.titre + " » — " + (technicien ? "À REPRENDRE PAR UN TECHNICIEN : " + (p.raison_technicien || "") : p.statut === "resolu" ? "Résolu" : "En attente du client") +
     (bilan ? "\nContrôles : " + bilan : "") + (envoi.emailOk ? "" : "\n⚠ Email non envoyé" + (envoi.emailErreur ? " : " + envoi.emailErreur : "")) +
     (p.analyse_interne ? "\nAnalyse : " + p.analyse_interne.slice(0, 800) : ""));
-  if (pj) await ajouterNoteInterne(env, t, "PDF joint à la réponse : " + pj.nom + (envoi.emailOk ? "" : " (email non parti)"));
+  if (pj) {
+    await rattacherPieceJointe(env, t.id, envoi.messageId, pj);
+    await ajouterNoteInterne(env, t, "PDF joint à la réponse : " + pj.nom + (envoi.emailOk ? "" : " (email non parti)"));
+  }
   if (technicien) await prevenirEquipe(env, t, hotel, p.raison_technicien, p.analyse_interne);
   else await compteRenduEquipe(env, t, hotel, p, a.procOk.titre, corpsEnvoye, envoi);
   return fin({
