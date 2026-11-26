@@ -26,6 +26,26 @@ const avLogo = (nom, taille) => {
 };
 const PRESTATAIRES = ["Axians","Bartech","Cardlab","CK Print","Colt","Dormakaba","FreedomPay","Hoist","Hospitality","ITM","Medialog","Micros","Novicom","Oracle","Shiji","Support Hilton","Support IHG","Support Radisson","Techotels","Wifirst"];
 const PRESTA_COLOR = { "Oracle":"#185FA5","Micros":"#0F6E56","Support Hilton":"#BA7517","Dormakaba":"#534AB7","Support IHG":"#3B6D11","Hospitality":"#993C1D","FreedomPay":"#993556","Shiji":"#0C447C","Bartech":"#5F5E5A","Axians":"#A32D2D" };
+// Téléphone MFA au format exigé par Microsoft 365 : « +33 612345678 » (indicatif, une espace, numéro sans le 0).
+// Accepte 0612345678, 06 12 34 56 78, 612345678, +33612345678, 0033612345678, +34 612345678… ; renvoie "" si invalide.
+const TEL_INDICATIFS = ["352", "377", "351", "212", "213", "216", "33", "34", "32", "41", "44", "49", "39", "31", "1"];
+const telFormatMicrosoft = (v) => {
+  let t = String(v || "").replace(/[^\d+]/g, "");
+  if (!t) return "";
+  if (t.startsWith("00")) t = "+" + t.slice(2);
+  if (/^0[1-9]\d{8}$/.test(t)) return "+33 " + t.slice(1);          // 0612345678
+  if (/^[1-79]\d{8}$/.test(t)) return "+33 " + t;                    // 612345678 (sans le 0)
+  if (/^33[1-9]\d{8}$/.test(t)) t = "+" + t;                         // 33612345678
+  if (t.startsWith("+")) {
+    const ch = t.slice(1);
+    const ind = TEL_INDICATIFS.find(i => ch.startsWith(i));
+    if (!ind) return "";
+    const reste = ch.slice(ind.length).replace(/^0/, "");
+    if (ind === "33" && !/^[1-9]\d{8}$/.test(reste)) return "";
+    return /^\d{6,14}$/.test(reste) ? "+" + ind + " " + reste : "";
+  }
+  return "";
+};
 const prestaColor = (p) => "#534AB7"; // couleur unique pour tous les prestataires
 // Alerte Microsoft Defender reçue par email (expéditeur defender-noreply@microsoft.com)
 const estAlerteDefender = (t) => /defender-noreply@/i.test(String((t && t.contact_email) || ""));

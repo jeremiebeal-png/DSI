@@ -320,7 +320,7 @@ function App() {
         // Nouveau compte : création d'adresse mail
         { k: "creerMail", label: "Créer une adresse mail", type: "checkbox", showIfNotEquals: { typeDemande: "Modification" } },
         { k: "mailACreer", label: "Adresse mail à créer", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" }, req: true },
-        { k: "telMfa", label: "Numéro de téléphone pour le MFA", type: "tel", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" } },
+        { k: "telMfa", label: "Numéro de téléphone pour le MFA", type: "tel", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" }, req: true },
         { k: "groupesMail", label: "Groupes de distribution et boîtes partagées à inclure", type: "textarea", showIf: "creerMail", showIfNotEquals: { typeDemande: "Modification" } },
         // Modification : changement d'adresse mail (ancienne -> nouvelle)
         { k: "modifMail", label: "Modification adresse mail", type: "checkbox", showIfEquals: { typeDemande: "Modification" } },
@@ -547,6 +547,13 @@ function App() {
       const v = tplValues[ch.k];
       const vide = ch.type === "checkboxes" ? !(Array.isArray(v) && v.length) : !String(v || "").trim();
       if (vide) { setTplError("Merci de renseigner : " + ch.label); return; }
+    }
+    // Téléphones : format exigé par Microsoft 365 (« +33 612345678 »), converti automatiquement
+    for (const ch of champsVisibles) {
+      if (ch.type !== "tel" || !String(tplValues[ch.k] || "").trim()) continue;
+      const tel = telFormatMicrosoft(tplValues[ch.k]);
+      if (!tel) { setTplError(ch.label + " : numéro invalide. Format attendu : +33 612345678 (indicatif, espace, numéro sans le 0)."); return; }
+      tplValues[ch.k] = tel;
     }
     if (!String(tplDemandeur.name || "").trim()) {
       setTplError("Merci d'indiquer votre nom."); return;
@@ -3057,7 +3064,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const exchange = (d.groupes || []).filter(g => !g.ajoutable);
       const filtre = provFiltreGroupes.trim().toLowerCase();
       const groupesVus = ajoutables.filter(g => !filtre || (g.nom + " " + g.mail).toLowerCase().includes(filtre));
-      manqueMail = !lic ? "choisissez une licence" : lic.dispo < 1 ? "plus de licence disponible" : !f.local || !f.domaine ? "adresse incomplète" : !f.nomAffiche.trim() ? "nom affiché obligatoire" : !verifOk ? "vérifiez que l'adresse est libre" : "";
+      manqueMail = !lic ? "choisissez une licence" : lic.dispo < 1 ? "plus de licence disponible" : !f.local || !f.domaine ? "adresse incomplète" : !f.nomAffiche.trim() ? "nom affiché obligatoire" : !verifOk ? "vérifiez que l'adresse est libre" : !String(f.telMfa || "").trim() ? "téléphone MFA obligatoire" : !telFormatMicrosoft(f.telMfa) ? "téléphone MFA au format +33 612345678" : "";
       if (d.source === "texte") sectionMail.push(note("Ticket créé avant l'enregistrement structuré du formulaire : informations relues dans le texte, vérifiez-les.", "#5A6B85", "#EEF2F8", "m-src"));
       if (d.avertissementDomaine) sectionMail.push(note("⚠️ " + d.avertissementDomaine, "#8A6D1F", "#FFFBEB", "m-dom"));
       sectionMail.push(
@@ -3079,7 +3086,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         React.createElement('div', { key: "id2", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8, marginBottom: 10 } },
           React.createElement('div', null, React.createElement('label', { style: lbl }, "Poste"), React.createElement('input', { value: f.poste, onChange: e => setF("poste", e.target.value), style: champ })),
           React.createElement('div', null, React.createElement('label', { style: lbl }, "Service (facultatif)"), React.createElement('input', { value: f.service, onChange: e => setF("service", e.target.value), placeholder: "Réception, Direction…", style: champ })),
-          React.createElement('div', null, React.createElement('label', { style: lbl }, "Téléphone MFA (SMS)"), React.createElement('input', { value: f.telMfa, onChange: e => setF("telMfa", e.target.value), placeholder: "+33 612345678", style: champ }))
+          React.createElement('div', null, React.createElement('label', { style: lbl }, "Téléphone MFA (SMS)"), React.createElement('input', { value: f.telMfa, onChange: e => setF("telMfa", e.target.value), onBlur: () => { const n = telFormatMicrosoft(f.telMfa); if (n) setF("telMfa", n); }, placeholder: "+33 612345678", style: { ...champ, borderColor: telFormatMicrosoft(f.telMfa) ? "#D5DCE8" : "#F0B429" } }))
         ),
         React.createElement('label', { key: "ll", style: lbl }, "Licence *"),
         React.createElement('select', { key: "lic", value: f.skuId, onChange: e => setF("skuId", e.target.value), style: { ...champ, marginBottom: 10, borderColor: f.skuId ? "#D5DCE8" : "#F0B429" } },

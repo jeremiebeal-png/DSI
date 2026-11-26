@@ -126,6 +126,17 @@ function Page_templates(ctx) {
                       );
                     })
                   )
+                : ch.type === "tel"
+                ? (() => {
+                    // Format Microsoft 365 : +33 612345678 (converti à la sortie du champ)
+                    const v = tplValues[ch.k] || "";
+                    const ok = telFormatMicrosoft(v);
+                    return React.createElement('div', null,
+                      React.createElement('input', { type: "tel", value: v, placeholder: "+33 612345678", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), onBlur: () => { if (ok && ok !== v) setTplValues({ ...tplValues, [ch.k]: ok }); }, style: { ...inputStyle, borderColor: v && !ok ? "#E53E3E" : inputStyle.borderColor } }),
+                      React.createElement('div', { style: { fontSize: 11.5, marginTop: 4, color: v && !ok ? "#C53030" : "#888" } },
+                        v && !ok ? "Numéro invalide. Format attendu : +33 612345678 (indicatif, espace, numéro sans le 0)." : "Format Microsoft : +33 612345678 — indicatif du pays, une espace, puis le numéro sans le 0 (un 06… est converti automatiquement).")
+                    );
+                  })()
                 : React.createElement('input', { type: ch.type || "text", value: tplValues[ch.k] || "", onChange: e => setTplValues({ ...tplValues, [ch.k]: e.target.value }), style: inputStyle })
             )
           ),
