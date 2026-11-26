@@ -387,9 +387,12 @@ async function inventaireOrg(env, orgId) {
     dernier_contact: ninjaDate(d.lastContact),
     utilisateur: d.lastLoggedInUser || null,
     organisationId: d.organizationId,
-    classe: String(d.nodeClass || "").toUpperCase(),
+    // Un appareil sous « Windows Server » est un serveur, même si NinjaOne l'a classé poste de travail
+    // (ex. HMGSVRDC02 à Métropole - Genève, rangé WINDOWS_WORKSTATION par NinjaOne)
+    classe: osServeur(d) ? "WINDOWS_SERVER" : String(d.nodeClass || "").toUpperCase(),
   });
-  const estPoste = d => CLASSES_POSTES.includes(String(d.nodeClass || "").toUpperCase());
+  const osServeur = d => /windows\s+server/i.test(String((d.os && (d.os.name || d.os.caption)) || d.osName || ""));
+  const estPoste = d => CLASSES_POSTES.includes(String(d.nodeClass || "").toUpperCase()) && !osServeur(d);
   return {
     postes: bruts.filter(estPoste).map(fiche).filter(d => d.hostname),
     serveurs: bruts.filter(d => !estPoste(d)).map(fiche).filter(d => d.hostname),
@@ -916,7 +919,8 @@ async function lancerScripts(env, orgId, deviceId, scripts, assistant, message, 
   const nomAppareil = nomCourt(d.systemName || d.dnsName || d.displayName);
   const pourCeServeur = s => {
     const c = String(s.serveur_cible || "").trim().toUpperCase();
-    if (c.startsWith("@")) return !!(opt.roles && opt.roles[c]) && opt.roles[c] === nomAppareil && String(d.nodeClass || "").toUpperCase() === "WINDOWS_SERVER";
+    // opt.roles ne contient que des appareils sous Windows Server (inventaireOrg), même classés poste par NinjaOne
+    if (c.startsWith("@")) return !!(opt.roles && opt.roles[c]) && opt.roles[c] === nomAppareil;
     return !!c && c === nomAppareil;
   };
   if (!CLASSES_POSTES.includes(String(d.nodeClass || "").toUpperCase()) && !(scripts.length && scripts.every(pourCeServeur)))
@@ -1874,7 +1878,9 @@ async function provDc(env, hotel) {
 async function provLancer(env, orgId, dc, s, params, ticketId) {
   const d = await ninjaGet(env, "/v2/device/" + encodeURIComponent(dc.id));
   if (String(d.organizationId) !== String(orgId)) throw new Error("Le serveur n'appartient pas à l'hôtel du ticket");
-  if (String(d.nodeClass || "").toUpperCase() !== "WINDOWS_SERVER" || nomCourt(d.systemName || d.dnsName || d.displayName) !== dc.hostname) throw new Error("Appareil cible inattendu : lancement refusé");
+  // dc.classe vient de l'inventaire (OS « Windows Server » => serveur, même classé poste par NinjaOne)
+  const serveur = String(d.nodeClass || "").toUpperCase() === "WINDOWS_SERVER" || dc.classe === "WINDOWS_SERVER";
+  if (!serveur || nomCourt(d.systemName || d.dnsName || d.displayName) !== dc.hostname) throw new Error("Appareil cible inattendu : lancement refusé");
   if (d.offline !== false) throw Object.assign(new Error("Contrôleur de domaine " + dc.hostname + " hors ligne dans NinjaOne"), { status: 409 });
   const trouve = scriptDuCatalogue(await catalogueNinja(env), s);
   if (trouve.erreur) throw new Error(trouve.erreur + " (créez le script dans NinjaOne)");
