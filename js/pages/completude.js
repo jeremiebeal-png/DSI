@@ -472,7 +472,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const [impression, setImpression] = React.useState(false);
   React.useEffect(() => {
     let fini = false;
-    sb.from("score_actions").select("code,responsable,echeance,commentaire,maj_par,maj_le").eq("hotel_id", x.id).then(({ data }) => {
+    sb.from("score_actions").select("code,responsable,echeance,commentaire,non_applicable,maj_par,maj_le").eq("hotel_id", x.id).then(({ data }) => {
       if (fini) return; const m = {}; (data || []).forEach(a => { m[a.code] = a; }); setActions(m); });
     return () => { fini = true; };
   }, [x.id]);
@@ -487,11 +487,15 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const enregistrerAction = async (code, champ, valeur) => {
     const avant = actions[code] || {};
     const ligne = { hotel_id: x.id, code, responsable: avant.responsable || null, echeance: avant.echeance || null, commentaire: avant.commentaire || null,
-      [champ]: valeur || null, maj_par: adminFromName ? adminFromName() : null, maj_le: new Date().toISOString() };
+      non_applicable: !!avant.non_applicable,
+      [champ]: champ === "non_applicable" ? !!valeur : (valeur || null), maj_par: adminFromName ? adminFromName() : null, maj_le: new Date().toISOString() };
     setActions(a => ({ ...a, [code]: ligne }));
     const { error } = await sb.from("score_actions").upsert(ligne, { onConflict: "hotel_id,code" });
-    if (error) { alert("Plan d'action non enregistré : " + error.message); setActions(a => ({ ...a, [code]: avant })); }
+    if (error) { alert("Plan d'action non enregistré : " + error.message); setActions(a => ({ ...a, [code]: avant })); return; }
+    // « Non applicable » change le calcul des scores : on relit le tableau de bord
+    if (champ === "non_applicable" && onChange) onChange();
   };
+  const estNA = (code) => !!(actions[code] && actions[code].non_applicable);
 
   React.useEffect(() => {
     let fini = false;
@@ -601,7 +605,7 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
   const dernierCk = det ? det.ck.map(p => p.date_controle).filter(Boolean).sort().pop() : null;
 
   // Reste à faire
-  const restes = (score) => x.lignes.filter(l => l.score === score && l.ratio != null && l.ratio < 1)
+  const restes = (score) => x.lignes.filter(l => l.score === score && l.ratio != null && l.ratio < 1 && !estNA(l.code))
     .map(l => ({ ...l, gain: Math.round(l.points * (1 - l.ratio) * 10) / 10 })).sort((a, b) => b.gain - a.gain);
   const resteC = restes("comp"), resteF = restes("conf");
 
@@ -705,13 +709,31 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
         ? "La complétude mesure si les informations de l'hôtel sont renseignées dans le portail. Chaque info rapporte des points (" + total + " au total pour cet hôtel). Voici ce qui manque, du plus rentable au moins rentable :"
         : "La conformité mesure si ce qu'on surveille est en bon état (sauvegardes, antivirus, mises à jour…). Objectif : " + CPL_OBJECTIF_CONF + " %. Voici ce qui fait perdre des points, du plus important au moins important :"),
       l.length === 0 ? e('div', { style: { fontSize: 13, color: "#2F855A", fontWeight: 600 } }, "Tout est fait ✓") :
-      l.map(r => e('div', { key: r.code, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "100px minmax(0, 1fr) 70px 330px 200px", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid #EEF0F4", fontSize: 13 } },
+      e('div', { "data-noprint": "1", style: { display: isMobile ? "none" : "grid", gridTemplateColumns: "100px minmax(0, 1fr) 70px 330px 46px 200px", gap: 10, fontSize: 10.5, fontWeight: 700, color: "#8A90A0", textTransform: "uppercase", letterSpacing: ".03em", paddingBottom: 2 } },
+        e('span', null), e('span', null), e('span', null), e('span', null), e('span', { title: "Cette information ne s'applique pas à cet hôtel : elle sort du calcul", style: { textAlign: "center" } }, "N/A"), e('span', null)),
+      l.length > 0 && l.map(r => e('div', { key: r.code, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "100px minmax(0, 1fr) 70px 330px 46px 200px", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid #EEF0F4", fontSize: 13 } },
         e('span', { style: { fontSize: 11.5, fontWeight: 600, color: "#5A6172" } }, NOM_DOM[r.domaine] || r.domaine),
         e('span', null, r.libelle, r.detail && e('span', { style: { color: "#6B7280", fontSize: 12 } }, " · " + r.detail),
           e('div', { style: { fontSize: 11.5, color: "#8A90A0" } }, Math.round((r.ratio || 0) * 100) + " % fait · " + r.points + " pts possibles (" + (r.attribution || "") + ")")),
         e('span', { style: { fontWeight: 700, color: coul, whiteSpace: "nowrap" } }, "+" + r.gain + " pts"),
         champsAction(r.code),
-        e('span', { "data-noprint": "1", style: { display: "flex", justifyContent: "flex-end" } }, actionCritere(r)))));
+        e('label', { "data-noprint": "1", title: "Non applicable à cet hôtel : ne compte plus dans le score", style: { display: "flex", justifyContent: "center", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11.5, color: "#5A6172" } },
+          e('input', { type: "checkbox", checked: estNA(r.code), "aria-label": "Non applicable à cet hôtel : " + r.libelle,
+            onChange: ev => { if (!ev.target.checked || confirm("« " + r.libelle + " » ne s'applique pas à " + (h.name || "cet hôtel") + " ?\n\nCette information ne comptera plus dans le score (" + r.points + " pts retirés du total). Vous pourrez la rétablir plus bas.")) enregistrerAction(r.code, "non_applicable", ev.target.checked); } }),
+          isMobile && "Non applicable"),
+        e('span', { "data-noprint": "1", style: { display: "flex", justifyContent: "flex-end" } }, actionCritere(r)))),
+      // Infos marquées « non applicable » : rappel + possibilité de les rétablir
+      (() => {
+        const na = x.lignes.filter(y => y.score === score && estNA(y.code));
+        if (!na.length) return null;
+        return e('div', { style: { marginTop: 12, paddingTop: 10, borderTop: "1px dashed #D5D9E0" } },
+          e('div', { style: { fontSize: 12, fontWeight: 700, color: "#5A6172", marginBottom: 4 } }, "Non applicable à cet hôtel (" + na.length + ") — hors calcul"),
+          na.map(y => { const a = actions[y.code] || {}; return e('div', { key: y.code, style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, color: "#6B7280", padding: "3px 0" } },
+            e('span', { style: { minWidth: 92, fontSize: 11.5, fontWeight: 600 } }, NOM_DOM[y.domaine] || y.domaine),
+            e('span', { style: { flex: 1, textDecoration: "line-through", textDecorationColor: "#C9CED8" } }, y.libelle),
+            e('span', { style: { fontSize: 11 } }, (a.maj_par ? "par " + a.maj_par : "") + (a.maj_le ? " le " + new Date(a.maj_le).toLocaleDateString("fr-FR") : "")),
+            e('button', { "data-noprint": "1", onClick: () => enregistrerAction(y.code, "non_applicable", false), style: { padding: "3px 10px", background: "white", border: "1px solid #C9CED8", borderRadius: 6, fontSize: 11.5, color: "#1E4FA8", cursor: "pointer" } }, "Rétablir")); }));
+      })());
   };
   const panneauMachines = () => {
     const parRaison = {};
