@@ -114,6 +114,10 @@ async function jetonTenant(env, tenantId) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok || !d.access_token) {
     const txt = String(d.error_description || d.error || r.status);
+    // Tenant absent de la liste « Allowed tenants » de l'app (multilocataire limité à certains tenants)
+    if (/AADSTS7000119/.test(txt)) {
+      throw new Error("Ce tenant n'est pas autorisé à utiliser l'app « DSI Hotel Provisioning ». Dans Entra (tenant DSI Hotel) → Inscriptions d'applications → DSI Hotel Provisioning → Authentication → Supported accounts → Manage allowed tenants, ajoutez l'ID " + tenantId + ", enregistrez, puis faites le « Consentement création de comptes » de cet hôtel.");
+    }
     if (/AADSTS700016|AADSTS7000229|AADSTS65001|consent/i.test(txt)) {
       throw new Error("Le tenant de l'hôtel n'a pas encore donné son consentement à l'app « DSI Hotel Provisioning ». Ouvrez le lien « Consentement création de comptes » dans Pilotage → Sécurité Microsoft → Établissements.");
     }
