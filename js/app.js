@@ -562,6 +562,16 @@ function App() {
     if (!emailClean || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
       setTplError("Merci d'indiquer un email valide : c'est à cette adresse que le support répondra."); return;
     }
+    // Validation : le validateur (RH / direction) doit être une autre personne que le demandeur
+    if (champsVisibles.some(ch => ch.type === "validation")) {
+      const valid = nettoyerEmail(tplValues.validateurEmail || "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(valid)) { setTplError("Merci d'indiquer un email valide pour le validateur (RH / direction)."); return; }
+      const { data: sessD } = await sb.auth.getSession();
+      const compte = String((sessD && sessD.session && sessD.session.user && sessD.session.user.email) || "").trim().toLowerCase();
+      if (valid === emailClean.toLowerCase() || (compte && valid === compte)) {
+        setTplError("Le validateur doit être une autre personne que le demandeur : indiquez l'email du RH ou de la direction, pas le vôtre."); return;
+      }
+    }
     // Côté administrateur DSI (non rattaché à un hôtel) : on ne crée pas de ticket,
     // on génère seulement le PDF récapitulatif à télécharger.
     if (isAdmin && !isSupervisor) {
