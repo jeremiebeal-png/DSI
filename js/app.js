@@ -1695,7 +1695,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     setEditingClientId(null);
     setClientForm({ name: "", city: "", stars: 4, phone: "", email: "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: "",
       groupe: "", gmNom: "", gmPrenom: "", gmEmail: "", rhNom: "", rhPrenom: "", rhEmail: "", techNom: "", techPrenom: "", techEmail: "",
+      finNom: "", finPrenom: "", finEmail: "", gmTel: "", rhTel: "", techTel: "", finTel: "",
       adrRue: "", adrCp: "", adrVille: "", adrPays: "" });
+    setRecoNew({ type: "domaine", valeur: "" }); // ne pas garder la saisie de l'hôtel précédent
     setClientLogoFile(null);
     setClientNewFiles([]);
     setClientExistingFiles([]);
@@ -1705,10 +1707,13 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
   };
   const openEditClientForm = (h) => {
     setEditingClientId(h.id);
+    setRecoNew({ type: "domaine", valeur: "" }); // ne pas garder la saisie de l'hôtel précédent
     setClientForm({ name: h.name, city: h.city || "", stars: h.stars || 4, phone: h.phone || "", email: h.account_email || "", pw: "", stdEmail: "", stdPw: "", ninjaoneNom: h.ninjaone_nom || "",
       groupe: h.groupe_hotelier || "", gmNom: h.gm_nom || "", gmPrenom: h.gm_prenom || "", gmEmail: h.gm_email || "",
       rhNom: h.rh_nom || "", rhPrenom: h.rh_prenom || "", rhEmail: h.rh_email || "",
       techNom: h.tech_nom || "", techPrenom: h.tech_prenom || "", techEmail: h.tech_email || "",
+      finNom: h.fin_nom || "", finPrenom: h.fin_prenom || "", finEmail: h.fin_email || "",
+      gmTel: h.gm_tel || "", rhTel: h.rh_tel || "", techTel: h.tech_tel || "", finTel: h.fin_tel || "",
       adrRue: h.adresse_rue || "", adrCp: h.adresse_cp || "", adrVille: h.adresse_ville || "", adrPays: h.adresse_pays || "" });
     setClientLogoFile(null);
     setClientNewFiles([]);
@@ -1896,6 +1901,9 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
         gm_nom: (clientForm.gmNom || "").trim() || null, gm_prenom: (clientForm.gmPrenom || "").trim() || null, gm_email: (clientForm.gmEmail || "").trim() || null,
         rh_nom: (clientForm.rhNom || "").trim() || null, rh_prenom: (clientForm.rhPrenom || "").trim() || null, rh_email: (clientForm.rhEmail || "").trim() || null,
         tech_nom: (clientForm.techNom || "").trim() || null, tech_prenom: (clientForm.techPrenom || "").trim() || null, tech_email: (clientForm.techEmail || "").trim() || null,
+        fin_nom: (clientForm.finNom || "").trim() || null, fin_prenom: (clientForm.finPrenom || "").trim() || null, fin_email: (clientForm.finEmail || "").trim() || null,
+        gm_tel: (clientForm.gmTel || "").trim() || null, rh_tel: (clientForm.rhTel || "").trim() || null,
+        tech_tel: (clientForm.techTel || "").trim() || null, fin_tel: (clientForm.finTel || "").trim() || null,
         adresse_rue: (clientForm.adrRue || "").trim() || null, adresse_cp: (clientForm.adrCp || "").trim() || null,
         adresse_ville: (clientForm.adrVille || "").trim() || null, adresse_pays: (clientForm.adrPays || "").trim() || null,
       };
@@ -2330,7 +2338,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
             || txt.match(/notification for\s+([A-Za-z0-9.-]+\.[A-Za-z]{2,})/i);
           const dom = m ? m[1].toLowerCase().replace(/\.+$/, "") : "";
           if (dom) {
-            const parEmail = hotels.filter(h => [h.account_email, h.standard_email, h.gm_email, h.rh_email, h.tech_email].some(e => { const d = domaineDe(e); return d && (d === dom || d.endsWith("." + dom)); }));
+            const parEmail = hotels.filter(h => [h.account_email, h.standard_email, h.gm_email, h.rh_email, h.tech_email, h.fin_email].some(e => { const d = domaineDe(e); return d && (d === dom || d.endsWith("." + dom)); }));
             if (parEmail.length === 1) hid = parEmail[0].id;
             if (!hid) {
               const racine = norm(dom.split(".")[0]);
@@ -2370,8 +2378,15 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!v) return false;
     if (type === "domaine" && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(v)) { alert("Domaine invalide : " + v + "\nExemple : cp-paris.com"); return false; }
     if (type === "mot_cle" && v.length < 4) { alert("Mot-clé trop court (4 caractères minimum)."); return false; }
-    const deja = recoMail.find(r => r.type === type && r.valeur === v);
-    if (deja) { const h = hotels.find(x => x.id === deja.hotel_id); alert("« " + v + " » est déjà associé à " + (h ? h.name : "un autre établissement") + "."); return false; }
+    if (recoMail.some(r => r.type === type && r.valeur === v && r.hotel_id === hotelId)) { alert("« " + v + " » est déjà associé à cet établissement."); return false; }
+    // Domaine / mot-clé déjà utilisé par d'autres hôtels (groupes Radisson, Hilton, Marriott… sur un même tenant) :
+    // on peut le partager. Le rattachement se fait alors par la signature (téléphone, adresse, mot-clé) parmi ces hôtels.
+    const autres = recoMail.filter(r => r.type === type && r.valeur === v && r.hotel_id !== hotelId)
+      .map(r => (hotels.find(x => x.id === r.hotel_id) || {}).name || "un autre établissement");
+    if (autres.length && !confirm("« " + v + " » est déjà associé à : " + autres.join(", ") + ".\n\n"
+      + "L'ajouter aussi à cet établissement (" + (type === "domaine" ? "domaine" : "mot-clé") + " partagé) ?\n\n"
+      + "Les mails de ce " + (type === "domaine" ? "domaine" : "mot-clé") + " seront alors rattachés d'après la signature (téléphone, adresse ou mot-clé propre à l'hôtel). "
+      + "Pensez à renseigner un mot-clé propre à chaque hôtel concerné, sinon le ticket restera « à rattacher ».")) return false;
     const { error } = await sb.from("hotel_reconnaissance_mail").insert({ hotel_id: hotelId, type, valeur: v });
     if (error) { alert("Enregistrement impossible : " + error.message); return false; }
     await loadRecoMail();
@@ -2389,13 +2404,11 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const email = String(t.email_from || t.contact_email || "").toLowerCase();
       const dom = email.includes("@") ? email.split("@")[1].trim() : "";
       const nouveau = (hotels.find(hh => hh.id === hid) || {}).name || "cet établissement";
-      const regleDom = dom ? recoMail.find(r => r.type === "domaine" && r.valeur === dom) : null;
-      if (regleDom && regleDom.hotel_id !== hid) {
-        const ancien = (hotels.find(hh => hh.id === regleDom.hotel_id) || {}).name || "un autre établissement";
-        if (confirm("Les mails de @" + dom + " sont rattachés automatiquement à " + ancien + ".\n\nNe plus rattacher ce domaine automatiquement (domaine partagé par plusieurs hôtels) ?")) {
-          await sb.from("hotel_reconnaissance_mail").delete().eq("id", regleDom.id);
-          await loadRecoMail();
-        }
+      const reglesDom = dom ? recoMail.filter(r => r.type === "domaine" && r.valeur === dom) : [];
+      const regleDom = reglesDom.find(r => r.hotel_id === hid) || reglesDom[0] || null;
+      if (reglesDom.length && !reglesDom.some(r => r.hotel_id === hid)) {
+        // Domaine connu pour d'autres hôtels (même groupe / même tenant) : on le partage, sans rien retirer.
+        await ajouterRecoMail(hid, "domaine", dom);
         return;
       }
       if (!dom || regleDom || DOMAINES_GENERIQUES.includes(dom)) return;
@@ -3829,7 +3842,7 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     if (!hotel) return [];
     const liste = [
       [hotel.account_email, "Superviseur"], [hotel.gm_email, "Directeur général"], [hotel.rh_email, "RH"],
-      [hotel.tech_email, "Technique"], [hotel.standard_email, "Compte standard"],
+      [hotel.tech_email, "Technique"], [hotel.fin_email, "Finance"], [hotel.standard_email, "Compte standard"],
     ];
     const vus = new Set(), out = [];
     liste.forEach(([e, l]) => { const a = nettoyerEmail(e || "").trim().toLowerCase(); if (a && emailValide(a) && !vus.has(a)) { vus.add(a); out.push({ email: a, label: l }); } });

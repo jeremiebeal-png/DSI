@@ -103,18 +103,20 @@ function Page_client_admin(ctx) {
           const regles = recoMail.filter(r => r.hotel_id === editingClientId);
           const puce = (r) => React.createElement('span', { key: r.id, style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 6px 3px 10px", background: r.type === "domaine" ? "#EBF4FF" : "#F7F1DE", border: "1px solid " + (r.type === "domaine" ? "#BEE3F8" : "#E8D89A"), borderRadius: 14, fontSize: 11.5, color: "#333" } },
             (r.type === "domaine" ? "@" : "« ") + r.valeur + (r.type === "domaine" ? "" : " »"),
+            (() => { const n = recoMail.filter(x => x.type === r.type && x.valeur === r.valeur && x.hotel_id !== r.hotel_id).length;
+              return n ? React.createElement('span', { title: "Partagé avec " + n + " autre(s) établissement(s) : rattachement par la signature", style: { fontSize: 10, color: "#B7791F", fontWeight: 600 } }, "partagé ×" + (n + 1)) : null; })(),
             React.createElement('button', { type: "button", onClick: () => supprimerRecoMail(r), title: "Retirer", style: { border: "none", background: "none", color: "#999", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "0 2px" } }, "✕"));
           const ajouter = async () => { if (await ajouterRecoMail(editingClientId, recoNew.type, recoNew.valeur)) setRecoNew({ ...recoNew, valeur: "" }); };
           return React.createElement('div', { style: { marginBottom: 10, padding: "10px 12px", background: "#FAFBFD", border: "1px solid #E8E8F0", borderRadius: 8 } },
             React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 4 } }, "Reconnaissance des mails entrants"),
-            React.createElement('div', { style: { fontSize: 10.5, color: "#888", marginBottom: 8, lineHeight: 1.5 } }, "Les nouveaux tickets reçus par mail sont rattachés à cet établissement si l\u0027expéditeur écrit depuis un de ces domaines, ou si sa signature contient le téléphone, l\u0027adresse ou un mot-clé ci-dessous. N\u0027ajoutez pas un domaine partagé par plusieurs hôtels (hilton.com, gmail.com…) : utilisez plutôt un mot-clé."),
+            React.createElement('div', { style: { fontSize: 10.5, color: "#888", marginBottom: 8, lineHeight: 1.5 } }, "Les nouveaux tickets reçus par mail sont rattachés à cet établissement si l\u0027expéditeur écrit depuis un de ces domaines, ou si sa signature contient le téléphone, l\u0027adresse ou un mot-clé ci-dessous. Un domaine peut être partagé par plusieurs hôtels du même groupe (radissonindividuals.com, hilton.com…) : le rattachement se fait alors par la signature, ajoutez donc aussi un mot-clé propre à l\u0027hôtel. Jamais de domaine grand public (gmail.com…)."),
             React.createElement('div', { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 } },
               regles.length ? regles.map(puce) : React.createElement('span', { style: { fontSize: 11.5, color: "#AAA" } }, "Aucun domaine ni mot-clé (seuls le téléphone et l\u0027adresse de la fiche sont utilisés).")),
             React.createElement('div', { style: { display: "flex", gap: 6 } },
               React.createElement('select', { value: recoNew.type, onChange: e => setRecoNew({ ...recoNew, type: e.target.value }), style: { padding: "6px 8px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12 } },
                 React.createElement('option', { value: "domaine" }, "Domaine"),
                 React.createElement('option', { value: "mot_cle" }, "Mot-clé")),
-              React.createElement('input', { value: recoNew.valeur, onChange: e => setRecoNew({ ...recoNew, valeur: e.target.value }), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouter(); } },
+              React.createElement('input', { value: recoNew.valeur, autoComplete: "off", name: "reco-mail-" + editingClientId, onChange: e => setRecoNew({ ...recoNew, valeur: e.target.value }), onKeyDown: e => { if (e.key === "Enter") { e.preventDefault(); ajouter(); } },
                 placeholder: recoNew.type === "domaine" ? "ex : cp-paris.com" : "ex : Canopy Trocadéro", style: { flex: 1, padding: "6px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
               React.createElement('button', { type: "button", onClick: ajouter, style: { padding: "6px 12px", background: SB, color: "white", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "Ajouter"))
           );
@@ -124,19 +126,21 @@ function Page_client_admin(ctx) {
           React.createElement('label', { style: { display: "block", fontSize: 11, fontWeight: 500, color: "#555", marginBottom: 4 } }, "Groupe hôtelier"),
           React.createElement('input', { value: clientForm.groupe, onChange: e => setClientForm({ ...clientForm, groupe: e.target.value }), placeholder: "ex : Marriott, Accor, IHG…", style: { width: "100%", padding: "8px 10px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
         ),
-        // ---- Contacts clés (GM / RH / Technique) ----
+        // ---- Contacts clés (GM / RH / Technique / Finance) ----
         React.createElement('div', { style: { marginBottom: 10, background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 8, padding: 12 } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 8 } }, "👤 Contacts clés"),
           [
-            { role: "GM (Directeur général)", nom: "gmNom", prenom: "gmPrenom", email: "gmEmail" },
-            { role: "RH", nom: "rhNom", prenom: "rhPrenom", email: "rhEmail" },
-            { role: "Technique", nom: "techNom", prenom: "techPrenom", email: "techEmail" },
-          ].map((c, i) => React.createElement('div', { key: i, style: { marginBottom: i < 2 ? 10 : 0 } },
+            { role: "GM (Directeur général)", nom: "gmNom", prenom: "gmPrenom", email: "gmEmail", tel: "gmTel" },
+            { role: "RH", nom: "rhNom", prenom: "rhPrenom", email: "rhEmail", tel: "rhTel" },
+            { role: "Technique", nom: "techNom", prenom: "techPrenom", email: "techEmail", tel: "techTel" },
+            { role: "Finance", nom: "finNom", prenom: "finPrenom", email: "finEmail", tel: "finTel" },
+          ].map((c, i) => React.createElement('div', { key: i, style: { marginBottom: i < 3 ? 10 : 0 } },
             React.createElement('div', { style: { fontSize: 10.5, fontWeight: 600, color: "#888", marginBottom: 4 } }, c.role),
-            React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1.4fr", gap: 8 } },
+            React.createElement('div', { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1.4fr 1fr", gap: 8 } },
               React.createElement('input', { value: clientForm[c.prenom], onChange: e => setClientForm({ ...clientForm, [c.prenom]: e.target.value }), placeholder: "Prénom", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
               React.createElement('input', { value: clientForm[c.nom], onChange: e => setClientForm({ ...clientForm, [c.nom]: e.target.value }), placeholder: "Nom", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
-              React.createElement('input', { value: clientForm[c.email], onChange: e => setClientForm({ ...clientForm, [c.email]: e.target.value }), placeholder: "Email", type: "email", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
+              React.createElement('input', { value: clientForm[c.email], onChange: e => setClientForm({ ...clientForm, [c.email]: e.target.value }), placeholder: "Email", type: "email", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } }),
+              React.createElement('input', { value: clientForm[c.tel] || "", onChange: e => setClientForm({ ...clientForm, [c.tel]: e.target.value }), placeholder: "Téléphone", type: "tel", style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box" } })
             )
           ))
         ),

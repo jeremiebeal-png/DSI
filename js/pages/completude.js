@@ -1037,9 +1037,10 @@ function CompletudeFiche({ x, ref, liste, data, hotels, isMobile, setPage, admin
     section("fiche", "Info Hotel", grille([
       ["Adresse", val([h.adresse_rue, [h.adresse_cp, h.adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", "))],
       ["Téléphone", val(h.phone)],
-      ["Directeur", val([h.gm_prenom, h.gm_nom].filter(Boolean).join(" ") + (h.gm_email ? " · " + h.gm_email : ""), "Contact à renseigner")],
-      ["Responsable technique", val([h.tech_prenom, h.tech_nom].filter(Boolean).join(" ") + (h.tech_email ? " · " + h.tech_email : ""), "Contact à renseigner")],
-      ["RH", val([h.rh_prenom, h.rh_nom].filter(Boolean).join(" ") + (h.rh_email ? " · " + h.rh_email : ""), "—")],
+      ["Directeur", val([h.gm_prenom, h.gm_nom].filter(Boolean).join(" ") + (h.gm_email ? " · " + h.gm_email : "") + (h.gm_tel ? " · " + h.gm_tel : ""), "Contact à renseigner")],
+      ["Responsable technique", val([h.tech_prenom, h.tech_nom].filter(Boolean).join(" ") + (h.tech_email ? " · " + h.tech_email : "") + (h.tech_tel ? " · " + h.tech_tel : ""), "Contact à renseigner")],
+      ["Finance", val([h.fin_prenom, h.fin_nom].filter(Boolean).join(" ") + (h.fin_email ? " · " + h.fin_email : "") + (h.fin_tel ? " · " + h.fin_tel : ""), "—")],
+      ["RH", val([h.rh_prenom, h.rh_nom].filter(Boolean).join(" ") + (h.rh_email ? " · " + h.rh_email : "") + (h.rh_tel ? " · " + h.rh_tel : ""), "—")],
       ["Nom NinjaOne", val(h.ninjaone_nom)],
     ]), lienPage("Modifier", "client-admin")),
 
