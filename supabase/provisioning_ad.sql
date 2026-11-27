@@ -64,3 +64,9 @@ values
   ('prov_ad_creer', 'Créer le compte AD validé', 'Crée le compte validé par le technicien (Oui dans le portail). Refuse tout groupe protégé (adminCount=1).',
    0, 'DSI - AD Creer compte',       'system', false, false, true, 'ia', '@DC', 5)
 on conflict (cle) do nothing;
+
+-- 5) Reprise de poste (« Modification » : un nouveau collaborateur reprend le compte d'un ancien) — nov. 2026
+insert into public.agent_scripts (cle, libelle, description, ninja_script_id, ninja_script_nom, run_as, lecture_seule, auto_autorise, actif, convention, serveur_cible, attente_min)
+values ('prov_ad_reprendre', 'Reprendre un compte AD (reprise de poste)', 'Renomme le compte existant de l''ancien collaborateur pour le nouveau (identifiant, UPN, nom, adresse principale, ancienne adresse en alias), nouveau mot de passe provisoire, groupes ajoutés. Uniquement après le Oui d''un technicien. Refuse les comptes et groupes protégés.',
+  0, 'DSI - AD Reprendre compte', 'system', false, false, true, 'ia', '@DC', 5)
+on conflict (cle) do nothing;

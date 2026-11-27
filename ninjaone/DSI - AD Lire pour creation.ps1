@@ -1,4 +1,4 @@
-<#
+﻿<#
   DSI - AD Lire pour creation
   ---------------------------------------------------------------------------
   Script NinjaOne lancé par Oscar (Worker dsi-hotel-agent) sur le contrôleur de domaine
@@ -9,7 +9,10 @@
     - le domaine et les suffixes UPN ;
     - les OU (nombre de comptes actifs, comptes synchronisés Entra Connect, comptes créés depuis 1 an) ;
     - les groupes de sécurité « métier » (jamais les groupes protégés ni les groupes intégrés) ;
-    - les comptes existants qui ressemblent au nouveau collaborateur (identifiant ou prénom + nom).
+    - les comptes existants qui ressemblent au nouveau collaborateur (identifiant ou prénom + nom) ;
+    - reprise de poste (« Modification » : un nouveau collaborateur reprend le compte d'un ancien) :
+      le ou les comptes correspondant à l'ancien collaborateur (paramètre cible : adresse mail et/ou nom),
+      avec leurs groupes, pour que le technicien choisisse le compte à reprendre.
 
   NinjaOne : Windows PowerShell, exécuter en tant que System, catégorie au choix.
   Paramètres (envoyés par le Worker) : -Callback <url> -Token <jeton> -ParamsB64 <json base64>
@@ -112,6 +115,37 @@ try {
     if (Get-ADUser -Filter "UserPrincipalName -eq '$(Q $upn)'") { $upnPris += $upn }
   } }
 
+  # ---- Reprise de poste : compte de l'ancien collaborateur ----
+  $cibles = @()
+  if ($p.cible) {
+    $vusC = @{}
+    $trouves = @()
+    $mailC = "$($p.cible.mail)".Trim()
+    if ($mailC -match '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') {
+      $trouves += @(Get-ADUser -Filter "UserPrincipalName -eq '$(Q $mailC)' -or mail -eq '$(Q $mailC)' -or proxyAddresses -eq 'smtp:$(Q $mailC)'" -Properties DisplayName, mail, proxyAddresses, memberOf, adminCount, 'mS-DS-ConsistencyGuid', lastLogonTimestamp)
+      $loc = $mailC.Split('@')[0]
+      if ($loc.Length -le 20) { $trouves += @(Get-ADUser -Filter "SamAccountName -eq '$(Q $loc)'" -Properties DisplayName, mail, proxyAddresses, memberOf, adminCount, 'mS-DS-ConsistencyGuid', lastLogonTimestamp) }
+    }
+    if ("$($p.cible.nom)".Trim()) {
+      $f2 = "Surname -eq '$(Q "$($p.cible.nom)".Trim())'"
+      if ("$($p.cible.prenom)".Trim()) { $f2 += " -and GivenName -eq '$(Q "$($p.cible.prenom)".Trim())'" }
+      $trouves += @(Get-ADUser -Filter $f2 -Properties DisplayName, mail, proxyAddresses, memberOf, adminCount, 'mS-DS-ConsistencyGuid', lastLogonTimestamp | Select-Object -First 5)
+    }
+    foreach ($u in $trouves) {
+      if (-not $u -or $vusC[$u.SamAccountName]) { continue }
+      $vusC[$u.SamAccountName] = 1
+      $grs = @($u.memberOf | ForEach-Object { try { (Get-ADGroup -Identity $_).SamAccountName } catch { } } | Where-Object { $_ })
+      $dernier = $null
+      if ($u.lastLogonTimestamp) { $dernier = [DateTime]::FromFileTime($u.lastLogonTimestamp).ToString('yyyy-MM-dd') }
+      $cibles += @{
+        sam = $u.SamAccountName; upn = $u.UserPrincipalName; nom = $u.DisplayName; mail = $u.mail
+        actif = $u.Enabled; ou = (Parent $u.DistinguishedName); protege = ($u.adminCount -eq 1)
+        synchro = [bool]$u.'mS-DS-ConsistencyGuid'; groupes = $grs; derniereConnexion = $dernier
+        proxys = @($u.proxyAddresses | Select-Object -First 10)
+      }
+    }
+  }
+
   $pol = Get-ADDefaultDomainPasswordPolicy
   $adsync = [bool](Get-Service -Name ADSync -ErrorAction SilentlyContinue)
 
@@ -127,6 +161,7 @@ try {
     existants = $existants
     homonymes = $homonymes
     upnPris = $upnPris
+    cibles = $cibles
     mdpLongueurMin = $pol.MinPasswordLength
     mdpComplexite = $pol.ComplexityEnabled
     adsyncSurCeServeur = $adsync

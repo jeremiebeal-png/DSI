@@ -2804,7 +2804,14 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       const d = await callOscarProv("/provisioning/fiche", { ticketId });
       setFicheAd(prev => ({ ...prev, [ticketId]: { loading: false, data: d } }));
       const f = d.fiche;
-      if (f && f.statut === "prete" && f.proposition) {
+      if (d.type === "reprise") {
+        const p = (f && f.proposition) || d.propositionInitiale || {};
+        setAdForm(prev => (prev && prev.ticketId === ticketId && prev.reprise && prev.luLe === (f && f.ad_lu_le)) ? prev : {
+          ticketId, reprise: true, luLe: f && f.ad_lu_le, faire: !!(f && f.statut === "prete"), cibleSam: p.cibleSam || "", sam: p.sam || "", suffixe: p.suffixe || "",
+          groupesParService: JSON.parse(JSON.stringify(p.groupesParService || {})), autresGroupes: [],
+          prenom: p.prenom || "", nom: p.nom || "", nomAffiche: p.nomAffiche || "", poste: p.poste || "", mail: p.mailDemande || "",
+        });
+      } else if (f && f.statut === "prete" && f.proposition) {
         const p = f.proposition;
         setAdForm(prev => (prev && prev.ticketId === ticketId && prev.luLe === f.ad_lu_le) ? prev : {
           ticketId, luLe: f.ad_lu_le, faire: true, sam: p.sam || "", suffixe: p.suffixe || "", ou: p.ou || "",
@@ -2889,6 +2896,47 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       setProvBusy(false);
     }
   };
+  // ✅ Oui sur une reprise de poste : compte AD renommé (script sur le DC) puis compte Microsoft 365 renommé, même mot de passe
+  const validerReprise = async (t, plan) => {
+    const { faireAd, faireMail, a, ancienMail, ancienNom } = plan;
+    const groupesAd = faireAd ? [...new Set([...Object.values(a.groupesParService || {}).flat(), ...(a.autresGroupes || [])])] : [];
+    const resume = [
+      "• Ancien : " + (ancienNom || "?") + (ancienMail ? " (" + ancienMail + ")" : ""),
+      "• Nouveau : " + a.nomAffiche + (a.mail ? " (" + a.mail + ")" : ""),
+      faireAd ? "• Compte Windows : " + a.cibleSam + " → " + a.sam + "@" + a.suffixe + "\n   Groupes ajoutés : " + (groupesAd.join(", ") || "aucun") : "• Compte Windows : non traité",
+      faireMail ? "• Microsoft 365 : renommage, ancienne adresse gardée en alias, sessions déconnectées, MFA de l'ancien retiré" : "• Microsoft 365 : non traité",
+    ].join("\n");
+    if (!confirm("Reprendre le compte pour " + a.nomAffiche + " ?\n\n" + resume + "\n\nLe compte est renommé (mails et fichiers conservés). Le mot de passe provisoire s'affichera une seule fois.")) return;
+    setProvBusy(true);
+    try {
+      const r = await callOscarProv("/provisioning/valider", {
+        ticketId: t.id, choix: "oui", mail: faireMail,
+        compte: { ad: faireAd, cibleSam: a.cibleSam, sam: String(a.sam || "").trim(), suffixe: a.suffixe, groupesParService: a.groupesParService, autresGroupes: a.autresGroupes,
+          prenom: a.prenom, nom: a.nom, nomAffiche: a.nomAffiche, poste: a.poste, mail: String(a.mail || "").trim().toLowerCase() },
+      });
+      let m365 = null, m365Err = null;
+      if (faireMail) {
+        const adr = String(a.mail || "").trim().toLowerCase();
+        try {
+          m365 = await callProvisioning("/provisioning/reprendre", {
+            ticketId: t.id, ancienMail, local: adr.split("@")[0], domaine: adr.split("@")[1] || "", prenom: a.prenom, nom: a.nom, nomAffiche: a.nomAffiche, poste: a.poste, motDePasse: r.motDePasse,
+          });
+        } catch (e) { m365Err = e.message || String(e); }
+        try { await callOscarProv("/provisioning/m365-fait", { ticketId: t.id, erreur: m365Err }); } catch (e) {}
+      }
+      const synchro = !!((r.ad && r.ad.synchro) || (m365 && m365.synchro));
+      const mdp = r.ad ? r.motDePasse : ((m365 && m365.motDePasse) || r.motDePasse);
+      setProvResultat({ ticketId: t.id, reprise: true, synchro, motDePasse: mdp, ad: r.ad, m365, m365Err, statut: m365Err ? "partiel" : (m365 ? m365.statut : "ok") });
+      loadTicketMsgs(t.id);
+      chargerProvisioning(t.id);
+      chargerFicheAd(t.id);
+    } catch (e) {
+      alert("Reprise impossible : " + (e.message || e) + "\n\nRien n'a été modifié.");
+    } finally {
+      setProvBusy(false);
+    }
+  };
+
   // ❌ Non
   const refuserCreation = async (t) => {
     const motif = prompt("Refuser la création de compte.\n\nMotif (envoyé au demandeur par Oscar ; laissez vide pour ne pas le prévenir) :", "");
@@ -2924,6 +2972,114 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     return () => clearTimeout(id);
   }, [openTicketId, isAdmin, ficheAd]);
 
+  // Carte « Reprise de poste » (Modification : un nouveau collaborateur reprend le compte d'un ancien)
+  const renderReprise = (t, k) => {
+    const { fadData, fiche, hotelFiche, d, valide, val, boite, note, champ, lbl, petitBtn, titreSection, coche } = k;
+    const form = (d && d.form) || {};
+    const prop = (fiche && fiche.proposition) || (fadData && fadData.propositionInitiale) || {};
+    const ancienMail = String(form.ancienMail || (prop.ancien && prop.ancien.mail) || "").toLowerCase();
+    const ancienNom = form.compteAModifier || (prop.ancien && prop.ancien.libelle) || "";
+    const a = adForm && adForm.ticketId === t.id && adForm.reprise ? adForm : null;
+    const setA = (cle, v) => setAdForm(prev => ({ ...prev, [cle]: v }));
+    const lecture = fiche && fiche.ad_lecture;
+    const intro = note("🔁 Reprise de poste : " + (form.nom || prop.nomAffiche || "le nouveau collaborateur") + " reprend le compte de " + (ancienNom || ancienMail || "l'ancien collaborateur") + ". Le même compte est renommé (mails et fichiers conservés), l'ancienne adresse reste en alias, les sessions et la double authentification de l'ancien sont retirées.", "#1F4E8C", "#E8F0FB", "r-i");
+    const blocValidation = !valide && note(val && val.status === "refused" ? "⛔ Demande refusée par " + (val.validateur_email || "le validateur") + "." : "⏳ En attente de validation par " + ((val && val.validateur_email) || "le RH / la direction") + ". « Oui » sera actif après validation.", val && val.status === "refused" ? "#C53030" : "#8A6D1F", val && val.status === "refused" ? "#FDECEC" : "#FFFBEB", "r-v");
+
+    // --- Compte Windows ---
+    const sectionAd = [];
+    let adPret = false, manqueAd = "";
+    if (!fiche || fiche.statut === "ad_inactif") {
+      sectionAd.push(note("La reprise automatique du compte AD n'est pas activée pour " + ((hotelFiche && hotelFiche.name) || "cet hôtel") + ".", "#5A6B85", "#EEF2F8", "a-i"));
+      sectionAd.push(React.createElement('div', { key: "a-b", style: { display: "flex", gap: 8, marginBottom: 6 } },
+        hotelFiche && !hotelFiche.provisioning_ad && React.createElement('button', { onClick: () => activerAdHotel(t, hotelFiche), disabled: provBusy, style: petitBtn }, "Activer pour cet hôtel"),
+        hotelFiche && hotelFiche.provisioning_ad && React.createElement('button', { onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Préparer la fiche (lire l'AD)")));
+    } else if (fiche.statut === "lecture") {
+      sectionAd.push(note("⏳ Oscar cherche le compte de " + (ancienNom || ancienMail) + " dans l'AD sur " + ((fiche.ad_resultat && fiche.ad_resultat.serveur) || "le contrôleur de domaine") + " (lecture seule)…", "#8A6D1F", "#FFFBEB", "a-l"));
+      if (Date.now() - new Date(fiche.maj_le).getTime() > 10 * 60000) sectionAd.push(React.createElement('button', { key: "a-r", onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Pas de réponse : relancer la lecture"));
+    } else if (fiche.statut === "sans_ad" || fiche.statut === "erreur") {
+      sectionAd.push(note((fiche.statut === "sans_ad" ? "ℹ️ Pas de compte AD automatique : " : "❌ ") + (fiche.erreur || ""), fiche.statut === "sans_ad" ? "#5A6B85" : "#C53030", fiche.statut === "sans_ad" ? "#EEF2F8" : "#FDECEC", "a-e"));
+      sectionAd.push(React.createElement('button', { key: "a-r", onClick: () => preparerFicheAd(t), disabled: provBusy, style: petitBtn }, "Relancer la lecture de l'AD"));
+    } else if (fiche.statut === "prete" && lecture && a) {
+      adPret = true;
+      (prop.alertes || []).forEach((x, i) => sectionAd.push(note("⚠️ " + x, "#8A6D1F", "#FFFBEB", "al" + i)));
+      if (a.faire) {
+        const cibles = prop.cibles || [];
+        const cible = cibles.find(c => c.sam === a.cibleSam);
+        sectionAd.push(React.createElement('label', { key: "lc", style: lbl }, "Compte à reprendre (ancien collaborateur)"));
+        sectionAd.push(React.createElement('select', { key: "c", value: a.cibleSam, onChange: e => setA("cibleSam", e.target.value), style: { ...champ, marginBottom: 4, borderColor: a.cibleSam ? "#D5DCE8" : "#F0B429" } },
+          React.createElement('option', { value: "" }, cibles.length ? "— Choisir le compte —" : "Aucun compte trouvé"),
+          cibles.map(c => React.createElement('option', { key: c.sam, value: c.sam, disabled: !!c.protege }, (c.nom || c.sam) + " — " + c.sam + (c.upn ? " (" + c.upn + ")" : "") + (c.actif === false ? " · désactivé" : "") + (c.synchro ? " · 🔄 synchronisé" : "") + (c.derniereConnexion ? " · dernière connexion " + c.derniereConnexion : "") + (c.protege ? " · protégé" : "")))));
+        if (cible) sectionAd.push(note("Groupes actuels (conservés) : " + ((cible.groupes || []).join(", ") || "aucun"), "#5A6B85", "#EEF2F8", "ga"));
+        sectionAd.push(React.createElement('label', { key: "lid", style: lbl }, "Nouvel identifiant Windows"));
+        sectionAd.push(React.createElement('div', { key: "id", style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+          React.createElement('span', { style: { fontSize: 12.5, color: "#555" } }, (lecture.netbios || "") + "\\"),
+          React.createElement('input', { value: a.sam, maxLength: 20, onChange: e => setA("sam", e.target.value.replace(/\s/g, "")), style: { ...champ, width: "auto", flex: "1 1 140px" } }),
+          React.createElement('span', { style: { fontSize: 13, color: "#555" } }, "@"),
+          React.createElement('select', { value: a.suffixe, onChange: e => setA("suffixe", e.target.value), style: { ...champ, width: "auto", flex: "1 1 160px" } },
+            (lecture.suffixes || []).map(x => React.createElement('option', { key: x, value: String(x).toLowerCase() }, x)))));
+        const groupesDispo = lecture.groupes || [];
+        const nomGroupe = (sam) => { const g = groupesDispo.find(x => x.sam === sam); return g ? (g.nom || g.sam) : sam; };
+        const ligneGroupes = (cle, libelle, liste, maj) => React.createElement('div', { key: "g-" + cle, style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", background: "white", border: "1px solid #D5DCE8", borderRadius: 6, padding: "6px 8px", marginBottom: 5 } },
+          React.createElement('span', { style: { fontSize: 11.5, fontWeight: 700, color: "#1F4E8C", minWidth: 96 } }, libelle),
+          liste.length === 0 && React.createElement('span', { style: { fontSize: 11.5, color: "#888" } }, "aucun ajout"),
+          ...liste.map(g => React.createElement('span', { key: g, style: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, background: "#E8F0FB", color: "#1a1a3e", borderRadius: 10, padding: "2px 8px" } }, nomGroupe(g),
+            React.createElement('button', { onClick: () => maj(liste.filter(x => x !== g)), title: "Retirer", style: { border: "none", background: "transparent", color: "#C53030", cursor: "pointer", padding: 0, fontSize: 12 } }, "×"))),
+          React.createElement('select', { value: "", onChange: e => { if (e.target.value) maj([...liste, e.target.value]); }, style: { ...champ, width: "auto", padding: "3px 6px", fontSize: 11.5, marginLeft: "auto" } },
+            React.createElement('option', { value: "" }, "+ ajouter"),
+            groupesDispo.filter(g => !liste.includes(g.sam) && !(cible && (cible.groupes || []).includes(g.sam))).map(g => React.createElement('option', { key: g.sam, value: g.sam }, (g.nom || g.sam) + (g.desc ? " — " + g.desc : "")))));
+        sectionAd.push(React.createElement('label', { key: "lg", style: lbl }, "Groupes AD à ajouter"));
+        Object.keys(a.groupesParService || {}).forEach(sv => sectionAd.push(ligneGroupes(sv, sv, a.groupesParService[sv] || [], l => setAdForm(prev => ({ ...prev, groupesParService: { ...prev.groupesParService, [sv]: l } })))));
+        sectionAd.push(ligneGroupes("__autres", "Autres", a.autresGroupes || [], l => setA("autresGroupes", l)));
+        const aligne = !(cible && cible.synchro && a.mail) || (String(a.sam || "") + "@" + a.suffixe).toLowerCase() === String(a.mail).toLowerCase();
+        if (cible && cible.synchro) sectionAd.push(note((aligne ? "🔄 " : "⚠️ ") + "Compte synchronisé avec Microsoft 365 : le renommage et la nouvelle adresse sont faits dans l'AD ; Microsoft 365 suit au prochain cycle Entra Connect (30 min max)." + (aligne ? "" : " L'identifiant doit être identique à la nouvelle adresse (" + a.mail + ")."), aligne ? "#2B6CB0" : "#C53030", aligne ? "#EBF4FF" : "#FDECEC", "sy"));
+        manqueAd = !a.cibleSam ? "choisissez le compte à reprendre" : !/^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/.test(a.sam || "") ? "identifiant Windows invalide" : !a.suffixe ? "suffixe UPN" : !aligne ? "identifiant ≠ nouvelle adresse (compte synchronisé)" : "";
+      }
+    }
+    const faireAd = !!(adPret && a && a.faire);
+
+    // --- Microsoft 365 ---
+    const st = prov[t.id];
+    const sectionMail = [];
+    let mailPossible = false;
+    if (!st || st.loading) sectionMail.push(note("Lecture du tenant Microsoft 365 de l'hôtel…", "#777", "transparent", "m-l"));
+    else if (st.err) sectionMail.push(note("❌ " + st.err, "#C53030", "#FDECEC", "m-e"));
+    else if (d.existant) sectionMail.push(note("✅ Compte Microsoft 365 déjà traité : " + d.existant.upn + (d.existant.cree_par ? " par " + d.existant.cree_par : "") + ".", "#256029", "#EAF6EC", "m-x"));
+    else if ((d.blocages || []).length) d.blocages.forEach((b, i) => sectionMail.push(note("ℹ️ " + b, "#5A6B85", "#EEF2F8", "m-b" + i)));
+    else if (d.erreurGraph) sectionMail.push(note("❌ " + d.erreurGraph, "#C53030", "#FDECEC", "m-g"));
+    else if (!d.ancienCompte) sectionMail.push(note("⚠️ Aucun compte Microsoft 365 trouvé pour " + (ancienMail || "l'ancienne adresse") + " : la partie messagerie est à faire à la main.", "#8A6D1F", "#FFFBEB", "m-n"));
+    else {
+      mailPossible = true;
+      sectionMail.push(note("Compte trouvé : " + (d.ancienCompte.nom || "") + " (" + d.ancienCompte.upn + ")" + (d.ancienCompte.synchro ? " · 🔄 synchronisé : renommé par l'AD" : "") + (d.ancienCompte.actif ? "" : " · bloqué"), "#256029", "#EAF6EC", "m-c"));
+    }
+    if (a) {
+      sectionMail.push(React.createElement('div', { key: "nid", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1.3fr", gap: 8, marginBottom: 10 } },
+        ...[["prenom", "Prénom"], ["nom", "Nom"], ["nomAffiche", "Nom affiché"]].map(([kk, l]) => React.createElement('div', { key: kk }, React.createElement('label', { style: lbl }, l), React.createElement('input', { value: a[kk], onChange: e => setA(kk, e.target.value), style: champ })))));
+      sectionMail.push(React.createElement('div', { key: "nid2", style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.4fr 1fr", gap: 8, marginBottom: 10 } },
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Nouvelle adresse mail"), React.createElement('input', { value: a.mail, onChange: e => setA("mail", e.target.value.trim()), placeholder: "prenom.nom@domaine", style: champ })),
+        React.createElement('div', null, React.createElement('label', { style: lbl }, "Poste"), React.createElement('input', { value: a.poste, onChange: e => setA("poste", e.target.value), style: champ }))));
+    }
+    const faireMail = !!(mailPossible && mailFaire);
+    const domOk = !a || !a.mail || !(d.domaines || []).length || (d.domaines || []).some(x => x.nom === String(a.mail).split("@")[1]);
+    const manqueMail = !a ? "" : !/^[a-z0-9._-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(a.mail || "") ? "nouvelle adresse mail" : (faireMail && !domOk) ? "domaine de l'adresse absent du tenant" : !String(a.nomAffiche || "").trim() ? "nom affiché" : "";
+
+    const reste = (fadData && fadData.reste) || [];
+    const manque = !valide ? "en attente de validation RH / direction" : (!faireAd && !faireMail) ? "rien à faire" : (faireAd && manqueAd) ? manqueAd : manqueMail;
+    return boite(
+      intro, blocValidation,
+      titreSection("🪟 Compte Windows (AD)", adPret && a && coche(!!a.faire, v => setA("faire", v), "Reprendre le compte Windows")),
+      ...sectionAd,
+      titreSection("📧 Microsoft 365", mailPossible && coche(mailFaire, v => setMailFaire(v), "Reprendre le compte Microsoft 365")),
+      ...sectionMail,
+      reste.length > 0 && titreSection("📝 Reste à faire par un technicien"),
+      reste.length > 0 && React.createElement('ul', { style: { margin: "0 0 8px 18px", padding: 0, fontSize: 12, color: "#444", lineHeight: 1.6 } }, reste.map((r, i) => React.createElement('li', { key: i }, r))),
+      React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end", marginTop: 12, paddingTop: 10, borderTop: "1px solid #DCE6F4" } },
+        manque && React.createElement('span', { style: { fontSize: 11.5, color: "#8A6D1F" } }, "Pour valider : " + manque),
+        fiche && React.createElement('button', { onClick: () => refuserCreation(t), disabled: provBusy, style: { padding: "9px 16px", background: "white", border: "1px solid #E53E3E", color: "#C53030", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: provBusy ? "default" : "pointer" } }, "❌ Non"),
+        React.createElement('button', { onClick: () => validerReprise(t, { faireAd, faireMail, a, ancienMail, ancienNom }), disabled: !!manque || provBusy || !a, style: { padding: "9px 18px", background: manque ? "#B8C4D6" : "#256029", border: "none", color: "white", borderRadius: 7, fontSize: 12.5, fontWeight: 700, cursor: manque || provBusy ? "default" : "pointer", opacity: provBusy ? 0.6 : 1 } }, provBusy ? "Reprise en cours…" : "✅ Oui, reprendre le compte" + (faireAd && faireMail ? " (Windows + Microsoft 365)" : faireAd ? " Windows" : faireMail ? " Microsoft 365" : ""))
+      )
+    );
+  };
+
   const renderProvisioning = (t) => {
     const st = prov[t.id];
     const sa = ficheAd[t.id];
@@ -2939,10 +3095,10 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
     const R = provResultat && provResultat.ticketId === t.id ? provResultat : null;
     const modale = R && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.6)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
       React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: 540, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 12px 40px rgba(0,0,0,.3)" } },
-        React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: R.statut === "ok" ? "#256029" : "#B7791F", marginBottom: 10 } }, R.statut === "ok" ? "✅ Création lancée" : "⚠️ Création partielle — à reprendre"),
-        R.ad && React.createElement('div', { style: { fontSize: 13, color: "#333", marginBottom: 4 } }, "Compte Windows : ", React.createElement('b', null, R.ad.sam), " (" + R.ad.upn + ") — en cours de création sur " + R.ad.serveur + ", résultat dans le fil du ticket d'ici 1 à 2 min."),
-        R.m365 && React.createElement('div', { style: { fontSize: 13, color: "#333", marginBottom: 4 } }, "Boîte mail : ", React.createElement('b', null, R.m365.upn), " — " + (R.m365.licence || "")),
-        R.m365Err && note("❌ Boîte mail non créée : " + R.m365Err, "#C53030", "#FDECEC"),
+        React.createElement('div', { style: { fontSize: 16, fontWeight: 700, color: R.statut === "ok" ? "#256029" : "#B7791F", marginBottom: 10 } }, R.statut === "ok" ? (R.reprise ? "✅ Reprise lancée" : "✅ Création lancée") : (R.reprise ? "⚠️ Reprise partielle — à reprendre" : "⚠️ Création partielle — à reprendre")),
+        R.ad && React.createElement('div', { style: { fontSize: 13, color: "#333", marginBottom: 4 } }, "Compte Windows : ", React.createElement('b', null, R.ad.sam), " (" + R.ad.upn + ")" + (R.reprise && R.ad.ancien ? " — ex " + R.ad.ancien + ", renommage" : " — création") + " en cours sur " + R.ad.serveur + ", résultat dans le fil du ticket d'ici 1 à 2 min."),
+        R.m365 && React.createElement('div', { style: { fontSize: 13, color: "#333", marginBottom: 4 } }, R.reprise ? "Compte Microsoft 365 : " : "Boîte mail : ", React.createElement('b', null, R.m365.upn), R.m365.licence ? " — " + R.m365.licence : ""),
+        R.m365Err && note("❌ " + (R.reprise ? "Microsoft 365 non traité : " : "Boîte mail non créée : ") + R.m365Err, "#C53030", "#FDECEC"),
         React.createElement('div', { style: { background: "#FFFBEB", border: "1px solid #F0D98A", borderRadius: 8, padding: "12px 14px", margin: "12px 0" } },
           React.createElement('div', { style: { fontSize: 11, fontWeight: 700, color: "#8A6D1F", textTransform: "uppercase", marginBottom: 6 } }, "Mot de passe provisoire" + (R.ad && R.m365 ? " (Windows et messagerie)" : "")),
           React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 10 } },
@@ -2987,12 +3143,16 @@ sb.from("profiles").select("role, hotel_id, permissions, full_name").eq("id", se
       if (decide.choix === "non") lignes.push(note("⛔ Refusée par " + decide.par + " le " + new Date(decide.le).toLocaleString("fr-FR") + (decide.motif ? " — " + decide.motif : ""), "#C53030", "#FDECEC", "n"));
       else {
         lignes.push(note("✅ Validée par " + decide.par + " le " + new Date(decide.le).toLocaleString("fr-FR") + ".", "#256029", "#EAF6EC", "v"));
-        if (decide.ad) lignes.push(note(ad && ad.recu ? (ad.ok ? "✓ Compte Windows " + decide.compte.sam + " créé" + (ad.dn ? " (" + ad.dn + ")" : "") + ((ad.groupes || []).some(g => !g.ok) ? " — groupes non ajoutés : " + ad.groupes.filter(g => !g.ok).map(g => g.sam + " (" + g.erreur + ")").join(", ") : "") : "✗ Compte Windows : " + (ad.erreur || "échec")) : "⏳ Compte Windows " + decide.compte.sam + " en cours de création sur " + ((ad && ad.serveur) || "le DC") + "…", ad && ad.recu ? (ad.ok ? "#256029" : "#C53030") : "#8A6D1F", "white", "a"));
-        if (decide.mail) lignes.push(note(m && m.statut ? (m.statut === "echec" ? "✗ Boîte mail : " + (m.erreur || "échec") : "✓ Boîte mail " + m.upn + " (" + m.statut + ")") : "⏳ Boîte mail en attente…", m && m.statut === "echec" ? "#C53030" : "#256029", "white", "m"));
+        if (decide.ad) lignes.push(note(ad && ad.recu ? (ad.ok ? "✓ Compte Windows " + decide.compte.sam + (decide.mode === "reprise" ? " repris (ex " + decide.compte.cibleSam + ")" : " créé") + (ad.dn ? " (" + ad.dn + ")" : "") + ((ad.groupes || []).some(g => !g.ok) ? " — groupes non ajoutés : " + ad.groupes.filter(g => !g.ok).map(g => g.sam + " (" + g.erreur + ")").join(", ") : "") : "✗ Compte Windows : " + (ad.erreur || "échec")) : "⏳ Compte Windows " + decide.compte.sam + " en cours de création sur " + ((ad && ad.serveur) || "le DC") + "…", ad && ad.recu ? (ad.ok ? "#256029" : "#C53030") : "#8A6D1F", "white", "a"));
+        if (decide.mail) lignes.push(note(m && m.statut ? (m.statut === "echec" ? "✗ " + (decide.mode === "reprise" ? "Microsoft 365" : "Boîte mail") + " : " + (m.erreur || "échec") : "✓ " + (decide.mode === "reprise" ? "Compte Microsoft 365 repris : " : "Boîte mail ") + m.upn + " (" + m.statut + ")") : "⏳ Microsoft 365 en attente…", m && m.statut === "echec" ? "#C53030" : "#256029", "white", "m"));
+        if (decide.mode === "reprise" && m && Array.isArray(m.etapes)) m.etapes.filter(e => !e.ok).forEach((e, i) => lignes.push(note("✗ " + e.etape + (e.detail ? " — " + e.detail : ""), "#C53030", "white", "me" + i)));
         lignes.push(note(fiche.client_prevenu ? "✉️ Oscar a répondu au demandeur." : "Oscar répondra au demandeur quand tout sera revenu.", "#5A6B85", "#EEF2F8", "c"));
       }
       return boite(...lignes);
     }
+
+    // ---------- Reprise de poste ----------
+    if (fadData && fadData.type === "reprise") return renderReprise(t, { fadData, fiche, hotelFiche, d, valide, val, boite, note, champ, lbl, petitBtn, titreSection, coche });
 
     // ---------- Validation RH ----------
     const blocValidation = !valide && note(val && val.status === "refused" ? "⛔ Demande refusée par " + (val.validateur_email || "le validateur") + " : création impossible." : "⏳ En attente de validation par " + ((val && val.validateur_email) || "le RH / la direction") + ". Vous pouvez vérifier la fiche ; « Oui » sera actif après validation.", val && val.status === "refused" ? "#C53030" : "#8A6D1F", val && val.status === "refused" ? "#FDECEC" : "#FFFBEB");

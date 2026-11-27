@@ -16,6 +16,11 @@
  *   POST /provisioning/verifier  { ticketId, adresse }   → l'adresse est-elle libre dans le tenant ?
  *   POST /provisioning/creer     { ticketId, local, domaine, prenom, nom, nomAffiche, poste, service,
  *                                  skuId, groupes: [id], telMfa, motDePasse? }   → crée le compte (session MFA exigée)
+ *   POST /provisioning/reprendre { ticketId, ancienMail, local, domaine, prenom, nom, nomAffiche, poste, motDePasse?, telMfa? }
+ *                                → reprise de poste (« Modification ») : le compte Microsoft 365 de l'ancien collaborateur est
+ *                                  renommé pour le nouveau (nom, UPN / adresse ; l'ancienne adresse reste en alias), ses sessions
+ *                                  sont déconnectées et ses méthodes MFA retirées. Compte synchronisé (Entra Connect) : le
+ *                                  renommage vient de l'AD, seules les sessions et le MFA sont traités ici. (session MFA exigée)
  *
  * VARIABLES CLOUDFLARE (Settings → Variables and Secrets) :
  *   - SUPABASE_URL               (Texte)  https://vkamubvlbezhpbunvdai.supabase.co
@@ -26,6 +31,7 @@
  * PERMISSIONS GRAPH (type Application, sur l'app « DSI Hotel Provisioning ») :
  *   User.ReadWrite.All, LicenseAssignment.ReadWrite.All, Organization.Read.All,
  *   GroupMember.ReadWrite.All, UserAuthenticationMethod.ReadWrite.All
+ *   (+ User-PasswordProfile.ReadWrite.All pour changer le mot de passe d'un compte existant lors d'une reprise)
  *
  * Limites (Graph) : les listes de distribution, groupes de sécurité à extension messagerie et
  * boîtes partagées se gèrent dans Exchange : ils sont signalés « à faire manuellement ».
@@ -177,6 +183,13 @@ function lireFormulaire(ticket) {
 }
 function estArrivee(ticket, form) {
   return (form && form.template === "arrivee") || /Arrivée collaborateur/i.test(String(ticket.subject || ""));
+}
+// Reprise de poste : « Modification » avec un compte à reprendre (ancien) et un nouveau collaborateur
+function estReprise(ticket, form) {
+  if (!estArrivee(ticket, form) || String((form && form.typeDemande) || "") !== "Modification") return false;
+  const mots = (x) => normaliserLocal(x).split(".").filter(Boolean).sort().join(".");
+  if (!mots(form.nom) || !(mots(form.compteAModifier) || /@/.test(String(form.ancienMail || "")))) return false;
+  return mots(form.compteAModifier) !== mots(form.nom);
 }
 
 // ---------------------------------------------------------------------------
@@ -380,14 +393,16 @@ async function contexteTicket(env, ticketId) {
   const existant = (Array.isArray(p.data) && p.data[0]) || null;
 
   const blocages = [];
+  const reprise = estReprise(ticket, form);
   if (!estArrivee(ticket, form)) blocages.push("Ce ticket n'est pas une demande « Arrivée collaborateur ».");
+  else if (reprise) { /* reprise de poste : traitée par /provisioning/reprendre */ }
   else if (form.typeDemande && form.typeDemande !== "Nouveau compte") blocages.push("Demande de modification : traitement manuel (non automatisé pour l'instant).");
   else if (form.creerMail !== true) blocages.push("Aucune création d'adresse mail n'est demandée dans ce formulaire.");
   if (!ticket.hotel_id) blocages.push("Le ticket n'est rattaché à aucun établissement.");
   else if (!tenant) blocages.push("Aucun tenant Microsoft 365 n'est rattaché à cet établissement (Pilotage → Sécurité Microsoft → Établissements).");
   else if (!tenant.provisioning_actif) blocages.push("La création de comptes n'est pas activée pour cet établissement (Pilotage → Sécurité Microsoft → Établissements).");
 
-  return { ticket, form, source, tenant, validation, existant, blocages };
+  return { ticket, form, source, tenant, validation, existant, blocages, reprise };
 }
 
 // Licence retenue pour cet hôtel lors d'une précédente création (provisioning_memo)
@@ -411,6 +426,18 @@ async function routeInfos(env, body) {
     tenant: tenant ? { tenant_id: tenant.tenant_id, nom: tenant.nom, provisioning_actif: !!tenant.provisioning_actif } : null,
   };
   if (blocages.length || existant) return reponse;
+  if (ctx.reprise) {
+    // Reprise de poste : domaines du tenant + compte Microsoft 365 de l'ancien collaborateur
+    reponse.reprise = true;
+    try {
+      const org = await lireOrganisation(env, tenant.tenant_id);
+      reponse.domaines = org.domaines; reponse.hybride = org.hybride;
+      const ancien = String(form.ancienMail || "").toLowerCase().trim();
+      const u = ancien ? await trouverUtilisateur(env, tenant.tenant_id, ancien) : null;
+      reponse.ancienCompte = u ? { upn: u.userPrincipalName, nom: u.displayName, synchro: !!u.onPremisesSyncEnabled, actif: u.accountEnabled !== false } : null;
+    } catch (e) { reponse.erreurGraph = e.message || String(e); }
+    return reponse;
+  }
 
   try {
     const tid = tenant.tenant_id;
@@ -574,6 +601,130 @@ async function routeCreer(env, body, admin) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Reprise de poste (« Modification ») : renommage du compte existant
+// ---------------------------------------------------------------------------
+async function trouverUtilisateur(env, tid, adresse) {
+  const a = String(adresse || "").toLowerCase();
+  const sel = "$select=id,displayName,userPrincipalName,mail,proxyAddresses,onPremisesSyncEnabled,accountEnabled";
+  const u = await graph(env, tid, "GET", `/users/${encodeURIComponent(a)}?${sel}`);
+  if (u.ok) return u.data;
+  if (u.status !== 404) throw new Error(erreurPermission(u, "Recherche du compte à reprendre"));
+  const filtre = encodeURIComponent(`proxyAddresses/any(x:x eq 'smtp:${a.replace(/'/g, "''")}')`);
+  const pu = await graph(env, tid, "GET", `/users?$filter=${filtre}&$count=true&${sel}`, null, { ConsistencyLevel: "eventual" });
+  if (!pu.ok) throw new Error(erreurPermission(pu, "Recherche du compte à reprendre"));
+  return (pu.data.value || [])[0] || null;
+}
+
+const TYPES_MFA = {
+  "#microsoft.graph.phoneAuthenticationMethod": "phoneMethods",
+  "#microsoft.graph.microsoftAuthenticatorAuthenticationMethod": "microsoftAuthenticatorMethods",
+  "#microsoft.graph.softwareOathAuthenticationMethod": "softwareOathMethods",
+  "#microsoft.graph.emailAuthenticationMethod": "emailMethods",
+  "#microsoft.graph.fido2AuthenticationMethod": "fido2Methods",
+  "#microsoft.graph.windowsHelloForBusinessAuthenticationMethod": "windowsHelloForBusinessMethods",
+};
+
+async function routeReprendre(env, body, admin) {
+  if (admin.aal !== "aal2") return json({ error: "Double authentification requise pour reprendre un compte." }, 403);
+  const ctx = await contexteTicket(env, body.ticketId);
+  const { ticket, form, tenant, validation, existant, blocages, reprise } = ctx;
+  if (!reprise) return json({ error: "Ce ticket n'est pas une reprise de poste (« Modification » avec un compte à reprendre)." }, 400);
+  if (blocages.length) return json({ error: blocages.join(" ") }, 400);
+  if (existant) return json({ error: "Le compte Microsoft 365 a déjà été traité pour ce ticket : " + existant.upn }, 409);
+  if (!validation || validation.status !== "validated") return json({ error: "La demande n'est pas encore validée par le RH / la direction." }, 400);
+  const tid = tenant.tenant_id;
+
+  const ancien = String(body.ancienMail || form.ancienMail || "").toLowerCase().trim();
+  if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(ancien)) return json({ error: "Ancienne adresse mail manquante ou invalide." }, 400);
+  const local = normaliserLocal(body.local);
+  const domaine = String(body.domaine || "").toLowerCase().trim();
+  const prenom = String(body.prenom || "").trim();
+  const nom = String(body.nom || "").trim();
+  const nomAffiche = String(body.nomAffiche || "").trim() || [prenom, nom].filter(Boolean).join(" ");
+  if (!local || local.length > 64) return json({ error: "Partie avant @ invalide." }, 400);
+  if (!nomAffiche) return json({ error: "Nom affiché obligatoire." }, 400);
+  if (body.motDePasse && !motDePasseFourni(body.motDePasse)) return json({ error: "Mot de passe transmis non conforme à la politique Microsoft." }, 400);
+
+  const u = await trouverUtilisateur(env, tid, ancien);
+  if (!u) return json({ error: "Aucun compte Microsoft 365 trouvé pour " + ancien + " dans le tenant de l'hôtel." }, 404);
+  const org = await lireOrganisation(env, tid);
+  if (!org.domaines.some(d => d.nom === domaine)) return json({ error: "Le domaine « " + domaine + " » n'appartient pas au tenant de l'hôtel." }, 400);
+  const upn = local + "@" + domaine;
+  // La nouvelle adresse doit être libre, ou déjà appartenir à ce même compte
+  if (upn !== String(u.userPrincipalName || "").toLowerCase()) {
+    const autre = await trouverUtilisateur(env, tid, upn).catch(() => null);
+    if (autre && autre.id !== u.id) return json({ error: "L'adresse " + upn + " appartient déjà à « " + (autre.displayName || autre.userPrincipalName) + " »." }, 409);
+    if (!autre) { const v = await verifierAdresse(env, tid, upn); if (!v.disponible) return json({ error: "Adresse déjà utilisée : " + v.conflit }, 409); }
+  }
+
+  const etapes = [];
+  const synchro = !!u.onPremisesSyncEnabled;
+  let motDePasse = null;
+  if (synchro) {
+    etapes.push({ etape: "Compte synchronisé (Entra Connect) : nom, adresse et mot de passe viennent de l'AD (prochain cycle, 30 min max)", ok: true });
+  } else {
+    // 1) Identité et adresse : la nouvelle adresse devient l'identifiant ; Exchange garde l'ancienne en alias
+    const maj = { displayName: nomAffiche, userPrincipalName: upn, mailNickname: local.replace(/[^a-z0-9._-]/g, "").slice(0, 64) || "user" };
+    maj.givenName = prenom || null; maj.surname = nom || null;
+    maj.jobTitle = String(body.poste || "").trim().slice(0, 128) || null;
+    const pr = await graph(env, tid, "PATCH", `/users/${u.id}`, maj);
+    if (!pr.ok) return json({ error: erreurPermission(pr, "Renommage du compte") }, 502);
+    etapes.push({ etape: "Compte renommé : " + (u.displayName || ancien) + " → " + nomAffiche + " (" + upn + ")", ok: true });
+    // 2) Mot de passe provisoire (le même que Windows si fourni), à changer à la première connexion
+    motDePasse = motDePasseFourni(body.motDePasse) || genererMotDePasse();
+    const pw = await graph(env, tid, "PATCH", `/users/${u.id}`, { passwordProfile: { password: motDePasse, forceChangePasswordNextSignIn: true } });
+    etapes.push({ etape: "Nouveau mot de passe provisoire", ok: pw.ok, detail: pw.ok ? "" : erreurPermission(pw, "Changement du mot de passe") + " — ajoutez la permission User-PasswordProfile.ReadWrite.All à l'app, ou changez-le à la main." });
+    if (!pw.ok) motDePasse = null;
+  }
+  // 3) Sessions de l'ancien collaborateur (téléphone, webmail, Outlook) déconnectées
+  const rv = await graph(env, tid, "POST", `/users/${u.id}/revokeSignInSessions`);
+  etapes.push({ etape: "Sessions de l'ancien collaborateur déconnectées", ok: rv.ok, detail: rv.ok ? "" : erreurPermission(rv, "Déconnexion des sessions") });
+  // 4) MFA de l'ancien collaborateur retiré (le nouveau enregistrera son téléphone à la première connexion)
+  const am = await graph(env, tid, "GET", `/users/${u.id}/authentication/methods`);
+  if (am.ok) {
+    let n = 0, ko = [];
+    for (const m of (am.data.value || [])) {
+      const chemin = TYPES_MFA[m["@odata.type"]];
+      if (!chemin) continue;
+      const d = await graph(env, tid, "DELETE", `/users/${u.id}/authentication/${chemin}/${m.id}`);
+      if (d.ok) n++; else ko.push(chemin.replace(/Methods$/, "") + " (" + d.erreur + ")");
+    }
+    etapes.push({ etape: "Double authentification de l'ancien collaborateur retirée (" + n + " méthode" + (n > 1 ? "s" : "") + ")", ok: !ko.length, detail: ko.join(", ") });
+  } else etapes.push({ etape: "Double authentification de l'ancien collaborateur", ok: false, detail: erreurPermission(am, "Lecture des méthodes MFA") });
+  // 5) Téléphone MFA du nouveau collaborateur, s'il est donné
+  const tel = normaliserTel(body.telMfa || form.telMfa);
+  if (tel) {
+    const mf = await graph(env, tid, "POST", `/users/${u.id}/authentication/phoneMethods`, { phoneNumber: tel, phoneType: "mobile" });
+    etapes.push({ etape: "Téléphone MFA " + tel, ok: mf.ok, detail: mf.ok ? "" : erreurPermission(mf, "Enregistrement du téléphone MFA") });
+  }
+  // 6) Contrôle de l'adresse (Exchange met parfois quelques secondes à suivre)
+  if (!synchro) {
+    await new Promise(r => setTimeout(r, 5000));
+    const ap = await graph(env, tid, "GET", `/users/${u.id}?$select=mail,proxyAddresses,userPrincipalName`);
+    if (ap.ok) {
+      const px = (ap.data.proxyAddresses || []).map(x => String(x));
+      const principal = (px.find(x => x.startsWith("SMTP:")) || "").slice(5).toLowerCase() || String(ap.data.mail || "").toLowerCase();
+      const aliasOk = px.some(x => x.toLowerCase() === "smtp:" + ancien);
+      etapes.push({ etape: "Adresse principale " + upn, ok: principal === upn, detail: principal === upn ? "" : "encore " + (principal || "?") + " : Exchange suit d'ici quelques minutes ; sinon, Exchange Admin → la boîte → Adresses mail → définir " + upn + " comme principale" });
+      etapes.push({ etape: "Ancienne adresse " + ancien + " gardée en alias", ok: aliasOk || principal !== upn, detail: aliasOk ? "" : "à vérifier dans Exchange Admin (Adresses mail de la boîte)" });
+    }
+  }
+
+  const statut = etapes.every(e => e.ok) ? "ok" : "partiel";
+  const errJournal = await sbInsert(env, "m365_provisionings", {
+    ticket_id: String(ticket.id), reference: ticket.reference || null, hotel_id: ticket.hotel_id ? String(ticket.hotel_id) : null,
+    tenant_id: tid, upn, user_id_entra: u.id, licence: null, groupes: [], mfa_tel: tel || null,
+    statut, details: { mode: "reprise", ancien: { upn: u.userPrincipalName, nom: u.displayName }, etapes, nomAffiche, synchro, motDePasseCommun: !!motDePasseFourni(body.motDePasse) }, cree_par: admin.nom,
+  });
+  const quand = new Date().toLocaleString("fr-FR", { timeZone: "Europe/Paris" });
+  const lignes = [(statut === "ok" ? "✅" : "⚠️") + " COMPTE MICROSOFT 365 REPRIS", "Ancien : " + (u.displayName || "") + " (" + ancien + ")", "Nouveau : " + nomAffiche + " (" + upn + ")"];
+  etapes.forEach(e => lignes.push((e.ok ? "✓ " : "✗ ") + e.etape + (e.ok || !e.detail ? "" : " — " + e.detail)));
+  lignes.push("Par " + admin.nom + " le " + quand + ".");
+  await sbInsert(env, "ticket_messages", { ticket_id: ticket.id, sender_role: "admin", sender_name: "Reprise Microsoft 365", body: lignes.join("\n") });
+  return json({ success: true, statut, upn, motDePasse, synchro, etapes, avertissement: errJournal ? "Journal non enregistré (" + errJournal + ")." : null });
+}
+
 const app = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -590,6 +741,7 @@ const app = {
       if (url.pathname === "/provisioning/infos") return json(await routeInfos(env, body));
       if (url.pathname === "/provisioning/verifier") return await routeVerifier(env, body);
       if (url.pathname === "/provisioning/creer") return await routeCreer(env, body, admin);
+      if (url.pathname === "/provisioning/reprendre") return await routeReprendre(env, body, admin);
       return json({ error: "Route inconnue" }, 404);
     } catch (e) {
       return json({ error: String((e && e.message) || e) }, 500);

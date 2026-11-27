@@ -1432,10 +1432,10 @@ async function traiterTicket(env, ticketId) {
   const hp = horsPerimetre(env, t) || (dernierClient && expediteurExclu(env, dernierClient.sender_name) ? "message d'un expéditeur automatique exclu" : null);
   if (hp) return fin({ etat: "hors_perimetre" }, { action: "hors périmètre, pas d'appel Claude : " + hp });
 
-  // « Arrivée collaborateur » / Nouveau compte : pas d'appel Claude, Oscar prépare la fiche de création (lecture seule de l'AD)
-  if (estArriveeNouveau(t)) {
+  // « Arrivée collaborateur » (nouveau compte ou reprise de poste) : pas d'appel Claude, Oscar prépare la fiche (lecture seule de l'AD)
+  if (estCircuitProv(t)) {
     const r = await provPreparer(env, t.id);
-    return fin({ etat: "provisioning" }, { action: "fiche de création de compte : " + (r.statut || r.erreur || "?") });
+    return fin({ etat: "provisioning" }, { action: "fiche " + (estReprise(t) ? "de reprise" : "de création") + " de compte : " + (r.statut || r.erreur || "?") });
   }
 
   // Un technicien a répondu sur ce ticket : l'agent ne s'en mêle plus.
@@ -1774,6 +1774,22 @@ function estArriveeNouveau(t) {
   return /Type de demande : Nouveau compte/.test(String(t.message || ""));
 }
 
+// Reprise de poste : « Modification » où un nouveau collaborateur reprend le compte d'un ancien
+// (compte à modifier = l'ancien, nom = le nouveau). Le MÊME compte est renommé (AD + Microsoft 365).
+function estReprise(t) {
+  const f = provFormulaire(t);
+  const arrivee = f.template === "arrivee" || RE_ARRIVEE.test(String(t.subject || ""));
+  if (!arrivee || String(f.typeDemande || "") !== "Modification") return false;
+  const ancien = provLocal(f.compteAModifier || "").replace(/\./g, "");
+  const nouveau = provLocal(f.nom || "").replace(/\./g, "");
+  if (!nouveau || !(ancien || /@/.test(String(f.ancienMail || "")))) return false;
+  if (ancien && ancien === nouveau) return false; // même personne : simple modification -> traitement manuel
+  // l'ordre prénom / nom peut être inversé
+  const mots = s => provLocal(s).split(".").filter(Boolean).sort().join(".");
+  return !(ancien && mots(f.compteAModifier) === mots(f.nom));
+}
+const estCircuitProv = (t) => estArriveeNouveau(t) || estReprise(t);
+
 // Identité calculée depuis le formulaire (avant toute lecture de l'AD)
 function provIdentite(f) {
   const demande = String(f.mailACreer || "").trim().toLowerCase();
@@ -1787,6 +1803,45 @@ function provIdentite(f) {
     poste: String(f.poste || "").trim(), mailDemande: demande.includes("@") ? demande : "",
     candidats, services: Array.isArray(f.services) ? f.services.map(String) : [],
   };
+}
+
+// Reprise : identité du NOUVEAU collaborateur (adresse = nouvelle adresse) + ancien compte à retrouver dans l'AD
+function provIdentiteReprise(f) {
+  const id = provIdentite({ ...f, mailACreer: f.nouveauMail || f.mailACreer || "" });
+  const ancienMail = String(f.ancienMail || "").trim().toLowerCase();
+  const aLocal = ancienMail.includes("@") ? provLocal(ancienMail.split("@")[0]) : "";
+  const a = provDecouperNom(f.compteAModifier, aLocal);
+  return { ...id, mode: "reprise", ancien: { mail: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(ancienMail) ? ancienMail : "", prenom: a.prenom, nom: a.nom, libelle: String(f.compteAModifier || "").trim().slice(0, 120) } };
+}
+
+// Proposition de reprise d'après la lecture de l'AD : compte à reprendre, nouvel identifiant, groupes à ajouter
+function provPropositionReprise(fiche, lecture, memo) {
+  const id = fiche.proposition || {};
+  const alertes = [];
+  const suffixes = Array.isArray(lecture.suffixes) ? lecture.suffixes.map(s => String(s).toLowerCase()) : [];
+  const cibles = (Array.isArray(lecture.cibles) ? lecture.cibles : []).filter(c => c && c.sam);
+  const am = String((id.ancien && id.ancien.mail) || "").toLowerCase();
+  const parMail = cibles.filter(c => am && [c.mail, c.upn].map(x => String(x || "").toLowerCase()).includes(am) || (am && (c.proxys || []).some(x => String(x).toLowerCase() === "smtp:" + am)));
+  let cible = parMail.length === 1 ? parMail[0] : (cibles.length === 1 ? cibles[0] : null);
+  if (!cibles.length) alertes.push("Aucun compte trouvé dans l'AD pour « " + ((id.ancien && (id.ancien.libelle || id.ancien.mail)) || "l'ancien collaborateur") + " » : vérifiez le nom ou l'adresse, ou traitez la demande à la main.");
+  else if (!cible) alertes.push(cibles.length + " comptes possibles pour l'ancien collaborateur : choisissez celui à reprendre.");
+  if (cible && cible.protege) { alertes.push("Le compte " + cible.sam + " est un compte protégé (administration) : reprise refusée."); cible = null; }
+  if (cible && cible.actif === false) alertes.push("Le compte " + cible.sam + " est désactivé : il sera réactivé.");
+  const domMail = id.mailDemande ? id.mailDemande.split("@")[1] : "";
+  const sufCible = cible && cible.upn ? String(cible.upn).split("@")[1].toLowerCase() : "";
+  const suffixe = suffixes.includes(domMail) ? domMail : (suffixes.includes(sufCible) ? sufCible : (memo.suffixe && memo.suffixe.valeur) || lecture.domaine || suffixes[0] || "");
+  const existants = lecture.existants || {};
+  const sam = (id.candidats || []).find(c => existants[c] === false || (cible && c.toLowerCase() === String(cible.sam).toLowerCase())) || "";
+  if (!sam) alertes.push("Aucun identifiant proposé n'est libre : saisissez-en un.");
+  if (cible && cible.synchro) alertes.push("Compte synchronisé avec Microsoft 365 (Entra Connect) : le renommage et la nouvelle adresse sont faits dans l'AD, Microsoft 365 suit au prochain cycle (30 min max).");
+  const groupes = Array.isArray(lecture.groupes) ? lecture.groupes : [];
+  const actuels = cible ? (cible.groupes || []) : [];
+  const parService = {};
+  (id.services || []).forEach(s => {
+    const r = provGroupesService(s, groupes, memo);
+    parService[s] = r.groupes.filter(g => !actuels.includes(g));
+  });
+  return Object.assign({}, id, { mode: "reprise", cibles, cibleSam: cible ? cible.sam : "", sam, suffixe, upn: sam && suffixe ? sam + "@" + suffixe : "", groupesParService: parService, groupesActuels: actuels, alertes });
 }
 
 function provReste(f) {
@@ -1926,11 +1981,12 @@ async function provLancer(env, orgId, dc, s, params, ticketId) {
 // Étape 1 : fiche + lecture de l'AD (lecture seule)
 async function provPreparer(env, ticketId) {
   const { t, hotel } = await chargerTicket(env, ticketId);
-  if (!estArriveeNouveau(t)) return { ok: false, erreur: "Ce ticket n'est pas une demande « Arrivée collaborateur » / Nouveau compte." };
+  const reprise = estReprise(t);
+  if (!estArriveeNouveau(t) && !reprise) return { ok: false, erreur: "Ce ticket n'est pas une demande « Arrivée collaborateur » (nouveau compte ou reprise de poste)." };
   const avant = await provFiche(env, t.id);
   if (avant && avant.decision) return { ok: false, erreur: "Une décision a déjà été prise sur cette fiche." };
   const f = provFormulaire(t);
-  const id = provIdentite(f);
+  const id = reprise ? provIdentiteReprise(f) : provIdentite(f);
   const base = { hotel_id: t.hotel_id || null, proposition: id, ad_lecture: null, ad_lu_le: null, ad_jeton: null, erreur: null };
   if (!hotel) { await provMajFiche(env, t.id, { ...base, statut: "erreur", erreur: "Ticket non rattaché à un établissement" }); return { ok: false, erreur: "Ticket non rattaché à un établissement" }; }
   const hs = await sbJson(env, `hotels?id=eq.${hotel.id}&select=provisioning_ad`).catch(() => null);
@@ -1939,7 +1995,7 @@ async function provPreparer(env, ticketId) {
     const c = await provDc(env, hotel);
     if (!c.dc) { await provMajFiche(env, t.id, { ...base, statut: "sans_ad", erreur: c.erreur }); return { ok: true, statut: "sans_ad" }; }
     const s = await provScript(env, "prov_ad_lire");
-    const jeton = await provLancer(env, c.org.id, c.dc, s, { sams: id.candidats, prenom: id.prenom, nom: id.nom }, t.id);
+    const jeton = await provLancer(env, c.org.id, c.dc, s, { sams: id.candidats, prenom: id.prenom, nom: id.nom, cible: reprise ? id.ancien : undefined }, t.id);
     await provMajFiche(env, t.id, { ...base, statut: "lecture", ad_jeton: jeton, ad_resultat: { serveur: c.dc.hostname } });
     return { ok: true, statut: "lecture", serveur: c.dc.hostname };
   } catch (e) {
@@ -1960,19 +2016,23 @@ async function provRetour(env, ligne) {
     if (!r.ok) { await provMajFiche(env, ticketId, { statut: "erreur", erreur: "Lecture de l'AD : " + String(r.erreur || "échec").slice(0, 400) }); return; }
     const memo = await provMemo(env, fiche.hotel_id);
     const lecture = { ...r }; delete lecture.jeton;
-    const prop = provProposition(fiche, lecture, memo);
+    const reprise = fiche.proposition && fiche.proposition.mode === "reprise";
+    const prop = reprise ? provPropositionReprise(fiche, lecture, memo) : provProposition(fiche, lecture, memo);
     await provMajFiche(env, ticketId, { statut: "prete", ad_lecture: lecture, ad_lu_le: new Date().toISOString(), proposition: prop, erreur: null });
-    await provPrevenirEquipe(env, ticketId, "prête à valider", "Oscar a préparé le compte <b>" + echapper(prop.sam || "?") + "</b> (" + echapper(prop.nomAffiche || "") + ") à partir de l'AD de " + echapper(r.serveur || "") + ". Ouvrez le ticket et répondez Oui / Non.");
+    await provPrevenirEquipe(env, ticketId, "prête à valider", reprise
+      ? "Oscar a préparé la reprise du compte <b>" + echapper(prop.cibleSam || "?") + "</b> pour <b>" + echapper(prop.nomAffiche || "") + "</b> (nouvel identifiant " + echapper(prop.sam || "?") + ") à partir de l'AD de " + echapper(r.serveur || "") + ". Ouvrez le ticket et répondez Oui / Non."
+      : "Oscar a préparé le compte <b>" + echapper(prop.sam || "?") + "</b> (" + echapper(prop.nomAffiche || "") + ") à partir de l'AD de " + echapper(r.serveur || "") + ". Ouvrez le ticket et répondez Oui / Non.");
     return;
   }
-  if (ligne.cle === "prov_ad_creer") {
+  if (ligne.cle === "prov_ad_creer" || ligne.cle === "prov_ad_reprendre") {
     let f2 = fiche;
     if (!f2.ad_resultat || f2.ad_resultat.jeton !== ligne.jeton) { await new Promise(ok => setTimeout(ok, 4000)); f2 = await provFiche(env, ticketId); }
     if (!f2 || !f2.ad_resultat || f2.ad_resultat.jeton !== ligne.jeton) return;
     fiche.ad_resultat = f2.ad_resultat;
     await sb(env, `provisioning_secrets?ticket_id=eq.${ticketId}`, { method: "DELETE" }).catch(() => {});
     const res = { ...fiche.ad_resultat, recu: true, recu_le: new Date().toISOString(), ok: !!r.ok, erreur: r.ok ? null : String(r.erreur || "échec").slice(0, 400),
-      dn: r.dn || null, netbios: r.netbios || null, groupes: Array.isArray(r.groupes) ? r.groupes : [] };
+      dn: r.dn || null, netbios: r.netbios || null, groupes: Array.isArray(r.groupes) ? r.groupes : [],
+      etapes: Array.isArray(r.etapes) ? r.etapes.slice(0, 12) : undefined, avant: r.avant || undefined, groupesActuels: Array.isArray(r.groupesActuels) ? r.groupesActuels.slice(0, 40) : undefined };
     await provMajFiche(env, ticketId, { ad_resultat: res });
     await provFinaliser(env, ticketId);
   }
@@ -2011,8 +2071,8 @@ async function provValider(env, body, auth) {
   if (!fiche) {
     // Ticket arrivé avant la mise en place (ou hôtel sans AD automatique) : fiche minimale, boîte mail seule possible
     const ts = await sbJson(env, `tickets?id=eq.${body.ticketId}&select=id,subject,message,hotel_id,donnees_formulaire`);
-    if (!(ts && ts[0] && estArriveeNouveau(ts[0]))) return { status: 404, body: { error: "Ce ticket n'est pas une demande « Arrivée collaborateur » / Nouveau compte." } };
-    await provMajFiche(env, body.ticketId, { hotel_id: ts[0].hotel_id || null, statut: "ad_inactif", proposition: provIdentite(provFormulaire(ts[0])) });
+    if (!(ts && ts[0] && estCircuitProv(ts[0]))) return { status: 404, body: { error: "Ce ticket n'est pas une demande « Arrivée collaborateur » (nouveau compte ou reprise de poste)." } };
+    await provMajFiche(env, body.ticketId, { hotel_id: ts[0].hotel_id || null, statut: "ad_inactif", proposition: estReprise(ts[0]) ? provIdentiteReprise(provFormulaire(ts[0])) : provIdentite(provFormulaire(ts[0])) });
     fiche = await provFiche(env, body.ticketId);
   }
   if (fiche.decision) return { status: 409, body: { error: "Décision déjà prise (" + fiche.decision.choix + " par " + fiche.decision.par + ")." } };
@@ -2036,6 +2096,7 @@ async function provValider(env, body, auth) {
   // Validation RH / direction obligatoire
   const v = await sbJson(env, `ticket_validations?ticket_id=eq.${t.id}&select=status,validateur_email&order=created_at.desc&limit=1`).catch(() => []);
   if (!(v && v[0] && v[0].status === "validated")) return { status: 400, body: { error: "La demande n'est pas encore validée par le RH / la direction." } };
+  if (fiche.proposition && fiche.proposition.mode === "reprise") return provValiderReprise(env, body, auth, fiche, t, hotel, quand);
 
   const f = provFormulaire(t);
   const lecture = fiche.ad_lecture || null;
@@ -2115,15 +2176,86 @@ async function provValider(env, body, auth) {
   return { status: 200, body: { ok: true, motDePasse, ad: faireAd ? { sam: compte.sam, upn: compte.upn, serveur: adResultat.serveur } : null, mail: faireMail } };
 }
 
+// « Oui » sur une reprise de poste : renommage du compte AD existant (script prov_ad_reprendre sur le DC),
+// puis le portail appelle dsi-hotel-provisioning /provisioning/reprendre (Microsoft 365) avec le même mot de passe.
+async function provValiderReprise(env, body, auth, fiche, t, hotel, quand) {
+  const lecture = fiche.ad_lecture || null;
+  const c = body.compte || {};
+  const faireAd = !!(c.ad && fiche.statut === "prete" && lecture);
+  const faireMail = !!body.mail;
+  if (!faireAd && !faireMail) return { status: 400, body: { error: "Rien à faire : ni compte Windows (fiche non prête ou décochée), ni Microsoft 365." } };
+  const mail = String(c.mail || "").trim().toLowerCase();
+  if (mail && !/^[a-z0-9._-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(mail)) return { status: 400, body: { error: "Nouvelle adresse mail invalide : " + mail } };
+  let compte = { mode: "reprise", mail, ancienMail: String((fiche.proposition.ancien && fiche.proposition.ancien.mail) || "").toLowerCase(),
+    prenom: String(c.prenom || "").trim().slice(0, 64), nom: String(c.nom || "").trim().slice(0, 64),
+    nomAffiche: String(c.nomAffiche || "").trim().slice(0, 64), poste: String(c.poste || "").trim().slice(0, 128) };
+  if (!compte.nomAffiche) return { status: 400, body: { error: "Nom affiché obligatoire." } };
+  if (faireAd) {
+    const cible = (lecture.cibles || []).find(x => x && x.sam === String(c.cibleSam || ""));
+    if (!cible) return { status: 400, body: { error: "Choisissez le compte à reprendre (parmi ceux trouvés dans l'AD)." } };
+    if (cible.protege || RE_COMPTE_SENSIBLE.test(cible.sam)) return { status: 400, body: { error: "Compte protégé ou réservé : reprise refusée (" + cible.sam + ")." } };
+    const sam = String(c.sam || "").trim();
+    const suffixe = String(c.suffixe || "").trim().toLowerCase();
+    if (!RE_SAM.test(sam) || RE_COMPTE_SENSIBLE.test(sam)) return { status: 400, body: { error: "Identifiant invalide ou réservé : " + sam } };
+    if (!(lecture.suffixes || []).map(x => String(x).toLowerCase()).includes(suffixe)) return { status: 400, body: { error: "Suffixe UPN inconnu de l'AD : " + suffixe } };
+    // Compte synchronisé : l'identifiant reste aligné sur l'adresse mail (Entra Connect)
+    if (cible.synchro && mail && (sam + "@" + suffixe).toLowerCase() !== mail) return { status: 400, body: { error: "Compte synchronisé avec Microsoft 365 : l'identifiant Windows (" + sam + "@" + suffixe + ") doit être identique à la nouvelle adresse (" + mail + ")." } };
+    const dispo = (lecture.groupes || []).map(g => g.sam);
+    const parService = {};
+    Object.entries(c.groupesParService || {}).forEach(([s, l]) => { parService[String(s).slice(0, 40)] = [...new Set((Array.isArray(l) ? l : []).map(String))].filter(g => dispo.includes(g)); });
+    const autres = [...new Set((Array.isArray(c.autresGroupes) ? c.autresGroupes : []).map(String))].filter(g => dispo.includes(g));
+    const groupes = [...new Set([...Object.values(parService).flat(), ...autres])].slice(0, 25);
+    if (groupes.some(g => RE_GROUPE_REFUSE.test(g))) return { status: 400, body: { error: "Groupe refusé (administration / service) : " + groupes.find(g => RE_GROUPE_REFUSE.test(g)) } };
+    compte = { ...compte, cibleSam: cible.sam, ancienUpn: cible.upn || "", ancienNom: cible.nom || "", synchro: !!cible.synchro, sam, suffixe, upn: sam + "@" + suffixe, groupes, groupesParService: parService };
+  }
+
+  const reserve = await sbJson(env, `provisioning_fiches?ticket_id=eq.${t.id}&decision=is.null`, { method: "PATCH", headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ decision: { choix: "oui", par: auth.nom, le: quand, en_cours: true }, maj_le: quand }) }).catch(() => null);
+  if (!reserve || !reserve.length) return { status: 409, body: { error: "Une décision vient d'être prise sur cette fiche par quelqu'un d'autre." } };
+  const liberer = () => sb(env, `provisioning_fiches?ticket_id=eq.${t.id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ decision: null }) }).catch(() => {});
+
+  const motDePasse = provMotDePasse(lecture && lecture.mdpLongueurMin);
+  let adResultat = null;
+  if (faireAd) {
+    const c2 = await provDc(env, hotel);
+    if (!c2.dc) { await liberer(); return { status: 409, body: { error: "Reprise AD impossible : " + c2.erreur } }; }
+    if (lecture.serveur && nomCourt(lecture.serveur) !== c2.dc.hostname) { await liberer(); return { status: 409, body: { error: "Le contrôleur de domaine a changé depuis la lecture (" + lecture.serveur + " → " + c2.dc.hostname + ") : relisez l'AD." } }; }
+    await sbJson(env, "provisioning_secrets?on_conflict=ticket_id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ ticket_id: t.id, secret_chiffre: await chiffrer(env, motDePasse), cree_le: quand }) });
+    try {
+      const s = await provScript(env, "prov_ad_reprendre");
+      const jeton = await provLancer(env, c2.org.id, c2.dc, s, {
+        cibleSam: compte.cibleSam, sam: compte.sam, upn: compte.upn, prenom: compte.prenom, nom: compte.nom, nomAffiche: compte.nomAffiche,
+        poste: compte.poste, mail: compte.mail, ancienMail: compte.ancienMail, groupes: compte.groupes,
+        description: ("Repris par DSI Hotel le " + quand.slice(0, 10) + " (" + (t.reference || "") + ", ex " + compte.cibleSam + ", validé par " + auth.nom + ")").slice(0, 250),
+      }, t.id);
+      adResultat = { jeton, serveur: c2.dc.hostname, lance_le: quand };
+    } catch (e) {
+      await sb(env, `provisioning_secrets?ticket_id=eq.${t.id}`, { method: "DELETE" }).catch(() => {});
+      await liberer();
+      return { status: 502, body: { error: "Lancement de la reprise AD impossible : " + String((e && e.message) || e).slice(0, 300) } };
+    }
+    for (const [s, l] of Object.entries(compte.groupesParService)) if (l.length) await provEcrireMemo(env, hotel.id, "service:" + s, { groupes: l }, auth.nom);
+    await provEcrireMemo(env, hotel.id, "suffixe", { valeur: compte.suffixe }, auth.nom);
+  }
+  await provMajFiche(env, t.id, {
+    statut: "en_creation", ad_resultat: adResultat, m365_resultat: faireMail ? { attendu: true } : null,
+    decision: { choix: "oui", mode: "reprise", par: auth.nom, le: quand, ad: faireAd, mail: faireMail, compte },
+  });
+  await ajouterNoteInterne(env, t, "Reprise de compte validée par " + auth.nom + (faireAd ? " — AD : " + compte.cibleSam + " → " + compte.sam + " (" + compte.upn + "), script lancé sur " + adResultat.serveur : "") + (faireMail ? " — Microsoft 365 : " + (compte.ancienMail || "?") + " → " + (compte.mail || "?") : ""));
+  console.log(`Oscar : reprise validée par ${auth.user.email} (${t.reference || t.id}) AD=${faireAd} mail=${faireMail}`);
+  return { status: 200, body: { ok: true, motDePasse, ad: faireAd ? { sam: compte.sam, upn: compte.upn, serveur: adResultat.serveur, synchro: compte.synchro, ancien: compte.cibleSam } : null, mail: faireMail, compte } };
+}
+
 // Le portail signale le résultat de la création Microsoft 365 (Worker dsi-hotel-provisioning)
 async function provM365Fait(env, body) {
   if (!uuidValide(body.ticketId)) return { status: 400, body: { error: "ticketId invalide" } };
   const fiche = await provFiche(env, body.ticketId);
   if (!fiche || !fiche.decision || fiche.decision.choix !== "oui" || !fiche.decision.mail) return { status: 409, body: { error: "Aucune création Microsoft 365 attendue sur ce ticket." } };
   // On relit le journal du Worker de création plutôt que de croire le navigateur
-  const p = await sbJson(env, `m365_provisionings?ticket_id=eq.${body.ticketId}&select=upn,licence,statut,cree_par,cree_le&order=cree_le.desc&limit=1`).catch(() => []);
+  const p = await sbJson(env, `m365_provisionings?ticket_id=eq.${body.ticketId}&select=upn,licence,statut,cree_par,cree_le,details&order=cree_le.desc&limit=1`).catch(() => []);
   const j = p && p[0];
-  const res = j ? { upn: j.upn, licence: j.licence, statut: j.statut, le: j.cree_le } : { statut: "echec", erreur: String(body.erreur || "création non effectuée").slice(0, 300) };
+  const res = j ? { upn: j.upn, licence: j.licence, statut: j.statut, le: j.cree_le, etapes: (j.details && Array.isArray(j.details.etapes)) ? j.details.etapes.slice(0, 15) : undefined } : { statut: "echec", erreur: String(body.erreur || "création non effectuée").slice(0, 300) };
   await provMajFiche(env, body.ticketId, { m365_resultat: res });
   const fin = await provFinaliser(env, body.ticketId);
   return { status: 200, body: { ok: true, m365: res, fin } };
@@ -2145,10 +2277,21 @@ async function provFinaliser(env, ticketId) {
   const groupesKo = d.ad && ad && Array.isArray(ad.groupes) ? ad.groupes.filter(g => !g.ok) : [];
   const nom = (d.compte && d.compte.nomAffiche) || f.nom || "le collaborateur";
   const l = ["Bonjour, je suis Oscar, l'agent de DSI Hotel.", ""];
-  if (adOk && mailOk) l.push("Les accès de " + nom + " sont créés :");
+  const reprise = d.mode === "reprise";
+  const ancienNom = reprise ? ((d.compte && (d.compte.ancienNom || d.compte.cibleSam)) || f.compteAModifier || "l'ancien collaborateur") : "";
+  if (reprise) {
+    l.push(adOk && mailOk ? "Le compte de " + ancienNom + " a été repris pour " + nom + " :" : "La reprise du compte de " + ancienNom + " pour " + nom + " est en partie faite ; un technicien termine le reste :");
+    if (d.ad) l.push(ad && ad.ok ? "- Compte Windows : " + (ad.netbios ? ad.netbios + "\\" : "") + d.compte.sam + " (" + d.compte.upn + ")" : "- Compte Windows : à finaliser par un technicien");
+    if (d.mail) {
+      const okM = m && (m.statut === "ok" || m.statut === "partiel");
+      l.push(okM ? "- Adresse mail : " + (m.upn || d.compte.mail) + (d.compte.ancienMail ? " ; les messages envoyés à l'ancienne adresse " + d.compte.ancienMail + " arrivent toujours dans cette boîte" : "") : "- Adresse mail : à finaliser par un technicien");
+      if (okM) l.push("- Les sessions de l'ancien collaborateur (téléphone, webmail) ont été déconnectées et sa double authentification retirée : " + nom + " enregistrera son propre téléphone à la première connexion.");
+    }
+    l.push("- Les mails, fichiers et dossiers du poste sont conservés.");
+  } else if (adOk && mailOk) l.push("Les accès de " + nom + " sont créés :");
   else l.push("La création des accès de " + nom + " est en partie faite ; un technicien termine le reste :");
-  if (d.ad) l.push(ad && ad.ok ? "- Compte Windows : " + (ad.netbios ? ad.netbios + "\\" : "") + d.compte.sam + " (" + d.compte.upn + ")" : "- Compte Windows : à finaliser par un technicien");
-  if (d.mail) l.push(m && (m.statut === "ok" || m.statut === "partiel") ? "- Adresse mail : " + m.upn + " (active d'ici quelques minutes)" : "- Adresse mail : à finaliser par un technicien");
+  if (!reprise && d.ad) l.push(ad && ad.ok ? "- Compte Windows : " + (ad.netbios ? ad.netbios + "\\" : "") + d.compte.sam + " (" + d.compte.upn + ")" : "- Compte Windows : à finaliser par un technicien");
+  if (!reprise && d.mail) l.push(m && (m.statut === "ok" || m.statut === "partiel") ? "- Adresse mail : " + m.upn + " (active d'ici quelques minutes)" : "- Adresse mail : à finaliser par un technicien");
   l.push("", "Le mot de passe provisoire n'est jamais envoyé par email : il sera remis par un technicien DSI Hotel" + (f.rdvCreneau ? " lors du rendez-vous prévu" : "") + ".");
   const synchroOk = !!(d.compte && d.compte.synchro && d.ad && ad && ad.ok);
   // Première connexion : Windows (ChangePasswordAtLogon) et Microsoft 365 (forceChangePasswordNextSignIn) imposent un nouveau mot de passe
@@ -2165,7 +2308,7 @@ async function provFinaliser(env, ticketId) {
   const envoi = await repondreAuClient(env, t, hotel, msgs, corps).catch(e => ({ emailOk: false, emailErreur: String(e) }));
   const statut = adOk && mailOk && !groupesKo.length ? "terminee" : "partielle";
   await provMajFiche(env, ticketId, { statut });
-  await ajouterNoteInterne(env, t, "Création de compte " + (statut === "terminee" ? "terminée" : "PARTIELLE") +
+  await ajouterNoteInterne(env, t, (reprise ? "Reprise de compte " : "Création de compte ") + (statut === "terminee" ? "terminée" : "PARTIELLE") +
     (d.ad ? " — AD : " + (ad && ad.ok ? "OK " + (ad.dn || "") : "ÉCHEC " + ((ad && ad.erreur) || "")) : "") +
     (groupesKo.length ? " — groupes non ajoutés : " + groupesKo.map(g => g.sam + " (" + (g.erreur || "?") + ")").join(", ") : "") +
     (d.mail ? " — M365 : " + (m ? m.statut + " " + (m.upn || m.erreur || "") : "?") : "") +
@@ -2180,7 +2323,7 @@ async function provFinaliser(env, ticketId) {
 async function routeProvSecret(env, request) {
   const jeton = String(request.headers.get("X-Job-Token") || "").replace(/[^A-Za-z0-9]/g, "");
   if (jeton.length < 8) return json({ erreur: "jeton manquant" }, env, 400);
-  const rows = await sbJson(env, `agent_resultats?jeton=eq.${jeton}&resultat=is.null&cle=eq.prov_ad_creer&select=ticket_id,cree_le`);
+  const rows = await sbJson(env, `agent_resultats?jeton=eq.${jeton}&resultat=is.null&cle=in.(prov_ad_creer,prov_ad_reprendre)&select=ticket_id,cree_le`);
   const job = rows && rows[0];
   if (!job || !uuidValide(job.ticket_id) || Date.now() - new Date(job.cree_le).getTime() > 30 * 60000) return json({ erreur: "jeton inconnu ou expiré" }, env, 403);
   // (le jeton n'est peut-être pas encore inscrit dans la fiche : la ligne agent_resultats « prov_ad_creer » du ticket fait foi)
@@ -2200,7 +2343,11 @@ async function routeProvFiche(env, body) {
     t.hotel_id ? sbJson(env, `hotels?id=eq.${t.hotel_id}&select=id,name,provisioning_ad`).catch(() => []) : [],
     provMemo(env, t.hotel_id),
   ]);
-  return { status: 200, body: { concerne: estArriveeNouveau(t), fiche, hotel: (hs && hs[0]) || null, reste: provReste(provFormulaire(t)), memo } };
+  const reprise = estReprise(t);
+  const reste = provReste(provFormulaire(t));
+  if (reprise) reste.push("Profil Windows et fichiers de l'ancien collaborateur sur les PC : à trier avec l'hôtel si besoin");
+  return { status: 200, body: { concerne: estCircuitProv(t), type: reprise ? "reprise" : "creation", fiche, hotel: (hs && hs[0]) || null, reste, memo,
+    propositionInitiale: reprise && !(fiche && fiche.proposition) ? provIdentiteReprise(provFormulaire(t)) : undefined } };
 }
 
 /* ============================ Routes (mode assisté) ============================ */
