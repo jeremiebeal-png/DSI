@@ -216,7 +216,7 @@ function Page_client_admin(ctx) {
         )
       ),
             addAccountHotel && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
-        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: "90%", maxWidth: 420 } },
+        React.createElement('div', { style: { background: "white", borderRadius: 12, padding: 22, width: "90%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", boxSizing: "border-box" } },
           React.createElement('div', { style: { fontWeight: 600, fontSize: 15, color: "#1a1a3e", marginBottom: 4 } }, addAccountForm.mode === "edit" ? "Modifier le compte" : "Ajouter un compte"),
           React.createElement('div', { style: { fontSize: 12, color: "#888", marginBottom: 14 } }, addAccountHotel.name),
           React.createElement('div', { style: { marginBottom: 10 } },
@@ -249,7 +249,8 @@ function Page_client_admin(ctx) {
           React.createElement('div', { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
             React.createElement('button', { onClick: () => setAddAccountHotel(null), style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 7, fontSize: 12, cursor: "pointer", padding: "7px 14px" } }, "Annuler"),
             React.createElement('button', { onClick: submitAddAccount, disabled: savingAccount, style: { background: G, border: "none", color: "#111", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer", padding: "7px 14px", opacity: savingAccount ? 0.6 : 1 } }, savingAccount ? "..." : (addAccountForm.mode === "edit" ? "Enregistrer" : "Créer le compte"))
-          )
+          ),
+          addAccountHotel.account_email && React.createElement(ComptesSuperviseurs, { hotel: addAccountHotel })
         )
       ),
       resetPwTarget && React.createElement('div', { style: { position: "fixed", inset: 0, background: "rgba(15,15,36,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 } },
@@ -304,4 +305,94 @@ function Page_client_admin(ctx) {
       )
     );
   return content;
+}
+
+// ===== Superviseurs nominatifs (un compte par personne) =====
+// Affiché dans « Gérer les comptes ». Chaque responsable de l'hôtel a son propre compte
+// Superviseur : à sa première connexion il scanne SON QR code, sans dépendre du téléphone
+// d'un collègue. Appelle la fonction Supabase « comptes-superviseurs » (admin DSI + MFA).
+function ComptesSuperviseurs({ hotel }) {
+  const e = React.createElement;
+  const [comptes, setComptes] = React.useState(null);
+  const [form, setForm] = React.useState({ fullName: "", email: "", pw: "" });
+  const [ouvert, setOuvert] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+
+  const appeler = async (payload) => {
+    const { data: { session: s } } = await sb.auth.getSession();
+    if (!s) throw new Error("Session expirée, reconnectez-vous.");
+    const r = await fetch(SUPABASE_URL + "/functions/v1/comptes-superviseurs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + s.access_token, apikey: SUPABASE_KEY },
+      body: JSON.stringify({ hotelId: hotel.id, ...payload })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    return j;
+  };
+  const charger = async () => {
+    try { const j = await appeler({ action: "list" }); setComptes(j.comptes || []); }
+    catch (err) { setComptes([]); setMsg("Erreur : " + err.message); }
+  };
+  React.useEffect(() => { setComptes(null); setMsg(""); charger(); }, [hotel.id]);
+
+  const ajouter = async () => {
+    setMsg("");
+    if (!form.fullName.trim() || !form.email.trim() || !form.pw) { setMsg("Nom, email et mot de passe sont obligatoires."); return; }
+    setBusy(true);
+    try {
+      await appeler({ action: "add", fullName: form.fullName.trim(), email: form.email.trim(), password: form.pw });
+      setMsg("✓ Compte créé pour " + form.fullName.trim() + ". À sa première connexion, il ou elle scannera son propre QR code.");
+      setForm({ fullName: "", email: "", pw: "" }); setOuvert(false);
+      await charger();
+    } catch (err) { setMsg(err.message); }
+    finally { setBusy(false); }
+  };
+  const retirer = async (c) => {
+    if (!confirm("Supprimer le compte de " + (c.full_name || c.email) + " ?\n\nLa personne ne pourra plus se connecter au portail.")) return;
+    setBusy(true); setMsg("");
+    try { await appeler({ action: "remove", userId: c.id }); await charger(); }
+    catch (err) { setMsg(err.message); }
+    finally { setBusy(false); }
+  };
+  const resetMfa = async (c) => {
+    if (!confirm("Effacer les téléphones de " + (c.full_name || c.email) + " ?\n\nÀ sa prochaine connexion, un nouveau QR code lui sera demandé.")) return;
+    setBusy(true); setMsg("");
+    try { await appeler({ action: "reset-mfa", userId: c.id }); setMsg("✓ Téléphones effacés."); await charger(); }
+    catch (err) { setMsg(err.message); }
+    finally { setBusy(false); }
+  };
+
+  const champ = (k, ph, type) => e('input', { type: type || "text", value: form[k], placeholder: ph, onChange: ev => setForm({ ...form, [k]: ev.target.value }), style: { width: "100%", padding: "7px 9px", border: "1px solid #DDD", borderRadius: 6, fontSize: 12, boxSizing: "border-box", marginBottom: 6 } });
+  const petitBtn = (label, onClick, rouge) => e('button', { onClick, disabled: busy, style: { background: "none", border: "1px solid " + (rouge ? "#E8B4B4" : "#DDD"), color: rouge ? "#C53030" : "#555", borderRadius: 6, fontSize: 10.5, cursor: "pointer", padding: "3px 8px", whiteSpace: "nowrap" } }, label);
+  const date = (d) => d ? new Date(d).toLocaleDateString("fr-FR") : "jamais";
+
+  return e('div', { style: { borderTop: "1px solid #EEE", marginTop: 14, paddingTop: 12 } },
+    e('div', { style: { fontWeight: 600, fontSize: 13, color: "#1a1a3e", marginBottom: 2 } }, "Superviseurs nominatifs"),
+    e('div', { style: { fontSize: 11, color: "#888", marginBottom: 10, lineHeight: 1.5 } }, "Un compte par responsable : chacun a son identifiant et enregistre son propre téléphone à sa première connexion."),
+    comptes === null
+      ? e('div', { style: { fontSize: 12, color: "#888" } }, "Chargement…")
+      : comptes.map(c => e('div', { key: c.id, style: { display: "flex", alignItems: "center", gap: 8, border: "1px solid #E8E8F0", borderRadius: 8, padding: "7px 10px", marginBottom: 6 } },
+          e('div', { style: { flex: 1, minWidth: 0 } },
+            e('div', { style: { fontSize: 12, fontWeight: 500, color: "#1a1a3e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+              (c.full_name || c.email) + (c.principal ? " — compte principal" : "") + (c.groupe ? " — groupe" : "")),
+            e('div', { style: { fontSize: 10.5, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+              (c.full_name ? c.email + " · " : "") + (c.telephones ? c.telephones + " téléphone" + (c.telephones > 1 ? "s" : "") : "téléphone pas encore enregistré") + " · dernière connexion : " + date(c.derniere_connexion))
+          ),
+          c.telephones > 0 && petitBtn("Réinit. MFA", () => resetMfa(c)),
+          !c.principal && !c.groupe && petitBtn("Supprimer", () => retirer(c), true)
+        )),
+    ouvert
+      ? e('div', { style: { background: "#F8F8FC", border: "1px solid #E8E8F0", borderRadius: 8, padding: 10, marginTop: 6 } },
+          champ("fullName", "Prénom Nom (ex. Daphné Martin)"),
+          champ("email", "Email de connexion (ex. daphne.martin@hotel.com)"),
+          champ("pw", "Mot de passe initial (10 car., Maj, min, chiffre, spécial)"),
+          e('div', { style: { display: "flex", gap: 6, justifyContent: "flex-end" } },
+            e('button', { onClick: () => { setOuvert(false); setMsg(""); }, disabled: busy, style: { background: "none", border: "1px solid #DDD", color: "#555", borderRadius: 6, fontSize: 11.5, cursor: "pointer", padding: "5px 11px" } }, "Annuler"),
+            e('button', { onClick: ajouter, disabled: busy, style: { background: G, border: "none", color: "#111", borderRadius: 6, fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: "5px 11px", opacity: busy ? 0.6 : 1 } }, busy ? "…" : "Créer le compte")
+          ))
+      : e('button', { onClick: () => { setOuvert(true); setMsg(""); }, disabled: busy || comptes === null, style: { width: "100%", marginTop: 4, padding: 7, background: "#F8F8FC", border: "1px dashed " + G, color: G2, borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: "pointer" } }, "+ Ajouter un superviseur"),
+    msg && e('div', { style: { fontSize: 11.5, marginTop: 8, color: msg.startsWith("✓") ? "#2F855A" : "#C53030" } }, msg)
+  );
 }
