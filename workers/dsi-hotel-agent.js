@@ -2292,7 +2292,7 @@ async function provFinaliser(env, ticketId) {
   else l.push("La création des accès de " + nom + " est en partie faite ; un technicien termine le reste :");
   if (!reprise && d.ad) l.push(ad && ad.ok ? "- Compte Windows : " + (ad.netbios ? ad.netbios + "\\" : "") + d.compte.sam + " (" + d.compte.upn + ")" : "- Compte Windows : à finaliser par un technicien");
   if (!reprise && d.mail) l.push(m && (m.statut === "ok" || m.statut === "partiel") ? "- Adresse mail : " + m.upn + " (active d'ici quelques minutes)" : "- Adresse mail : à finaliser par un technicien");
-  l.push("", "Le mot de passe provisoire n'est jamais envoyé par email : il sera remis par un technicien DSI Hotel" + (f.rdvCreneau ? " lors du rendez-vous prévu" : "") + ".");
+  l.push("", "Le mot de passe provisoire vous sera envoyé dans un autre mail, par un lien sécurisé : ce lien est personnel, utilisable une seule fois et valable 1 heure.");
   const synchroOk = !!(d.compte && d.compte.synchro && d.ad && ad && ad.ok);
   // Première connexion : Windows (ChangePasswordAtLogon) et Microsoft 365 (forceChangePasswordNextSignIn) imposent un nouveau mot de passe
   const lu = fiche.ad_lecture || {};
@@ -2315,7 +2315,7 @@ async function provFinaliser(env, ticketId) {
     (envoi && envoi.emailOk === false ? " — ⚠ email au demandeur non parti" : ""));
   await provPrevenirEquipe(env, ticketId, statut === "terminee" ? "terminée" : "PARTIELLE — à reprendre",
     "<p>" + texteVersHtml(corps) + "</p>" + (statut !== "terminee" ? "<p><b>À reprendre :</b> " + echapper((ad && ad.erreur) || (m && m.erreur) || groupesKo.map(g => g.sam).join(", ") || "voir la note interne") + "</p>" : "") +
-    "<p>Pensez à remettre le mot de passe provisoire au collaborateur et à fermer le ticket une fois le reste fait.</p>");
+    "<p>Pensez à envoyer le mot de passe provisoire au demandeur par lien sécurisé (réponse type « Changement PASSWORD », lien valable 1 h) et à fermer le ticket une fois le reste fait.</p>");
   return { statut };
 }
 
