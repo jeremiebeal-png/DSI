@@ -854,6 +854,7 @@ function App() {
   const [docErr, setDocErr] = useState("");
 
   const isAdmin = profile?.role === "admin";
+  window.__dsiNA = isAdmin; // bouton « N/A » dans les champs vides (core.js), admins uniquement
   const [creneauTicket, setCreneauTicket] = useState(null);
   const [creneauCommentaire, setCreneauCommentaire] = useState("");
   const [creneauBusy, setCreneauBusy] = useState(false);

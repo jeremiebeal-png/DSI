@@ -1142,3 +1142,54 @@ function _dessinerRapportTicketsPdf(jsPDF, opts) {
   return doc;
 }
 
+
+// ====== Bouton « N/A » dans les champs vides (comptes admin uniquement) ======
+// Quand on clique dans un champ texte vide (fiche hôtel, contacts, serveurs, inventaire…), une pastille « N/A »
+// apparaît à droite du champ : un clic la remplit avec « N/A » (pour les hôtels qui n'ont pas l'information).
+// Activé par app.js (window.__dsiNA = true pour les admins). Exclure un champ : attribut data-no-na sur lui ou un parent.
+(function () {
+  var TYPES = { "": 1, text: 1, email: 1, tel: 1, url: 1 };
+  var btn = null, cible = null;
+  var eligible = function (el) {
+    if (!window.__dsiNA || !el || el.disabled || el.readOnly) return false;
+    var tag = el.tagName;
+    if (tag === "INPUT") { if (!TYPES[(el.getAttribute("type") || "").toLowerCase()]) return false; }
+    else if (tag !== "TEXTAREA") return false;
+    if (el.closest("[data-no-na]")) return false;
+    var ph = (el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || "");
+    if (/recherch|search|filtr|mot de passe|password|code mfa|code à 6/i.test(ph)) return false;
+    return String(el.value || "").trim() === "";
+  };
+  var cacher = function () { if (btn) btn.style.display = "none"; cible = null; };
+  var placer = function () {
+    if (!btn || !cible) return;
+    var r = cible.getBoundingClientRect();
+    if (!r.width || r.bottom < 0 || r.top > window.innerHeight) { btn.style.display = "none"; return; }
+    var h = 18, haut = cible.tagName === "TEXTAREA" ? r.top + 6 : r.top + (r.height - h) / 2;
+    btn.style.top = Math.round(haut) + "px";
+    btn.style.left = Math.round(r.right - 40) + "px";
+    btn.style.display = "block";
+  };
+  var remplir = function () {
+    var el = cible; if (!el) return;
+    var proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, "N/A"); // passe par le setter natif pour que React voie le changement
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    cacher();
+  };
+  var creer = function () {
+    btn = document.createElement("button");
+    btn.type = "button"; btn.textContent = "N/A"; btn.title = "Information non disponible : remplir avec « N/A »";
+    btn.style.cssText = "position:fixed;z-index:100000;display:none;height:18px;width:34px;padding:0;border:1px solid #D8C68F;border-radius:9px;background:#FBF3DF;color:#7A5A12;font:700 10px/16px system-ui,sans-serif;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.08)";
+    btn.addEventListener("mousedown", function (ev) { ev.preventDefault(); }); // garde le focus dans le champ
+    btn.addEventListener("click", function (ev) { ev.preventDefault(); remplir(); });
+    document.body.appendChild(btn);
+  };
+  document.addEventListener("focusin", function (ev) {
+    if (eligible(ev.target)) { if (!btn) creer(); cible = ev.target; placer(); } else if (ev.target !== btn) cacher();
+  });
+  document.addEventListener("focusout", function (ev) { if (ev.target === cible) setTimeout(function () { if (document.activeElement !== cible) cacher(); }, 0); });
+  document.addEventListener("input", function (ev) { if (ev.target === cible && String(cible.value || "").trim() !== "") cacher(); else if (ev.target === cible) placer(); });
+  window.addEventListener("scroll", placer, true);
+  window.addEventListener("resize", placer);
+})();
